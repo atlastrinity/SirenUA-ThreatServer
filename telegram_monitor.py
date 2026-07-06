@@ -1,17 +1,20 @@
 import asyncio
+import os
 import re
+from typing import Optional
+from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
 from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES
 
-# Цільові канали для автоматичного прослуховування
+# Target Telegram channels to monitor
 TARGET_CHANNELS = [
     "kpszsu",            # Повітряні Сили ЗСУ
     "monitorwarr",       # Найшвидша аналітика радарів
     "vanek_nikolaev"     # Николаевский Ванек
 ]
 
-# Ключові слова загроз
+# Threat Keywords
 CRITICAL_KEYWORDS = [r"масований\s*(ракетний\s*)?удар", r"масований\s*обстріл", r"комбінований\s*удар"]
 HIGH_KEYWORDS = [
     r"МіГ[-\s]?31", r"Кинджал", r"Ту[-\s]?95", r"Ту[-\s]?22", r"Ту[-\s]?160",
@@ -22,31 +25,116 @@ MEDIUM_KEYWORDS = [r"[ШШ]ахед", r"Shahed", r"БПЛА", r"безпілот
 LOW_KEYWORDS = [r"зліт", r"підйом\s*авіаці", r"активність\s*авіаці", r"загроза\s*балістики"]
 CLEAR_KEYWORDS = [r"відбій", r"загроз\w*\s*нема", r"загроз\w*\s*відсутн", r"збит[оіа]", r"знищен[оіа]", r"посадка", r"чисто", r"дорозвідка"]
 
+# API credentials
+TELEGRAM_API_ID = 20294647
+TELEGRAM_API_HASH = "454a9c055308a8d118608bb6b032bc30"
+
 class TelegramThreatMonitor:
     def __init__(self, threat_manager):
         self.threat_manager = threat_manager
         self.is_running = False
+        self.use_mtproto = False
+        self.client: Optional[TelegramClient] = None
         self._clear_tasks = {}
-        # Зберігаємо ID останніх оброблених постів для кожного каналу
+        
+        # Session file path detection
+        self.session_paths = [
+            "sirenua_userbot_session.session",
+            "threat_server/sirenua_userbot_session.session"
+        ]
+        
+        # State for web scraper fallback
         self.last_seen_posts = {channel: None for channel in TARGET_CHANNELS}
 
     async def start(self):
-        print("🌐 Запуск Web Scraper для Telegram каналів...")
         self.is_running = True
-        # Запускаємо безкінечний цикл перевірки як фонове завдання
+        
+        # 1. Try to load from environment variable (StringSession) - best for Render production
+        session_string = os.environ.get("TELEGRAM_SESSION_STRING")
+        if session_string:
+            print("🔥 Знайдено TELEGRAM_SESSION_STRING в змінних оточення. Ініціалізуємо MTProto...")
+            try:
+                from telethon.sessions import StringSession
+                self.client = TelegramClient(StringSession(session_string), TELEGRAM_API_ID, TELEGRAM_API_HASH)
+                await self.client.connect()
+                if await self.client.is_user_authorized():
+                    self.use_mtproto = True
+                    print("✅ Юзербот авторизований через StringSession! Отримуємо повідомлення МИТТЄВО.")
+                    self._setup_event_handlers()
+                    return
+                else:
+                    print("⚠️ StringSession надано, але сесія не авторизована.")
+            except Exception as e:
+                print(f"⚠️ Помилка ініціалізації StringSession: {e}")
+                if self.client:
+                    await self.client.disconnect()
+
+        # 2. Try to load from local file session (fallback)
+        session_found = None
+        for path in self.session_paths:
+            if os.path.exists(path):
+                session_found = path.replace(".session", "")
+                break
+                
+        if session_found:
+            print(f"🔥 Знайдено локальний файл сесії: {session_found}. Ініціалізуємо MTProto...")
+            try:
+                self.client = TelegramClient(session_found, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+                await self.client.connect()
+                
+                if await self.client.is_user_authorized():
+                    self.use_mtproto = True
+                    print("✅ Юзербот авторизований через локальний файл! Отримуємо повідомлення МИТТЄВО.")
+                    self._setup_event_handlers()
+                    return
+                else:
+                    print("⚠️ Файл сесії знайдено, але користувач не авторизований.")
+            except Exception as e:
+                print(f"⚠️ Помилка ініціалізації MTProto: {e}")
+                if self.client:
+                    await self.client.disconnect()
+                    
+        print("🟡 Сесію юзербота не знайдено або не авторизовано. Запускаємо резервний Web Scraper...")
+        self.use_mtproto = False
         asyncio.create_task(self._scrape_loop())
-        print(f"📥 Автоматичний моніторинг (кожні 20 сек) активний для: {', '.join(TARGET_CHANNELS)}")
+        print(f"📥 Автоматичний веб-моніторинг (кожні 20 сек) активний для: {', '.join(TARGET_CHANNELS)}")
+
+    def _setup_event_handlers(self):
+        if not self.client:
+            return
+            
+        @self.client.on(events.NewMessage(chats=TARGET_CHANNELS))
+        async def handler(event):
+            if not self.is_running:
+                return
+            text = event.message.text
+            if text:
+                try:
+                    channel = event.chat.username or str(event.chat_id)
+                except:
+                    channel = "unknown"
+                
+                short_text = text.strip().replace('\n', ' ')[:80]
+                print(f"⚡ [MTProto: {channel}] Нове повідомлення: \"{short_text}...\"")
+                await self._process_message(text, channel)
 
     async def stop(self):
         self.is_running = False
-        print("🛑 Web Scraper зупинено.")
+        for task in self._clear_tasks.values():
+            task.cancel()
+        self._clear_tasks.clear()
+        
+        if self.client:
+            await self.client.disconnect()
+            
+        print("🛑 Telegram Monitor зупинено.")
 
+    # --- Web Scraper Fallback Loop ---
     async def _scrape_loop(self):
         async with aiohttp.ClientSession() as session:
-            while self.is_running:
+            while self.is_running and not self.use_mtproto:
                 for channel in TARGET_CHANNELS:
                     await self._scrape_channel(session, channel)
-                # Чекаємо 20 секунд перед наступною перевіркою
                 await asyncio.sleep(20)
 
     async def _scrape_channel(self, session, channel):
@@ -58,48 +146,58 @@ class TelegramThreatMonitor:
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # Знаходимо всі текстові блоки повідомлень
                 messages = soup.select('.tgme_widget_message')
                 if not messages:
                     return
                 
-                # Беремо 3 останні повідомлення
-                recent_messages = messages[-3:]
+                is_first_run = self.last_seen_posts[channel] is None
                 
-                for msg in recent_messages:
+                if is_first_run:
+                    max_id = 0
+                    for msg in messages:
+                        post_id = msg.get('data-post')
+                        if post_id:
+                            try:
+                                current_id = int(post_id.split('/')[-1])
+                                if current_id > max_id:
+                                    max_id = current_id
+                                    self.last_seen_posts[channel] = post_id
+                            except:
+                                continue
+                    print(f"📡 [{channel}] Первинний запуск веб-скрейпера. Базовий ID: {max_id}")
+                    return
+
+                last_id = 0
+                if self.last_seen_posts[channel] is not None:
+                    last_id = int(self.last_seen_posts[channel].split('/')[-1])
+
+                for msg in messages:
                     post_id = msg.get('data-post')
                     if not post_id:
                         continue
                         
-                    # Перевіряємо, чи пост новіший за останній оброблений
                     try:
                         current_id = int(post_id.split('/')[-1])
-                        last_id = 0
-                        if self.last_seen_posts[channel] is not None:
-                            last_id = int(self.last_seen_posts[channel].split('/')[-1])
-                            
                         if current_id <= last_id:
                             continue
-                        
-                        # Оновлюємо останній оброблений ID
                         self.last_seen_posts[channel] = post_id
                     except:
                         continue
 
-                    # Дістаємо текст
                     text_div = msg.select_one('.tgme_widget_message_text')
                     if text_div:
-                        # Замінюємо <br> на нові рядки для зручності читання
                         for br in text_div.find_all("br"):
                             br.replace_with("\n")
                         text = text_div.get_text()
+                        
+                        short_text = text.strip().replace('\n', ' ')[:80]
+                        print(f"📖 [Web: {channel}] Нове повідомлення (ID: {current_id}): \"{short_text}...\"")
                         await self._process_message(text, channel)
         except Exception as e:
-            # Ігноруємо помилки мережі, щоб не спамити в консоль
             pass
 
+    # --- Message Parser Logic (Shared by both MTProto & Web Scraper) ---
     async def _process_message(self, text, channel):
-        # Перевірка на зняття загрози
         is_clear = any(re.search(kw, text, re.IGNORECASE) for kw in CLEAR_KEYWORDS)
         
         if is_clear:
@@ -109,32 +207,66 @@ class TelegramThreatMonitor:
                     self.threat_manager.clear_threat(region)
                     if region in self._clear_tasks:
                         self._clear_tasks[region].cancel()
-                print(f"✅ [{channel}] Загрозу знято для: {', '.join(regions)}")
+                print(f"🟢 [{channel}] Зняття загрози розпізнано для: {', '.join(regions)}")
             else:
                 self.threat_manager.clear_all()
-                print(f"✅ [{channel}] Всі загрози скасовано (відбій тривог/дорозвідка)")
+                print(f"🟢 [{channel}] Зняття загрози розпізнано для ВСІХ областей (відбій/чисто)")
             return
 
         level = self._detect_threat_level(text)
         if not level:
+            print(f"💡 [{channel}] Повідомлення проігноровано (не містить ключових слів загроз)")
             return
 
         threat_type = self._detect_threat_type(text)
         regions = self._extract_regions(text)
         
-        # Якщо загроза критична/висока і немає конкретних областей — це для всієї України
         if not regions and level in ("critical", "high"):
             regions = list(ALL_REGIONS)
+            print(f"🚨 [{channel}] Виявлено загальну небезпеку {level.upper()} для всієї України")
             
         if not regions:
+            print(f"💡 [{channel}] Рівень {level.upper()} розпізнано, але не знайдено відповідних областей")
             return
 
-        detail = f"{THREAT_TYPES.get(threat_type, 'Загроза')}: {text[:80]}..."
         for region in regions:
+            detail = self._build_region_detail(text, region, threat_type)
             self.threat_manager.set_threat(region, level, threat_type, detail)
             self._schedule_auto_clear(region)
 
-        print(f"🔴 [{channel}] Рівень {level.upper()} встановлено для {len(regions)} областей.")
+        print(f"🔴 [{channel}] Рівень {level.upper()} встановлено для {len(regions)} областей: {', '.join(regions)}")
+
+    def _build_region_detail(self, text: str, region: str, threat_type: str) -> str:
+        prefix = THREAT_TYPES.get(threat_type, "Загроза")
+        keywords = ALL_REGIONS.get(region, {}).get("keywords", [])
+        
+        text = re.sub(r' +', ' ', text).strip()
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        relevant_parts = []
+        
+        for line in lines:
+            if any(re.search(kw, line, re.IGNORECASE) for kw in keywords):
+                relevant_parts.append(line)
+            else:
+                sentences = re.split(r'(?<=[.!?])\s+', line)
+                for sentence in sentences:
+                    if any(re.search(kw, sentence, re.IGNORECASE) for kw in keywords):
+                        relevant_parts.append(sentence)
+                        
+        if relevant_parts:
+            unique_parts = []
+            for part in relevant_parts:
+                if part not in unique_parts:
+                    unique_parts.append(part)
+            content = " ".join(unique_parts)
+            if len(content) > 160:
+                content = content[:157] + "..."
+            return f"{prefix}: {content}"
+            
+        cleaned_text = text.replace('\n', ' ')
+        if len(cleaned_text) > 120:
+            cleaned_text = cleaned_text[:117] + "..."
+        return f"{prefix}: {cleaned_text}"
 
     def _detect_threat_level(self, text: str):
         if any(re.search(kw, text, re.IGNORECASE) for kw in CRITICAL_KEYWORDS):
@@ -150,13 +282,13 @@ class TelegramThreatMonitor:
     def _detect_threat_type(self, text: str):
         text_lower = text.lower()
         if any(kw in text_lower for kw in ["шахед", "shahed", "бпла", "дрон", "мопед"]):
-            return "drone"
+            return "shahed"
         if any(kw in text_lower for kw in ["балісти", "іскандер", "кинджал"]):
             return "ballistic"
         if any(kw in text_lower for kw in ["ракета", "крилата", "калібр", "х-101"]):
-            return "missile"
+            return "cruise_missile"
         if any(kw in text_lower for kw in ["міг", "ту-", "авіація"]):
-            return "aviation"
+            return "mig31k" if "міг" in text_lower else "tu95"
         if any(kw in text_lower for kw in ["артилерія", "рсзв", "обстріл"]):
             return "artillery"
         return "unknown"
@@ -174,7 +306,7 @@ class TelegramThreatMonitor:
             self._clear_tasks[region].cancel()
         
         async def auto_clear():
-            await asyncio.sleep(3600)  # 1 година
+            await asyncio.sleep(3600)  # 1 hour
             self.threat_manager.clear_threat(region)
             print(f"⏳ Автоматичне зняття загрози для {region} (таймаут 1 год)")
             
