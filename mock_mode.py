@@ -84,10 +84,19 @@ class ThreatState:
 
 try:
     import firebase_admin
-    from firebase_admin import messaging
+    from firebase_admin import messaging, firestore
     HAS_FIREBASE = True
 except ImportError:
     HAS_FIREBASE = False
+
+def get_db():
+    if not HAS_FIREBASE or not firebase_admin._apps:
+        return None
+    try:
+        return firestore.client()
+    except Exception as e:
+        print(f"⚠️ Помилка отримання Firestore клієнта: {e}")
+        return None
 
 # Мапування українських назв областей на відповідні теми (Topics) у Firebase
 TOPIC_MAPPING = {
@@ -182,7 +191,46 @@ class MockThreatManager:
         self.threats: dict[str, ThreatState] = {}
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState()
-        self.load_from_file()
+        self.load_from_db()
+
+    def save_to_db(self):
+        db = get_db()
+        if db:
+            try:
+                state_data = {
+                    region: state.to_dict()
+                    for region, state in self.threats.items()
+                }
+                doc_ref = db.collection('sirenua_state').document('threats')
+                doc_ref.set(state_data)
+            except Exception as e:
+                print(f"⚠️ Помилка збереження стану загроз у Firebase: {e}")
+        self.save_to_file()
+
+    def load_from_db(self):
+        db = get_db()
+        if db:
+            try:
+                doc_ref = db.collection('sirenua_state').document('threats')
+                doc = doc_ref.get()
+                if doc.exists:
+                    state_data = doc.to_dict()
+                    for region, data in state_data.items():
+                        if region in self.threats:
+                            state = self.threats[region]
+                            state.level = data.get("level", "none")
+                            state.threat_type = data.get("type")
+                            state.detail = data.get("detail")
+                            state.since = data.get("since")
+                    print("💾 Завантажено збережений стан загроз з Firebase Firestore")
+                else:
+                    print("⚠️ Документ загроз у Firebase не знайдено.")
+                    self.load_from_file()
+            except Exception as e:
+                print(f"⚠️ Помилка завантаження стану загроз з Firebase: {e}")
+                self.load_from_file()
+        else:
+            self.load_from_file()
 
     def save_to_file(self):
         import json
@@ -236,7 +284,7 @@ class MockThreatManager:
         
         if has_changed:
             send_fcm_notification(region, level, threat_type, detail)
-            self.save_to_file()
+            self.save_to_db()
             
         return True
 
@@ -248,7 +296,7 @@ class MockThreatManager:
         self.threats[region].clear()
         if has_changed:
             send_fcm_notification(region, "none")
-            self.save_to_file()
+            self.save_to_db()
         return True
 
     def clear_all(self):
