@@ -43,29 +43,52 @@ def init_firebase():
         print("⚠️ Попередження: Бібліотека firebase-admin не встановлена. Сповіщення не надсилатимуться.")
         return
     
-    # Пріоритет 1: шлях зі змінної оточення
+    # Пріоритет 1: шлях або JSON-рядок зі змінної оточення
     # Пріоритет 2: файл у папці threat_server
     # Пріоритет 3: файл у корені
-    cred_path = os.environ.get("FIREBASE_CREDENTIALS_JSON")
-    if not cred_path:
-        if os.path.exists("threat_server/firebase-credentials.json"):
-            cred_path = "threat_server/firebase-credentials.json"
-        elif os.path.exists("firebase-credentials.json"):
-            cred_path = "firebase-credentials.json"
+    cred_env = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+    
+    if cred_env:
+        # Спробуємо розпарсити як JSON-рядок
+        if cred_env.strip().startswith("{"):
+            try:
+                import json
+                cred_dict = json.loads(cred_env)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                print("🔥 Firebase Admin SDK ініціалізовано за допомогою JSON-рядка з змінної оточення.")
+                return
+            except Exception as e:
+                print(f"⚠️ Помилка ініціалізації Firebase за JSON-рядком: {e}")
+        
+        # Якщо це не JSON, спробуємо як шлях до файлу
+        if os.path.exists(cred_env):
+            try:
+                cred = credentials.Certificate(cred_env)
+                firebase_admin.initialize_app(cred)
+                print(f"🔥 Firebase Admin SDK ініціалізовано за допомогою файлу: {cred_env}")
+                return
+            except Exception as e:
+                print(f"⚠️ Помилка ініціалізації Firebase за файлом ключів: {e}")
 
-    if cred_path and os.path.exists(cred_path):
-        try:
-            cred = credentials.Certificate(cred_path)
-            firebase_admin.initialize_app(cred)
-            print(f"🔥 Firebase Admin SDK ініціалізовано за допомогою файлу: {cred_path}")
-        except Exception as e:
-            print(f"⚠️ Помилка ініціалізації Firebase за файлом ключів: {e}")
-    else:
-        try:
-            firebase_admin.initialize_app()
-            print("🔥 Firebase Admin SDK ініціалізовано (Default Credentials / Env).")
-        except Exception as e:
-            print("⚠️ Попередження: Не знайдено firebase-credentials.json. Сповіщення у фоні не працюватимуть.")
+    # Fallback до файлів за замовчуванням
+    default_paths = ["threat_server/firebase-credentials.json", "firebase-credentials.json"]
+    for path in default_paths:
+        if os.path.exists(path):
+            try:
+                cred = credentials.Certificate(path)
+                firebase_admin.initialize_app(cred)
+                print(f"🔥 Firebase Admin SDK ініціалізовано за допомогою дефолтного файлу: {path}")
+                return
+            except Exception as e:
+                print(f"⚠️ Помилка ініціалізації Firebase за дефолтним файлом {path}: {e}")
+
+    # Останній варіант - спробувати замовчування
+    try:
+        firebase_admin.initialize_app()
+        print("🔥 Firebase Admin SDK ініціалізовано (Default Credentials / Env).")
+    except Exception as e:
+        print("⚠️ Попередження: Не знайдено credentials. Сповіщення у фоні не працюватимуть.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
