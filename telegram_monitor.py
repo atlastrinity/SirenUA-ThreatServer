@@ -1,11 +1,18 @@
 import asyncio
 import os
 import re
+import sys
 from typing import Optional
 from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
 from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES
+
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 
 # Target Telegram channels to monitor
 TARGET_CHANNELS = [
@@ -96,6 +103,17 @@ class TelegramThreatMonitor:
         # State for web scraper fallback
         self.last_seen_posts = {channel: None for channel in TARGET_CHANNELS}
 
+    async def _join_target_channels(self):
+        if not self.client:
+            return
+        for channel in TARGET_CHANNELS:
+            try:
+                from telethon.tl.functions.channels import JoinChannelRequest
+                await self.client(JoinChannelRequest(channel))
+                print(f"✅ Юзербот перевірив/підписався на канал: {channel}")
+            except Exception as e:
+                print(f"⚠️ Помилка підписки на {channel}: {e}")
+
     async def start(self):
         self.is_running = True
         self._schedule_initial_auto_clears()
@@ -111,6 +129,7 @@ class TelegramThreatMonitor:
                 if await self.client.is_user_authorized():
                     self.use_mtproto = True
                     print("✅ Юзербот авторизований через StringSession! Отримуємо повідомлення МИТТЄВО.")
+                    await self._join_target_channels()
                     self._setup_event_handlers()
                     return
                 else:
@@ -136,6 +155,7 @@ class TelegramThreatMonitor:
                 if await self.client.is_user_authorized():
                     self.use_mtproto = True
                     print("✅ Юзербот авторизований через локальний файл! Отримуємо повідомлення МИТТЄВО.")
+                    await self._join_target_channels()
                     self._setup_event_handlers()
                     return
                 else:
