@@ -182,6 +182,44 @@ class MockThreatManager:
         self.threats: dict[str, ThreatState] = {}
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState()
+        self.load_from_file()
+
+    def save_to_file(self):
+        import json
+        import os
+        try:
+            state_data = {
+                region: state.to_dict()
+                for region, state in self.threats.items()
+            }
+            filepath = "threats_state.json"
+            if os.path.exists("threat_server"):
+                filepath = "threat_server/threats_state.json"
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(state_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ Помилка збереження стану загроз: {e}")
+
+    def load_from_file(self):
+        import json
+        import os
+        filepath = "threats_state.json"
+        if os.path.exists("threat_server"):
+            filepath = "threat_server/threats_state.json"
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    state_data = json.load(f)
+                for region, data in state_data.items():
+                    if region in self.threats:
+                        state = self.threats[region]
+                        state.level = data.get("level", "none")
+                        state.threat_type = data.get("type")
+                        state.detail = data.get("detail")
+                        state.since = data.get("since")
+                print(f"💾 Завантажено збережений стан загроз з {filepath}")
+            except Exception as e:
+                print(f"⚠️ Помилка завантаження стану загроз: {e}")
 
     def set_threat(self, region: str, level: str,
                    threat_type: Optional[str] = None,
@@ -198,6 +236,7 @@ class MockThreatManager:
         
         if has_changed:
             send_fcm_notification(region, level, threat_type, detail)
+            self.save_to_file()
             
         return True
 
@@ -209,6 +248,7 @@ class MockThreatManager:
         self.threats[region].clear()
         if has_changed:
             send_fcm_notification(region, "none")
+            self.save_to_file()
         return True
 
     def clear_all(self):
@@ -217,6 +257,7 @@ class MockThreatManager:
             state.clear()
             if has_changed:
                 send_fcm_notification(region, "none")
+        self.save_to_file()
 
     def get_all_threats(self) -> dict:
         return {

@@ -98,6 +98,7 @@ class TelegramThreatMonitor:
 
     async def start(self):
         self.is_running = True
+        self._schedule_initial_auto_clears()
         
         # 1. Try to load from environment variable (StringSession) - best for Render production
         session_string = os.environ.get("TELEGRAM_SESSION_STRING")
@@ -331,14 +332,16 @@ class TelegramThreatMonitor:
 
     def _detect_threat_type(self, text: str):
         text_lower = text.lower()
+        if any(kw in text_lower for kw in ["міг-31", "міг31", "mig-31", "mig31", "кинджал"]):
+            return "mig31k"
+        if any(kw in text_lower for kw in ["ту-95", "ту95", "tu-95", "tu95", "ту-22", "ту22", "tu-22", "tu22"]):
+            return "tu95"
         if any(kw in text_lower for kw in ["шахед", "shahed", "бпла", "дрон", "мопед"]):
             return "shahed"
-        if any(kw in text_lower for kw in ["балісти", "іскандер", "кинджал"]):
+        if any(kw in text_lower for kw in ["балісти", "іскандер"]):
             return "ballistic"
-        if any(kw in text_lower for kw in ["ракета", "крилата", "калібр", "х-101"]):
+        if any(kw in text_lower for kw in ["ракет", "крилат", "калібр", "х-101"]):
             return "cruise_missile"
-        if any(kw in text_lower for kw in ["міг", "ту-", "авіація"]):
-            return "mig31k" if "міг" in text_lower else "tu95"
         if any(kw in text_lower for kw in ["артилерія", "рсзв", "обстріл"]):
             return "artillery"
         return "unknown"
@@ -351,13 +354,31 @@ class TelegramThreatMonitor:
                     found.add(region)
         return list(found)
 
-    def _schedule_auto_clear(self, region: str):
+    def _schedule_auto_clear(self, region: str, delay_seconds: float = 3600):
         if region in self._clear_tasks:
             self._clear_tasks[region].cancel()
         
         async def auto_clear():
-            await asyncio.sleep(3600)  # 1 hour
+            await asyncio.sleep(delay_seconds)
             self.threat_manager.clear_threat(region)
-            print(f"⏳ Автоматичне зняття загрози для {region} (таймаут 1 год)")
+            print(f"⏳ Автоматичне зняття загрози для {region} (таймаут {int(delay_seconds)} сек)")
             
         self._clear_tasks[region] = asyncio.create_task(auto_clear())
+
+    def _schedule_initial_auto_clears(self):
+        from datetime import datetime, timezone
+        for region, state in self.threat_manager.threats.items():
+            if state.level != "none" and state.since:
+                try:
+                    since_str = state.since.replace("Z", "+00:00")
+                    since_dt = datetime.fromisoformat(since_str)
+                    elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
+                    remaining = 3600 - elapsed
+                    if remaining <= 0:
+                        self.threat_manager.clear_threat(region)
+                        print(f"⏳ Загроза для {region} застаріла під час офлайну. Очищено.")
+                    else:
+                        self._schedule_auto_clear(region, remaining)
+                        print(f"⏳ Заплановано автозняття загрози для {region} через {int(remaining)} сек.")
+                except Exception as e:
+                    self._schedule_auto_clear(region, 3600)
