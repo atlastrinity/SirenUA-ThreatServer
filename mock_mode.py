@@ -82,6 +82,99 @@ class ThreatState:
         self.since = None
 
 
+try:
+    import firebase_admin
+    from firebase_admin import messaging
+    HAS_FIREBASE = True
+except ImportError:
+    HAS_FIREBASE = False
+
+# Мапування українських назв областей на відповідні теми (Topics) у Firebase
+TOPIC_MAPPING = {
+    "Вінницька область": "region_vinnytsia",
+    "Волинська область": "region_volyn",
+    "Дніпропетровська область": "region_dnipro",
+    "Донецька область": "region_donetsk",
+    "Житомирська область": "region_zhytomyr",
+    "Закарпатська область": "region_zakarpattya",
+    "Запорізька область": "region_zaporizhzhya",
+    "Івано-Франківська область": "region_if",
+    "Київська область": "region_kyiv_oblast",
+    "м. Київ": "region_kyiv_city",
+    "Кіровоградська область": "region_kirovohrad",
+    "Луганська область": "region_luhansk",
+    "Львівська область": "region_lviv",
+    "Миколаївська область": "region_mykolaiv",
+    "Одеська область": "region_odesa",
+    "Полтавська область": "region_poltava",
+    "Рівненська область": "region_rivne",
+    "Сумська область": "region_sumy",
+    "Тернопільська область": "region_ternopil",
+    "Харківська область": "region_kharkiv",
+    "Херсонська область": "region_kherson",
+    "Хмельницька область": "region_khmelnytskyi",
+    "Черкаська область": "region_cherkasy",
+    "Чернівецька область": "region_chernivtsi",
+    "Чернігівська область": "region_chernihiv"
+}
+
+def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None):
+    """Надсилає Push-сповіщення у Firebase топік для відповідного регіону."""
+    if not HAS_FIREBASE:
+        return
+        
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        # Firebase не ініціалізовано
+        return
+
+    topic = TOPIC_MAPPING.get(region)
+    if not topic:
+        return
+        
+    # Визначаємо звук, заголовок та текст сповіщення
+    if level == "none":
+        title = "🟢 Відбій тривоги!"
+        body = f"Відбій повітряної тривоги в: {region}."
+        sound = "vidbiy.wav"
+    else:
+        if threat_type == "mig31k":
+            title = "🚨 Авіаційна небезпека!"
+            sound = "siren.wav"
+        elif level in ("high", "critical"):
+            title = "🚨 Повітряна тривога!"
+            sound = "siren.wav"
+        else:
+            title = "⚠️ Попередження про загрозу"
+            sound = "warning.wav"
+            
+        body = detail if detail else f"Повітряна тривога в: {region}. Прямуйте в укриття!"
+
+    # Створюємо повідомлення для топіку з налаштуваннями звуку для iOS (APNs)
+    message = messaging.Message(
+        notification=messaging.Notification(
+            title=title,
+            body=body,
+        ),
+        apns=messaging.APNSConfig(
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(
+                    sound=sound,
+                    badge=1
+                )
+            )
+        ),
+        topic=topic,
+    )
+
+    try:
+        response = messaging.send(message)
+        print(f"🚀 FCM Push sent successfully for {region} (topic: {topic}), response: {response}")
+    except Exception as e:
+        print(f"⚠️ Помилка відправки FCM Push для {region}: {e}")
+
+
 class MockThreatManager:
     """Менеджер загроз — зберігає стан для всіх областей."""
 
@@ -95,18 +188,35 @@ class MockThreatManager:
                    detail: Optional[str] = None) -> bool:
         if region not in self.threats:
             return False
+            
+        old_state = self.threats[region]
+        has_changed = (old_state.level != level or 
+                       old_state.threat_type != threat_type or 
+                       old_state.detail != detail)
+                       
         self.threats[region].set_threat(level, threat_type, detail)
+        
+        if has_changed:
+            send_fcm_notification(region, level, threat_type, detail)
+            
         return True
 
     def clear_threat(self, region: str) -> bool:
         if region not in self.threats:
             return False
+        old_state = self.threats[region]
+        has_changed = (old_state.level != "none")
         self.threats[region].clear()
+        if has_changed:
+            send_fcm_notification(region, "none")
         return True
 
     def clear_all(self):
-        for state in self.threats.values():
+        for region, state in self.threats.items():
+            has_changed = (state.level != "none")
             state.clear()
+            if has_changed:
+                send_fcm_notification(region, "none")
 
     def get_all_threats(self) -> dict:
         return {

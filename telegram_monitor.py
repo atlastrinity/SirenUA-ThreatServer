@@ -7,7 +7,7 @@ from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES
 # Цільові канали для автоматичного прослуховування
 TARGET_CHANNELS = [
     "kpszsu",            # Повітряні Сили ЗСУ
-    "monitor",           # Найшвидша аналітика радарів
+    "monitorwarr",       # Найшвидша аналітика радарів
     "vanek_nikolaev"     # Николаевский Ванек
 ]
 
@@ -71,21 +71,18 @@ class TelegramThreatMonitor:
                     if not post_id:
                         continue
                         
-                    # Якщо це перший запуск, просто запам'ятовуємо останній пост і не реагуємо на старі загрози
-                    if self.last_seen_posts[channel] is None:
-                        self.last_seen_posts[channel] = messages[-1].get('data-post')
-                        return
-                    
-                    # Перевіряємо, чи пост новіший за останній оброблений (напр. "kpszsu/1234")
+                    # Перевіряємо, чи пост новіший за останній оброблений
                     try:
                         current_id = int(post_id.split('/')[-1])
-                        last_id = int(self.last_seen_posts[channel].split('/')[-1])
+                        last_id = 0
+                        if self.last_seen_posts[channel] is not None:
+                            last_id = int(self.last_seen_posts[channel].split('/')[-1])
+                            
                         if current_id <= last_id:
                             continue
                         
                         # Оновлюємо останній оброблений ID
-                        if current_id > last_id:
-                            self.last_seen_posts[channel] = post_id
+                        self.last_seen_posts[channel] = post_id
                     except:
                         continue
 

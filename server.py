@@ -26,16 +26,54 @@ import uvicorn
 
 from mock_mode import MockThreatManager
 
+try:
+    import firebase_admin
+    from firebase_admin import credentials
+    HAS_FIREBASE = True
+except ImportError:
+    HAS_FIREBASE = False
+
 # Глобальний менеджер загроз (in-memory)
 threat_manager = MockThreatManager()
 telegram_monitor = None
 is_live_mode = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
 
+def init_firebase():
+    if not HAS_FIREBASE:
+        print("⚠️ Попередження: Бібліотека firebase-admin не встановлена. Сповіщення не надсилатимуться.")
+        return
+    
+    # Пріоритет 1: шлях зі змінної оточення
+    # Пріоритет 2: файл у папці threat_server
+    # Пріоритет 3: файл у корені
+    cred_path = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+    if not cred_path:
+        if os.path.exists("threat_server/firebase-credentials.json"):
+            cred_path = "threat_server/firebase-credentials.json"
+        elif os.path.exists("firebase-credentials.json"):
+            cred_path = "firebase-credentials.json"
+
+    if cred_path and os.path.exists(cred_path):
+        try:
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred)
+            print(f"🔥 Firebase Admin SDK ініціалізовано за допомогою файлу: {cred_path}")
+        except Exception as e:
+            print(f"⚠️ Помилка ініціалізації Firebase за файлом ключів: {e}")
+    else:
+        try:
+            firebase_admin.initialize_app()
+            print("🔥 Firebase Admin SDK ініціалізовано (Default Credentials / Env).")
+        except Exception as e:
+            print("⚠️ Попередження: Не знайдено firebase-credentials.json. Сповіщення у фоні не працюватимуть.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager — запуск/зупинка Telegram моніторингу."""
     global telegram_monitor
+    
+    # Ініціалізація Firebase Cloud Messaging
+    init_firebase()
     
     if is_live_mode:
         from telegram_monitor import TelegramThreatMonitor
