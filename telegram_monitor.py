@@ -45,10 +45,12 @@ HIGH_KEYWORDS = [
     r"Іскандер", 
     r"балісти",            # Matches "балістика", "балістичний", "балістики" (99% chance of siren)
     r"пуски?\s*ракет",
-    r"ракета\s*(в\s*напрямку|на)",  # Missile heading directly towards a region
+    r"ракет[аи]\s*(в\s*напрямку|на)",  # Missile heading directly towards a region
     r"керована\s*авіаційна\s*ракета",
     r"[ХX][-\s]?59",
-    r"[ХX][-\s]?69"
+    r"[ХX][-\s]?69",
+    r"\bукритт[яі]\b",
+    r"\bтривог[аи]\b"
 ]
 
 MEDIUM_KEYWORDS = [
@@ -377,6 +379,43 @@ class TelegramThreatMonitor:
             for kw in info["keywords"]:
                 if re.search(kw, text, re.IGNORECASE):
                     found.add(region)
+                    
+        # Macro-directions mapping
+        text_lower = text.lower()
+        
+        west_regions = ["Львівська область", "Волинська область", "Рівненська область", "Тернопільська область", "Хмельницька область", "Івано-Франківська область", "Закарпатська область", "Чернівецька область"]
+        north_regions = ["Київська область", "м. Київ", "Чернігівська область", "Сумська область", "Житомирська область"]
+        center_regions = ["Черкаська область", "Кіровоградська область", "Полтавська область", "Вінницька область", "Дніпропетровська область"]
+        south_regions = ["Одеська область", "Миколаївська область", "Херсонська область", "Запорізька область"]
+        east_regions = ["Харківська область", "Донецька область", "Луганська область", "Дніпропетровська область", "Запорізька область"]
+
+        # Check for West
+        if re.search(r"\bзахідн\w*\b|\bзаході\b|\bзахід\b", text_lower):
+            if not any(landing_kw in text_lower for landing_kw in ["посадка", "захід на посадку"]):
+                for r in west_regions:
+                    found.add(r)
+                    
+        # Check for North
+        if re.search(r"\bпівнічн\w*\b|\bпівночі\b|\bпівніч\b", text_lower):
+            for r in north_regions:
+                found.add(r)
+                
+        # Check for Center
+        if re.search(r"\bцентральн\w*\b|\bцентрі\b|\bцентр\b", text_lower):
+            if not any(skip in text_lower for skip in ["прес-центр", "інфо-центр"]):
+                for r in center_regions:
+                    found.add(r)
+                    
+        # Check for South
+        if re.search(r"\bпівденн\w*\b|\bпівдні\b|\bпівдень\b", text_lower):
+            for r in south_regions:
+                found.add(r)
+                
+        # Check for East
+        if re.search(r"\bсхідн\w*\b|\bсході\b|\bсхід\b", text_lower):
+            for r in east_regions:
+                found.add(r)
+                
         return list(found)
 
     def _schedule_auto_clear(self, region: str, delay_seconds: float = 3600):
