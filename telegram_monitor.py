@@ -507,6 +507,21 @@ class TelegramThreatMonitor:
                         eta_str = "+15-30 хв"
                     
                 detail = clean_user_facing_threat_detail(text)
+                
+                # Append telemetry details in a readable format if available
+                telemetry_info = []
+                if telemetry and isinstance(telemetry, dict):
+                    distance = telemetry.get("distance_to_target_km")
+                    if distance:
+                        telemetry_info.append(f"📍 Відстань до цілі: ~{distance:.0f} км.")
+                    
+                    target_count = telemetry.get("target_count")
+                    if target_count and target_count > 1:
+                        telemetry_info.append(f"👥 Кількість цілей у групі: {target_count}.")
+                
+                if telemetry_info:
+                    detail += "\n" + " ".join(telemetry_info)
+                
                 if is_pred:
                     detail += f"\n⚠️ Ціль може прямувати через область."
                     if eta_str:
