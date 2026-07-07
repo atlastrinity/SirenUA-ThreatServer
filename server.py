@@ -84,13 +84,21 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
-        # Відправляємо оновлення всім клієнтам
+        # Відправляємо оновлення всім клієнтам паралельно
         msg_text = json.dumps(message)
-        for connection in self.active_connections:
+        dead_connections = []
+
+        async def send(connection):
             try:
                 await connection.send_text(msg_text)
             except Exception:
-                pass
+                dead_connections.append(connection)
+
+        if self.active_connections:
+            await asyncio.gather(*(send(conn) for conn in self.active_connections))
+            
+        for dead in dead_connections:
+            self.disconnect(dead)
 
 ws_manager = ConnectionManager()
 
