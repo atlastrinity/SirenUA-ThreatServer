@@ -28,7 +28,7 @@ import sqlite3
 import json
 import aiohttp
 
-from mock_mode import MockThreatManager
+from mock_mode import MockThreatManager, get_db
 from shelter_manager import ShelterManager
 
 try:
@@ -204,6 +204,34 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
         print(f"⚠️ Помилка запису в БД аналітики: {e}")
         return None
 
+def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None):
+    """Log threat event to Firebase Firestore."""
+    db = get_db()
+    if not db:
+        return
+    try:
+        import time
+        from datetime import datetime, timezone
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        unique_id = int(time.time() * 1000)
+        
+        doc_data = {
+            "id": unique_id,
+            "region": region,
+            "timestamp": timestamp,
+            "threat_level": level,
+            "threat_type": threat_type,
+            "detail": detail,
+            "confidence": confidence
+        }
+        if telemetry:
+            doc_data["telemetry"] = telemetry
+            
+        db.collection('sirenua_history').add(doc_data)
+        print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type})")
+    except Exception as e:
+        print(f"⚠️ Помилка запису історії в Firestore: {e}")
+
 def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                        source_channel: str = None, message_text: str = None,
                        clearing_confidence: int = None, was_predictive: bool = False):
@@ -370,14 +398,17 @@ def on_threat_changed(region, state, telemetry=None):
         log_level = "high" if state.is_active else "none"
         detail = "Повітряна тривога" if state.is_active else "Відбій повітряної тривоги"
         log_threat_to_db(region, log_level, "official_alarm", detail)
+        log_threat_to_firestore(region, log_level, "official_alarm", detail)
         
     # 2. AI/Telegram threat level change logging
     if prev_level != state.level:
         if state.level != "none":
             log_threat_to_db(region, state.level, state.threat_type, state.detail, state.confidence, telemetry=telemetry)
+            log_threat_to_firestore(region, state.level, state.threat_type, state.detail, state.confidence, telemetry=telemetry)
         elif prev_level != "none":
             # Threat has cleared
             log_threat_to_db(region, "none", state.threat_type or prev_type or "official_alarm", "Відбій загрози")
+            log_threat_to_firestore(region, "none", state.threat_type or prev_type or "official_alarm", "Відбій загрози")
             
     last_logged_states[region] = (state.level, state.is_active, state.threat_type)
 
@@ -1135,31 +1166,38 @@ async def get_prediction_accuracy(days: int = 30):
 
 @app.get("/api/history/{region}")
 async def get_region_history(region: str, limit: int = 50):
-    """Повертає хронологію загроз для конкретної області."""
-    # URL-decode region name
+    """Повертає хронологію загроз для конкретної області з Firebase Firestore."""
     from urllib.parse import unquote
     region = unquote(region)
     
+    db = get_db()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firebase Firestore недоступний")
+        
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        # Fetch matching documents from Firestore
+        docs = await asyncio.to_thread(
+            lambda: db.collection('sirenua_history')
+                      .where('region', '==', region)
+                      .get()
+        )
         
-        cursor.execute('''
-            SELECT id, timestamp, threat_level, threat_type, detail, confidence
-            FROM threat_history
-            WHERE region = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-        ''', (region, min(limit, 200)))
+        events = []
+        for doc in docs:
+            d = doc.to_dict()
+            # Ensure ID field is present and returned
+            events.append(d)
+            
+        # Sort by timestamp descending
+        events.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
         
-        rows = cursor.fetchall()
-        conn.close()
+        # Limit results
+        events = events[:min(limit, 200)]
         
         return {
             "region": region,
-            "count": len(rows),
-            "events": [dict(row) for row in rows]
+            "count": len(events),
+            "events": events
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
