@@ -446,7 +446,7 @@ async def set_scenario(request: ScenarioRequest):
 @app.post("/api/threats/clear")
 async def clear_all_threats():
     """Очистити всі загрози."""
-    threat_manager.clear_all()
+    threat_manager.clear_all(only_test=True)
     return {"status": "ok", "message": "All threats cleared"}
 
 
@@ -464,7 +464,7 @@ async def test_telegram_message(request: TelegramTestRequest):
         print(f"🧪 [Test Endpoint] Analyzing message: {request.text[:80]}...")
         results = await telegram_monitor.analyzer.analyze_batch([{"channel": request.channel, "text": request.text}])
         if results:
-            await telegram_monitor._apply_gemini_analysis(results)
+            await telegram_monitor._apply_gemini_analysis(results, is_test=True)
             return {
                 "status": "ok",
                 "message": "Message analyzed via Gemini immediately",

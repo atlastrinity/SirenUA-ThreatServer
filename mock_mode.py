@@ -97,16 +97,19 @@ class ThreatState:
         self.confidence: Optional[int] = None  # 0-100% AI confidence
         self.is_predictive: bool = False
         self.is_active: bool = False
+        self.is_test: bool = False
 
     def set_threat(self, level: str, threat_type: Optional[str] = None,
                    detail: Optional[str] = None, confidence: Optional[int] = None,
-                   eta: Optional[str] = None, is_predictive: bool = False):
+                   eta: Optional[str] = None, is_predictive: bool = False,
+                   is_test: bool = False):
         self.level = level
         self.threat_type = threat_type
         self.detail = detail
         self.confidence = confidence
         self.eta = eta
         self.is_predictive = is_predictive
+        self.is_test = is_test
         if level != "none":
             self.since = datetime.now(timezone.utc).isoformat()
         else:
@@ -122,6 +125,7 @@ class ThreatState:
             "eta": self.eta,
             "is_predictive": self.is_predictive,
             "is_active": self.is_active,
+            "is_test": self.is_test,
         }
 
     def clear(self):
@@ -133,6 +137,7 @@ class ThreatState:
         self.eta = None
         self.is_predictive = False
         self.is_active = False
+        self.is_test = False
 
 try:
     import firebase_admin
@@ -445,17 +450,19 @@ class MockThreatManager:
                    detail: Optional[str] = None,
                    confidence: Optional[int] = None,
                    eta: Optional[str] = None,
-                   is_predictive: bool = False) -> bool:
+                   is_predictive: bool = False,
+                   is_test: bool = False) -> bool:
         if region not in self.threats:
             return False
-            
+
         old_state = self.threats[region]
         has_changed = (old_state.level != level or 
                        old_state.threat_type != threat_type or 
                        old_state.detail != detail or
-                       old_state.confidence != confidence)
-                       
-        self.threats[region].set_threat(level, threat_type, detail, confidence, eta, is_predictive)
+                       old_state.confidence != confidence or
+                       old_state.is_test != is_test)
+
+        self.threats[region].set_threat(level, threat_type, detail, confidence, eta, is_predictive, is_test)
         
         if has_changed:
             import time
@@ -494,9 +501,11 @@ class MockThreatManager:
                 self.on_change(region, self.threats[region])
         return True
 
-    def clear_all(self):
+    def clear_all(self, only_test: bool = False):
         any_changed = False
         for region, state in self.threats.items():
+            if only_test and not state.is_test:
+                continue
             has_changed = (state.level != "none")
             if has_changed:
                 state.clear()

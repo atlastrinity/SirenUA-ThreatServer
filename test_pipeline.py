@@ -37,9 +37,11 @@ class TestThreatManager(MockThreatManager):
         })
         return res
 
-    def clear_all(self):
-        super().clear_all()
+    def clear_all(self, only_test: bool = False):
+        super().clear_all(only_test)
         for region in ALL_REGIONS:
+            if only_test and not self.threats[region].is_test:
+                continue
             self.sent_notifications.append({
                 "region": region,
                 "level": "none",

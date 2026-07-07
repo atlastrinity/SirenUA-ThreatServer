@@ -323,7 +323,7 @@ class TelegramThreatMonitor:
                 if results:
                     await self._apply_gemini_analysis(results)
 
-    async def _apply_gemini_analysis(self, results):
+    async def _apply_gemini_analysis(self, results, is_test: bool = False):
         """Applies Gemini AI analysis results with confidence-based filtering and level adjustment."""
         for item in results:
             if not isinstance(item, dict):
@@ -433,7 +433,8 @@ class TelegramThreatMonitor:
                     detail += f"\n(Очікуваний час: {eta_str})"
 
                 self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
-                                              confidence=region_confidence, eta=eta_str, is_predictive=is_pred)
+                                               confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
+                                               is_test=is_test)
                 self._schedule_auto_clear(region, delay)
                 conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
                 print(f"🔴 [Gemini] Встановлено загрозу ({adjusted_level}) для: {region}{conf_str}")
