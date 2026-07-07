@@ -68,7 +68,10 @@ LOW_KEYWORDS = [
     r"активність\s*авіаці", 
     r"загроза\s*застосування\s*каб",
     r"пусти\s*каб",
-    r"каб\s*в\s*напрямку"
+    r"каб\s*в\s*напрямку",
+    r"\bкаб(и|ів)?\b",
+    r"пуск\w*\s*каб[и]?",
+    r"керован\w*\s*авіаційн\w*\s*бомб\w*"
 ]
 
 CLEAR_KEYWORDS = [
@@ -364,6 +367,8 @@ class TelegramThreatMonitor:
             return "cruise_missile"
         if any(kw in text_lower for kw in ["артилерія", "рсзв", "обстріл"]):
             return "artillery"
+        if re.search(r"\bкаб(и|ів)?\b|авіабомб", text_lower):
+            return "kab"
         return "unknown"
 
     def _extract_regions(self, text: str):
