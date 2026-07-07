@@ -7,11 +7,13 @@ class GeminiThreatAnalyzer:
     def __init__(self):
         # Configure Gemini
         api_key = os.environ.get("GEMINI_API_KEY", "")
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
         if api_key:
             genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel('gemini-flash-latest')
+            self.model = genai.GenerativeModel(model_name)
             self.is_configured = True
             self.last_error = None
+            print(f"🧠 GeminiAnalyzer configured with model: {model_name}")
         else:
             self.is_configured = False
             self.last_error = "API key missing"
