@@ -174,6 +174,13 @@ async def lifespan(app: FastAPI):
     # Ініціалізація БД аналітики
     init_analytics_db()
 
+    # Завантаження збереженого стану загроз (асинхронно у фоновому пулі)
+    try:
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, threat_manager.load_from_db)
+    except Exception as e:
+        print(f"⚠️ Помилка асинхронного завантаження стану загроз: {e}")
+
     # Завантаження бази укриттів з OpenStreetMap
     try:
         await shelter_manager.load()

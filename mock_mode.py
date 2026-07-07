@@ -272,7 +272,6 @@ class MockThreatManager:
         self.last_sound_time: float = 0.0
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState()
-        self.load_from_db()
 
     def save_to_db(self):
         db = get_db()
