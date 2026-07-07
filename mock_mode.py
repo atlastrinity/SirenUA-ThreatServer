@@ -415,12 +415,18 @@ class MockThreatManager:
         return True
 
     def clear_all(self):
+        any_changed = False
         for region, state in self.threats.items():
             has_changed = (state.level != "none")
-            state.clear()
             if has_changed:
+                state.clear()
                 send_fcm_notification(region, "none")
-        self.save_to_file()
+                any_changed = True
+                if hasattr(self, 'on_change'):
+                    self.on_change(region, state)
+        if any_changed:
+            self.save_to_db()
+            self.save_to_file()
 
     def get_all_threats(self) -> dict:
         return {
