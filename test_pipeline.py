@@ -14,13 +14,16 @@ class TestThreatManager(MockThreatManager):
         super().__init__()
         self.sent_notifications = []
 
-    def set_threat(self, region: str, level: str, threat_type=None, detail=None):
-        res = super().set_threat(region, level, threat_type, detail)
+    def set_threat(self, region: str, level: str, threat_type=None, detail=None, confidence=None, eta=None, is_predictive=False):
+        res = super().set_threat(region, level, threat_type, detail, confidence, eta, is_predictive)
         self.sent_notifications.append({
             "region": region,
             "level": level,
             "type": threat_type,
-            "detail": detail
+            "detail": detail,
+            "confidence": confidence,
+            "eta": eta,
+            "is_predictive": is_predictive
         })
         return res
 
