@@ -214,8 +214,7 @@ async def lifespan(app: FastAPI):
 
     # Завантаження збереженого стану загроз (асинхронно у фоновому пулі)
     try:
-        loop = asyncio.get_running_loop()
-        loop.run_in_executor(None, threat_manager.load_from_db)
+        await asyncio.to_thread(threat_manager.load_from_db)
     except Exception as e:
         print(f"⚠️ Помилка асинхронного завантаження стану загроз: {e}")
 
