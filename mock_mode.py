@@ -451,7 +451,8 @@ class MockThreatManager:
                    confidence: Optional[int] = None,
                    eta: Optional[str] = None,
                    is_predictive: bool = False,
-                   is_test: bool = False) -> bool:
+                   is_test: bool = False,
+                   telemetry: dict = None) -> bool:
         if region not in self.threats:
             return False
 
@@ -476,7 +477,7 @@ class MockThreatManager:
             send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active)
             self.save_to_db()
             if hasattr(self, 'on_change'):
-                self.on_change(region, self.threats[region])
+                self.on_change(region, self.threats[region], telemetry=telemetry)
             
         return True
 
@@ -498,7 +499,7 @@ class MockThreatManager:
             send_fcm_notification(region, "none", play_sound=play_sound)
             self.save_to_db()
             if hasattr(self, 'on_change'):
-                self.on_change(region, self.threats[region])
+                self.on_change(region, self.threats[region], telemetry=None)
         return True
 
     def clear_all(self, only_test: bool = False):
@@ -512,7 +513,7 @@ class MockThreatManager:
                 send_fcm_notification(region, "none")
                 any_changed = True
                 if hasattr(self, 'on_change'):
-                    self.on_change(region, state)
+                    self.on_change(region, state, telemetry=None)
         if any_changed:
             self.save_to_db()
             self.save_to_file()
@@ -552,7 +553,7 @@ class MockThreatManager:
             
             self.save_to_db()
             if hasattr(self, 'on_change'):
-                self.on_change(region, self.threats[region])
+                self.on_change(region, self.threats[region], telemetry=None)
             return True
         return False
 

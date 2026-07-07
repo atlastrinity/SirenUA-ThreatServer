@@ -324,7 +324,7 @@ class TelegramThreatMonitor:
                     await self._apply_gemini_analysis(results)
 
     async def _apply_gemini_analysis(self, results, is_test: bool = False):
-        """Applies Gemini AI analysis results with confidence-based filtering and level adjustment."""
+        """Applies Gemini AI analysis results with confidence-based filtering, level adjustment, and telemetry enrichment."""
         for item in results:
             if not isinstance(item, dict):
                 continue
@@ -335,6 +335,7 @@ class TelegramThreatMonitor:
             source_channel = item.get("source_channel", "AI")
             text = item.get("text", "")
             confidence = item.get("confidence_score")
+            telemetry = item.get("telemetry")  # Extract telemetry block
             
             # Validate confidence as int
             if confidence is not None:
@@ -404,23 +405,37 @@ class TelegramThreatMonitor:
                 
                 # ETA: prefer Gemini's AI-provided ETA, fallback to heuristic
                 gemini_eta = item.get("eta", "")
-                    
-                delay = 3600
+                
+                # --- Dynamic auto-clear delay based on telemetry ---
+                delay = 3600  # default 1 hour
                 eta_str = gemini_eta if gemini_eta else ""
-                if threat_type == "mig31k":
-                    delay = 1800  # 30 хв (автозняття при відсутності нових повідомлень)
+                
+                # Try to calculate delay from telemetry speed + distance
+                telemetry_delay = None
+                if telemetry and isinstance(telemetry, dict):
+                    t_speed = telemetry.get("speed_kmh")
+                    t_distance = telemetry.get("distance_to_target_km")
+                    if t_speed and t_distance and t_speed > 0:
+                        # Calculate ETA in seconds: distance/speed * 3600, with 50% buffer
+                        telemetry_delay = int((t_distance / t_speed) * 3600 * 1.5)
+                        telemetry_delay = max(300, min(telemetry_delay, 14400))  # clamp 5min-4hours
+                
+                if telemetry_delay:
+                    delay = telemetry_delay
+                elif threat_type == "mig31k":
+                    delay = 1800  # 30 хв
                     if not eta_str:
                         eta_str = "~20-40 хв"
                 elif threat_type == "ballistic":
-                    delay = 600   # 10 хв (короткий тайм-аут для швидких балістичних загроз)
+                    delay = 600   # 10 хв
                     if not eta_str:
                         eta_str = "~2-5 хв"
                 elif threat_type == "kab":
-                    delay = 1200  # 20 хв (тайм-аут для авіабомб)
+                    delay = 1200  # 20 хв
                     if not eta_str:
                         eta_str = "~5-15 хв"
                 elif threat_type == "shahed":
-                    delay = 10800  # 3 години (шахеди літають довго)
+                    delay = 10800  # 3 години
                     if not eta_str:
                         eta_str = "+1-2 год"
                 elif threat_type == "cruise_missile":
@@ -438,10 +453,26 @@ class TelegramThreatMonitor:
 
                 self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
                                                confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
-                                               is_test=is_test)
+                                               is_test=is_test, telemetry=telemetry)
                 self._schedule_auto_clear(region, delay)
+                
+                # Enhanced logging with telemetry info
                 conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
-                print(f"🔴 [Gemini] Встановлено загрозу ({adjusted_level}) для: {region}{conf_str}")
+                telem_str = ""
+                if telemetry and isinstance(telemetry, dict):
+                    parts = []
+                    if telemetry.get("group_id"):
+                        parts.append(f"група: {telemetry['group_id']}")
+                    if telemetry.get("speed_kmh"):
+                        parts.append(f"швидкість: {telemetry['speed_kmh']} км/год")
+                    if telemetry.get("engagement_status") and telemetry["engagement_status"] != "unknown":
+                        parts.append(f"статус: {telemetry['engagement_status']}")
+                    if telemetry.get("target_count"):
+                        parts.append(f"цілей: {telemetry['target_count']}")
+                    if parts:
+                        telem_str = f" | {', '.join(parts)}"
+                
+                print(f"🔴 [Gemini] Встановлено загрозу ({adjusted_level}) для: {region}{conf_str}{telem_str}")
 
 
     async def _process_message(self, text, channel):

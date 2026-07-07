@@ -64,12 +64,52 @@ def init_analytics_db():
         cursor.execute("ALTER TABLE threat_history ADD COLUMN confidence INTEGER")
     except sqlite3.OperationalError:
         pass  # column already exists
+    
+    # --- Telemetry Data Table ---
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS telemetry_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            threat_event_id INTEGER NOT NULL,
+            group_id TEXT,
+            attack_vector TEXT,
+            target_count INTEGER,
+            speed_kmh INTEGER,
+            altitude_category TEXT,
+            heading_degrees INTEGER,
+            distance_to_target_km REAL,
+            launch_origin TEXT,
+            weapon_subtype TEXT,
+            engagement_status TEXT,
+            air_defense_active BOOLEAN DEFAULT 0,
+            multiple_waves BOOLEAN DEFAULT 0,
+            wave_number INTEGER DEFAULT 1,
+            time_of_day_category TEXT,
+            weather_factor TEXT,
+            source_reliability TEXT,
+            message_context_tags TEXT,
+            strategic_priority TEXT,
+            civilian_risk_level TEXT,
+            event_phase TEXT,
+            correlation_group TEXT,
+            FOREIGN KEY (threat_event_id) REFERENCES threat_history(id)
+        )
+    ''')
+    
+    # Indexes for fast aggregations
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_group ON telemetry_data(group_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_vector ON telemetry_data(attack_vector)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_correlation ON telemetry_data(correlation_group)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_event ON telemetry_data(threat_event_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_threat_history_region_ts ON threat_history(region, timestamp)')
+    
     conn.commit()
     conn.close()
+    print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data)")
 
-def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None):
+def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None):
+    """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
     if level == "none":
-        return
+        return None
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -77,10 +117,52 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
             "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence) VALUES (?, ?, ?, ?, ?)",
             (region, level, threat_type, detail, confidence)
         )
+        event_id = cursor.lastrowid
+        
+        # Insert telemetry if provided
+        if telemetry and isinstance(telemetry, dict) and event_id:
+            tags_json = json.dumps(telemetry.get("message_context_tags", []), ensure_ascii=False)
+            cursor.execute('''
+                INSERT INTO telemetry_data (
+                    threat_event_id, group_id, attack_vector, target_count, speed_kmh,
+                    altitude_category, heading_degrees, distance_to_target_km,
+                    launch_origin, weapon_subtype, engagement_status,
+                    air_defense_active, multiple_waves, wave_number,
+                    time_of_day_category, weather_factor, source_reliability,
+                    message_context_tags, strategic_priority, civilian_risk_level,
+                    event_phase, correlation_group
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                event_id,
+                telemetry.get("group_id"),
+                telemetry.get("attack_vector", "unknown"),
+                telemetry.get("target_count"),
+                telemetry.get("speed_kmh"),
+                telemetry.get("altitude_category", "unknown"),
+                telemetry.get("heading_degrees"),
+                telemetry.get("distance_to_target_km"),
+                telemetry.get("launch_origin"),
+                telemetry.get("weapon_subtype"),
+                telemetry.get("engagement_status", "unknown"),
+                1 if telemetry.get("air_defense_active") else 0,
+                1 if telemetry.get("multiple_waves") else 0,
+                telemetry.get("wave_number", 1),
+                telemetry.get("time_of_day_category", "unknown"),
+                telemetry.get("weather_factor", "unknown"),
+                telemetry.get("source_reliability", "medium"),
+                tags_json,
+                telemetry.get("strategic_priority"),
+                telemetry.get("civilian_risk_level", "moderate"),
+                telemetry.get("event_phase", "unknown"),
+                telemetry.get("correlation_group")
+            ))
+        
         conn.commit()
         conn.close()
+        return event_id
     except Exception as e:
         print(f"⚠️ Помилка запису в БД аналітики: {e}")
+        return None
 
 # --- WebSockets Manager ---
 class ConnectionManager:
@@ -121,8 +203,8 @@ telegram_monitor = None
 is_live_mode = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
 
 # Hook up MockThreatManager to WebSockets and DB
-def on_threat_changed(region, state):
-    log_threat_to_db(region, state.level, state.threat_type, state.detail, state.confidence)
+def on_threat_changed(region, state, telemetry=None):
+    log_threat_to_db(region, state.level, state.threat_type, state.detail, state.confidence, telemetry=telemetry)
     asyncio.create_task(ws_manager.broadcast({
         "type": "threat_update",
         "region": region,
@@ -382,6 +464,309 @@ async def get_heatmap_data(days: int = 7):
         return {
             "days": days,
             "data": [dict(row) for row in rows]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/telemetry/{region}")
+async def get_region_telemetry(region: str, limit: int = 50, days: int = 30):
+    """Повна телеметрія для регіону з групуванням."""
+    from urllib.parse import unquote
+    region = unquote(region)
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT th.id, th.timestamp, th.region, th.threat_level, th.threat_type,
+                   th.detail, th.confidence,
+                   td.group_id, td.attack_vector, td.target_count, td.speed_kmh,
+                   td.altitude_category, td.heading_degrees, td.distance_to_target_km,
+                   td.launch_origin, td.weapon_subtype, td.engagement_status,
+                   td.air_defense_active, td.multiple_waves, td.wave_number,
+                   td.time_of_day_category, td.weather_factor, td.source_reliability,
+                   td.message_context_tags, td.strategic_priority, td.civilian_risk_level,
+                   td.event_phase, td.correlation_group
+            FROM threat_history th
+            LEFT JOIN telemetry_data td ON th.id = td.threat_event_id
+            WHERE th.region = ? AND th.timestamp >= datetime('now', ?)
+            ORDER BY th.timestamp DESC
+            LIMIT ?
+        ''', (region, f'-{days} days', min(limit, 200)))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        events = []
+        for row in rows:
+            event = dict(row)
+            if event.get("message_context_tags"):
+                try:
+                    event["message_context_tags"] = json.loads(event["message_context_tags"])
+                except (json.JSONDecodeError, TypeError):
+                    event["message_context_tags"] = []
+            events.append(event)
+        
+        return {
+            "region": region,
+            "count": len(events),
+            "events": events
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/groups")
+async def get_attack_groups(days: int = 7, limit: int = 50):
+    """Список атакових хвиль/груп за останні N днів."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                td.group_id,
+                td.correlation_group,
+                td.attack_vector,
+                COUNT(DISTINCT th.id) as event_count,
+                COUNT(DISTINCT th.region) as region_count,
+                GROUP_CONCAT(DISTINCT th.region) as regions,
+                MIN(th.timestamp) as first_seen,
+                MAX(th.timestamp) as last_seen,
+                AVG(th.confidence) as avg_confidence,
+                AVG(td.speed_kmh) as avg_speed,
+                SUM(td.target_count) as total_targets,
+                MAX(td.wave_number) as max_wave,
+                GROUP_CONCAT(DISTINCT th.threat_type) as threat_types
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.group_id IS NOT NULL
+              AND th.timestamp >= datetime('now', ?)
+            GROUP BY td.group_id
+            ORDER BY MAX(th.timestamp) DESC
+            LIMIT ?
+        ''', (f'-{days} days', min(limit, 100)))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        groups = []
+        for row in rows:
+            group = dict(row)
+            group["regions"] = group["regions"].split(",") if group["regions"] else []
+            group["threat_types"] = group["threat_types"].split(",") if group["threat_types"] else []
+            if group["avg_confidence"]:
+                group["avg_confidence"] = round(group["avg_confidence"], 1)
+            if group["avg_speed"]:
+                group["avg_speed"] = round(group["avg_speed"], 1)
+            groups.append(group)
+        
+        return {
+            "days": days,
+            "total_groups": len(groups),
+            "groups": groups
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/stats")
+async def get_analytics_stats(days: int = 7):
+    """Агреговані показники за останні N днів."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        day_filter = f'-{days} days'
+        
+        # 1. Average speed by threat type
+        cursor.execute('''
+            SELECT th.threat_type, 
+                   AVG(td.speed_kmh) as avg_speed,
+                   COUNT(*) as count
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.speed_kmh IS NOT NULL AND th.timestamp >= datetime('now', ?)
+            GROUP BY th.threat_type
+        ''', (day_filter,))
+        speed_by_type = [{"type": r["threat_type"], "avg_speed": round(r["avg_speed"], 1), "count": r["count"]} for r in cursor.fetchall()]
+        
+        # 2. Top attack vectors
+        cursor.execute('''
+            SELECT td.attack_vector, COUNT(*) as count
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.attack_vector != 'unknown' AND th.timestamp >= datetime('now', ?)
+            GROUP BY td.attack_vector
+            ORDER BY count DESC LIMIT 10
+        ''', (day_filter,))
+        top_vectors = [dict(r) for r in cursor.fetchall()]
+        
+        # 3. Average confidence by threat type
+        cursor.execute('''
+            SELECT threat_type, AVG(confidence) as avg_confidence, COUNT(*) as count
+            FROM threat_history
+            WHERE confidence IS NOT NULL AND timestamp >= datetime('now', ?)
+            GROUP BY threat_type
+        ''', (day_filter,))
+        confidence_by_type = [{"type": r["threat_type"], "avg_confidence": round(r["avg_confidence"], 1), "count": r["count"]} for r in cursor.fetchall()]
+        
+        # 4. Hourly distribution
+        cursor.execute('''
+            SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hour, COUNT(*) as count
+            FROM threat_history
+            WHERE timestamp >= datetime('now', ?)
+            GROUP BY hour
+            ORDER BY hour
+        ''', (day_filter,))
+        hourly_histogram = [dict(r) for r in cursor.fetchall()]
+        
+        # 5. Top targeted regions
+        cursor.execute('''
+            SELECT region, COUNT(*) as count, 
+                   AVG(confidence) as avg_confidence
+            FROM threat_history
+            WHERE timestamp >= datetime('now', ?)
+            GROUP BY region
+            ORDER BY count DESC LIMIT 10
+        ''', (day_filter,))
+        top_regions = [{"region": r["region"], "count": r["count"], "avg_confidence": round(r["avg_confidence"], 1) if r["avg_confidence"] else None} for r in cursor.fetchall()]
+        
+        # 6. Engagement status distribution (interception rate)
+        cursor.execute('''
+            SELECT td.engagement_status, COUNT(*) as count
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.engagement_status != 'unknown' AND th.timestamp >= datetime('now', ?)
+            GROUP BY td.engagement_status
+            ORDER BY count DESC
+        ''', (day_filter,))
+        engagement_stats = [dict(r) for r in cursor.fetchall()]
+        
+        # 7. Wave frequency
+        cursor.execute('''
+            SELECT COUNT(DISTINCT td.group_id) as total_waves,
+                   AVG(td.wave_number) as avg_waves_per_attack
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.group_id IS NOT NULL AND th.timestamp >= datetime('now', ?)
+        ''', (day_filter,))
+        wave_row = cursor.fetchone()
+        wave_stats = {
+            "total_waves": wave_row["total_waves"] if wave_row else 0,
+            "avg_waves_per_attack": round(wave_row["avg_waves_per_attack"], 1) if wave_row and wave_row["avg_waves_per_attack"] else 0
+        }
+        
+        # 8. Total events
+        cursor.execute('''
+            SELECT COUNT(*) as total FROM threat_history WHERE timestamp >= datetime('now', ?)
+        ''', (day_filter,))
+        total = cursor.fetchone()["total"]
+        
+        conn.close()
+        
+        return {
+            "days": days,
+            "total_events": total,
+            "avg_speed_by_type": speed_by_type,
+            "top_attack_vectors": top_vectors,
+            "avg_confidence_by_type": confidence_by_type,
+            "hourly_histogram": hourly_histogram,
+            "top_targeted_regions": top_regions,
+            "engagement_stats": engagement_stats,
+            "wave_stats": wave_stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/patterns")
+async def get_patterns(days: int = 14):
+    """Виявлені патерни атак (час доби, напрямки, типи)."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        day_filter = f'-{days} days'
+        
+        # 1. Time-of-day pattern
+        cursor.execute('''
+            SELECT td.time_of_day_category, th.threat_type, COUNT(*) as count
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.time_of_day_category != 'unknown' AND th.timestamp >= datetime('now', ?)
+            GROUP BY td.time_of_day_category, th.threat_type
+            ORDER BY count DESC
+        ''', (day_filter,))
+        time_patterns = [dict(r) for r in cursor.fetchall()]
+        
+        # 2. Launch origin frequency
+        cursor.execute('''
+            SELECT td.launch_origin, COUNT(*) as count, 
+                   GROUP_CONCAT(DISTINCT th.threat_type) as threat_types
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.launch_origin IS NOT NULL AND th.timestamp >= datetime('now', ?)
+            GROUP BY td.launch_origin
+            ORDER BY count DESC LIMIT 10
+        ''', (day_filter,))
+        origin_patterns = []
+        for r in cursor.fetchall():
+            d = dict(r)
+            d["threat_types"] = d["threat_types"].split(",") if d["threat_types"] else []
+            origin_patterns.append(d)
+        
+        # 3. Strategic priority targets
+        cursor.execute('''
+            SELECT td.strategic_priority, COUNT(*) as count,
+                   GROUP_CONCAT(DISTINCT th.region) as regions
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.strategic_priority IS NOT NULL AND th.timestamp >= datetime('now', ?)
+            GROUP BY td.strategic_priority
+            ORDER BY count DESC
+        ''', (day_filter,))
+        priority_patterns = []
+        for r in cursor.fetchall():
+            d = dict(r)
+            d["regions"] = d["regions"].split(",") if d["regions"] else []
+            priority_patterns.append(d)
+        
+        # 4. Day-of-week distribution
+        cursor.execute('''
+            SELECT CAST(strftime('%w', timestamp) AS INTEGER) as day_of_week, COUNT(*) as count
+            FROM threat_history
+            WHERE timestamp >= datetime('now', ?)
+            GROUP BY day_of_week
+            ORDER BY day_of_week
+        ''', (day_filter,))
+        day_names = ['Неділя', 'Понеділок', 'Вівторок', 'Середа', 'Четвер', "П'ятниця", 'Субота']
+        dow_dist = [{"day": day_names[r["day_of_week"]], "day_number": r["day_of_week"], "count": r["count"]} for r in cursor.fetchall()]
+        
+        # 5. Civilian risk level distribution
+        cursor.execute('''
+            SELECT td.civilian_risk_level, COUNT(*) as count
+            FROM telemetry_data td
+            JOIN threat_history th ON td.threat_event_id = th.id
+            WHERE td.civilian_risk_level IS NOT NULL AND th.timestamp >= datetime('now', ?)
+            GROUP BY td.civilian_risk_level
+            ORDER BY count DESC
+        ''', (day_filter,))
+        risk_dist = [dict(r) for r in cursor.fetchall()]
+        
+        conn.close()
+        
+        return {
+            "days": days,
+            "time_of_day_patterns": time_patterns,
+            "launch_origin_patterns": origin_patterns,
+            "strategic_priority_patterns": priority_patterns,
+            "day_of_week_distribution": dow_dist,
+            "civilian_risk_distribution": risk_dist
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

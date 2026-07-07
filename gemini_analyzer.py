@@ -20,7 +20,7 @@ class GeminiThreatAnalyzer:
             print("⚠️ GEMINI_API_KEY is not set. GeminiAnalyzer will run in mock mode.")
 
         self.system_prompt = """Ти — спеціалізований військовий ШІ-аналітик (SirenUA Threat Intelligence).
-Твоє завдання: глибоко аналізувати батч повідомлень із Telegram-каналів і формувати JSON із виявленими загрозами.
+Твоє завдання: глибоко аналізувати батч повідомлень із Telegram-каналів і формувати JSON із виявленими загрозами ТА ПОВНОЮ ТЕЛЕМЕТРІЄЮ.
 
 ВИМОГИ ДО АНАЛІЗУ ДЛЯ ВИЗНАЧЕННЯ ОБЛАСТЕЙ (Target Regions & Predictiveness):
 Тобі потрібно застосувати чотири типи аналізу, щоб зрозуміть, які області додавати до `target_regions` та чи ставити для них прапорець `is_predictive` (предиктивна загроза):
@@ -56,6 +56,31 @@ class GeminiThreatAnalyzer:
 - Якщо повідомлення містить інформацію про вибухи, прильоти чи роботу ППО в певній області (наприклад, "вибухи у Харкові", "робота ППО на Київщині"), ти повинен позначити це як активну загрозу (is_clear: false) з відповідним рівнем (high або critical) та типом (наприклад, ballistic або cruise_missile). Це оновлює інформацію на карті та підтверджує, що загроза виконується.
 - Якщо повідомлення повідомляє, що загроза минула, ціль збито, локаційно втрачено або в області чисто (наприклад, "ціль зникла", "чисто", "усі збиті", "Харків відбій"), ти повинен встановити is_clear: true для відповідних областей (або для всіх областей, якщо це загальний відбій).
 
+ТЕЛЕМЕТРИЧНЕ ЗБАГАЧЕННЯ (Telemetry Enrichment):
+Для КОЖНОГО повідомлення з загрозою (threat_level != "none") ти ОБОВ'ЯЗКОВО маєш додати блок "telemetry" з максимально точними оцінками на основі контексту повідомлення. Це критично важливо для аналітики та предиктивного моделювання.
+
+Параметри телеметрії:
+- group_id (string): Унікальний ID хвилі/атаки. Генеруй у форматі "{threat_type}_{vector}_{дата}_{waveN}". Наприклад: "shahed_south_2026-07-07_wave1". Якщо кілька повідомлень стосуються тієї самої хвилі — використовуй ОДНАКОВИЙ group_id.
+- attack_vector (string): Напрямок атаки. Одне з: "south_to_north", "east_to_west", "north_to_south", "west_to_east", "southeast_to_northwest", "northeast_to_southwest", "crimea_inland", "sea_to_coast", "border_shelling", "unknown".
+- target_count (int|null): Кількість виявлених цілей (БПЛА, ракет, тощо). Якщо у повідомленні є число — використовуй його. Якщо "група" — ставь 3-5. Якщо одна ціль — 1. Якщо невідомо — null.
+- speed_kmh (int|null): Оцінка швидкості в км/год на основі типу: shahed=150-180, cruise_missile=800-900, ballistic=2000-7000, mig31k=2500, kab=300. null якщо неможливо оцінити.
+- altitude_category (string): "low" (БПЛА <500м), "medium" (крилаті ракети 50-100м), "high" (балістика, стратегічна авіація >10000м), "unknown".
+- heading_degrees (int|null): Курс у градусах (0=північ, 90=схід, 180=південь, 270=захід). Оціни за напрямком руху з повідомлення. null якщо невідомо.
+- distance_to_target_km (float|null): Оцінка відстані до найближчого великого міста цільового регіону. null якщо неможливо оцінити.
+- launch_origin (string|null): Звідки пуск/запуск. Наприклад: "Чорне море", "Каспійське море", "окупований Крим", "Бєлгородська обл. РФ", "Курська обл. РФ", "Азовське море", null якщо невідомо.
+- weapon_subtype (string|null): Конкретна модифікація зброї. Наприклад: "Shahed-136", "Shahed-131", "Х-101", "Х-555", "Калібр", "Іскандер-М", "Іскандер-К", "Кинджал", "КАБ-500", "КАБ-1500", "С-300", null.
+- engagement_status (string): Статус залучення цілі. Одне з: "launched" (щойно пуск), "approaching" (наближається), "in_transit" (в транзиті через область), "overhead" (безпосередньо над областю), "intercepted" (перехоплено ППО), "impact" (влучання/прильот), "missed" (промах), "lost" (ціль втрачена), "unknown".
+- air_defense_active (bool): true якщо повідомляється про роботу ППО. false за замовчуванням.
+- multiple_waves (bool): true якщо повідомлення згадує кілька хвиль або серій пусків.
+- wave_number (int): Номер хвилі в поточній атаці. За замовчуванням 1.
+- time_of_day_category (string): Визнач за часом повідомлення. "night" (22:00-05:59), "dawn" (06:00-08:59), "day" (09:00-17:59), "dusk" (18:00-21:59).
+- source_reliability (string): Надійність каналу-джерела. "official" (kpszsu), "high" (monitorwarr, operativnoZSU), "medium" (eRadarrua, vanek_nikolaev), "low" (невідомі).
+- message_context_tags (list[string]): Ключові контекстні маркери з повідомлення. Наприклад: ["околиці міста", "група БПЛА", "курс на захід", "робота ППО", "зміна курсу"]. Максимум 5 тегів.
+- strategic_priority (string|null): Що може бути потенційною ціллю. "energy" (енергетична інфраструктура), "military" (військові об'єкти), "industrial" (промисловість), "civilian" (житлові райони), "port" (порт/логістика), "airfield" (аеродром), "unknown", null.
+- civilian_risk_level (string): Рівень ризику для цивільного населення. "low", "moderate", "elevated", "high", "critical". Оцінюй за близькістю до великих міст та населених пунктів.
+- event_phase (string): Фаза події. "launch" (момент пуску), "cruise" (маршовий політ), "transit" (транзит через область), "terminal" (фінальний етап наближення), "impact" (влучання), "aftermath" (наслідки), "intercept" (перехоплення), "all_clear" (відбій).
+- correlation_group (string): Більш широка група для кореляції сесій. Наприклад: "shahed_night_session_2026-07-07", "massive_missile_strike_2026-07-07", "border_shelling_zaporizhzhia". Використовуй для зв'язування повідомлень з різних каналів про одну й ту саму атаку.
+
 ВИМОГИ ДО ФОРМАТУ (Strict JSON Array):
 Ти повинен повернути ТІЛЬКИ JSON масив без markdown обгорток.
 Кожен об'єкт має структуру:
@@ -68,10 +93,33 @@ class GeminiThreatAnalyzer:
   "target_regions": [{"name": "Київська область", "is_predictive": false}, {"name": "Чернігівська область", "is_predictive": true}],
   "is_clear": false,
   "confidence_score": 85,
-  "eta": "~20-40 хв"
+  "eta": "~20-40 хв",
+  "telemetry": {
+    "group_id": "shahed_south_2026-07-07_wave1",
+    "attack_vector": "south_to_north",
+    "target_count": 3,
+    "speed_kmh": 165,
+    "altitude_category": "low",
+    "heading_degrees": 340,
+    "distance_to_target_km": 120.0,
+    "launch_origin": "окупований Крим",
+    "weapon_subtype": "Shahed-136",
+    "engagement_status": "in_transit",
+    "air_defense_active": false,
+    "multiple_waves": false,
+    "wave_number": 1,
+    "time_of_day_category": "night",
+    "source_reliability": "high",
+    "message_context_tags": ["група БПЛА", "напрямок на захід"],
+    "strategic_priority": "energy",
+    "civilian_risk_level": "elevated",
+    "event_phase": "cruise",
+    "correlation_group": "shahed_night_session_2026-07-07"
+  }
 }
 Якщо повідомлень кілька, поверни масив з результатами для кожного повідомлення.
-ОБОВ'ЯЗКОВО повертай confidence_score та eta для КОЖНОГО результату!
+ОБОВ'ЯЗКОВО повертай confidence_score, eta та telemetry для КОЖНОГО результату з threat_level != "none"!
+Для повідомлень з threat_level == "none" або is_clear == true, блок telemetry не обов'язковий.
 """
 
     async def analyze_batch(self, messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
@@ -102,7 +150,15 @@ class GeminiThreatAnalyzer:
                 result_text = result_text.rsplit("```", 1)[0]
                 
             self.last_error = None
-            return json.loads(result_text.strip())
+            results = json.loads(result_text.strip())
+            
+            # Normalize telemetry for each result
+            if isinstance(results, list):
+                for item in results:
+                    if isinstance(item, dict) and item.get("threat_level", "none") != "none" and not item.get("is_clear", False):
+                        item["telemetry"] = self.normalize_telemetry(item.get("telemetry"))
+            
+            return results
         except Exception as e:
             error_msg = str(e)
             print(f"❌ Gemini API Error: {error_msg}")
@@ -111,3 +167,105 @@ class GeminiThreatAnalyzer:
             else:
                 self.last_error = error_msg
             return []
+
+    @staticmethod
+    def normalize_telemetry(telemetry: dict = None) -> dict:
+        """Normalize and validate telemetry block, filling defaults for missing fields."""
+        defaults = {
+            "group_id": None,
+            "attack_vector": "unknown",
+            "target_count": None,
+            "speed_kmh": None,
+            "altitude_category": "unknown",
+            "heading_degrees": None,
+            "distance_to_target_km": None,
+            "launch_origin": None,
+            "weapon_subtype": None,
+            "engagement_status": "unknown",
+            "air_defense_active": False,
+            "multiple_waves": False,
+            "wave_number": 1,
+            "time_of_day_category": "unknown",
+            "weather_factor": "unknown",
+            "source_reliability": "medium",
+            "message_context_tags": [],
+            "strategic_priority": None,
+            "civilian_risk_level": "moderate",
+            "event_phase": "unknown",
+            "correlation_group": None,
+        }
+        
+        if not telemetry or not isinstance(telemetry, dict):
+            return defaults.copy()
+        
+        normalized = defaults.copy()
+        
+        # Valid enum values for validation
+        valid_vectors = {"south_to_north", "east_to_west", "north_to_south", "west_to_east",
+                         "southeast_to_northwest", "northeast_to_southwest", "crimea_inland",
+                         "sea_to_coast", "border_shelling", "unknown"}
+        valid_altitudes = {"low", "medium", "high", "unknown"}
+        valid_engagement = {"launched", "approaching", "in_transit", "overhead", "intercepted",
+                           "impact", "missed", "lost", "unknown"}
+        valid_time_cat = {"night", "dawn", "day", "dusk", "unknown"}
+        valid_reliability = {"official", "high", "medium", "low"}
+        valid_priority = {"energy", "military", "industrial", "civilian", "port", "airfield", "unknown", None}
+        valid_risk = {"low", "moderate", "elevated", "high", "critical"}
+        valid_phase = {"launch", "cruise", "transit", "terminal", "impact", "aftermath", "intercept", "all_clear", "unknown"}
+        
+        for key, default in defaults.items():
+            val = telemetry.get(key, default)
+            
+            # Type coercion and validation
+            if key == "target_count" and val is not None:
+                try:
+                    val = int(val)
+                except (ValueError, TypeError):
+                    val = None
+            elif key == "speed_kmh" and val is not None:
+                try:
+                    val = int(val)
+                except (ValueError, TypeError):
+                    val = None
+            elif key == "heading_degrees" and val is not None:
+                try:
+                    val = int(val) % 360
+                except (ValueError, TypeError):
+                    val = None
+            elif key == "distance_to_target_km" and val is not None:
+                try:
+                    val = float(val)
+                except (ValueError, TypeError):
+                    val = None
+            elif key == "wave_number":
+                try:
+                    val = max(1, int(val))
+                except (ValueError, TypeError):
+                    val = 1
+            elif key in ("air_defense_active", "multiple_waves"):
+                val = bool(val)
+            elif key == "message_context_tags":
+                if not isinstance(val, list):
+                    val = []
+                val = [str(t) for t in val[:5]]  # Max 5 tags
+            elif key == "attack_vector":
+                val = val if val in valid_vectors else "unknown"
+            elif key == "altitude_category":
+                val = val if val in valid_altitudes else "unknown"
+            elif key == "engagement_status":
+                val = val if val in valid_engagement else "unknown"
+            elif key == "time_of_day_category":
+                val = val if val in valid_time_cat else "unknown"
+            elif key == "source_reliability":
+                val = val if val in valid_reliability else "medium"
+            elif key == "strategic_priority":
+                val = val if val in valid_priority else None
+            elif key == "civilian_risk_level":
+                val = val if val in valid_risk else "moderate"
+            elif key == "event_phase":
+                val = val if val in valid_phase else "unknown"
+            
+            normalized[key] = val
+        
+        return normalized
+
