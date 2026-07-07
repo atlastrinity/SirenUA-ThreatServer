@@ -209,6 +209,13 @@ async def lifespan(app: FastAPI):
     # Ініціалізація Firebase Cloud Messaging
     init_firebase()
     
+    # Запуск воркера черги FCM повідомлень
+    try:
+        from mock_mode import start_fcm_worker
+        await start_fcm_worker()
+    except Exception as e:
+        print(f"⚠️ Помилка запуску FCM воркера: {e}")
+    
     # Ініціалізація БД аналітики
     init_analytics_db()
 

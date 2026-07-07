@@ -134,7 +134,6 @@ class ThreatState:
         self.is_predictive = False
         self.is_active = False
 
-
 try:
     import firebase_admin
     from firebase_admin import messaging, firestore
@@ -467,46 +466,40 @@ class MockThreatManager:
         return False
 
     def set_scenario(self, scenario: str):
-        """Встановлює попередньо визначений сценарій для тестування."""
-        self.clear_all()
-
+        """Встановлює попередньо визначений сценарій для тестування з інтелектуальним оновленням та чергою."""
+        new_threats = {}
         if scenario == "mig_takeoff":
-            # Зліт МіГ-31К — загроза для всієї України
-            for region in ALL_REGIONS:
-                self.set_threat(region, "high", "mig31k",
-                                "Зліт МіГ-31К з аеродрому Сольці")
-
+            for r in ALL_REGIONS:
+                new_threats[r] = ("high", "mig31k", "Зліт МіГ-31К з аеродрому Сольці")
         elif scenario == "shaheds_south":
-            # Шахеди з півдня
             south_regions = [
                 "Одеська область", "Миколаївська область",
                 "Херсонська область", "Запорізька область",
                 "Дніпропетровська область", "Кіровоградська область",
             ]
-            for region in south_regions:
-                self.set_threat(region, "medium", "shahed",
-                                "Шахеди в напрямку з півдня")
-
+            for r in south_regions:
+                new_threats[r] = ("medium", "shahed", "Шахеди в напрямку з півдня")
         elif scenario == "cruise_missiles_west":
-            # Крилаті ракети на захід
             west_regions = [
                 "Київська область", "м. Київ", "Житомирська область",
                 "Хмельницька область", "Вінницька область",
                 "Львівська область", "Рівненська область",
             ]
-            for region in west_regions:
-                self.set_threat(region, "high", "cruise_missile",
-                                "Крилаті ракети Х-101 в напрямку заходу")
-
+            for r in west_regions:
+                new_threats[r] = ("high", "cruise_missile", "Крилаті ракети Х-101 в напрямку заходу")
         elif scenario == "massive_attack":
-            # Масований удар — критична загроза для всіх
-            for region in ALL_REGIONS:
-                self.set_threat(region, "critical", "tu95",
-                                "Масований ракетний удар! Ту-95МС пуски крилатих ракет")
-
+            for r in ALL_REGIONS:
+                new_threats[r] = ("critical", "tu95", "Масований ракетний удар! Ту-95МС пуски крилатих ракет")
         elif scenario == "ballistic_kharkiv":
-            # Балістика на Харків
-            self.set_threat("Харківська область", "critical", "ballistic",
-                            "Балістична загроза! Іскандер-М")
-            self.set_threat("Сумська область", "medium", "ballistic",
-                            "Можлива балістична загроза")
+            new_threats["Харківська область"] = ("critical", "ballistic", "Балістична загроза! Іскандер-М")
+            new_threats["Сумська область"] = ("medium", "ballistic", "Можлива балістична загроза")
+
+        for region in ALL_REGIONS:
+            old_state = self.threats[region]
+            if region in new_threats:
+                level, t_type, detail = new_threats[region]
+                if old_state.level != level or old_state.threat_type != t_type or old_state.detail != detail:
+                    self.set_threat(region, level, t_type, detail)
+            else:
+                if old_state.level != "none":
+                    self.clear_threat(region)
