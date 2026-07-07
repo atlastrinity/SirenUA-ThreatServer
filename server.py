@@ -301,6 +301,11 @@ class ScenarioRequest(BaseModel):
     scenario: str  # mig_takeoff, shaheds_south, cruise_missiles_west, massive_attack, ballistic_kharkiv
 
 
+class TelegramTestRequest(BaseModel):
+    text: str
+    channel: str = "kpszsu"
+
+
 # --- API Endpoints ---
 
 @app.get("/")
@@ -443,6 +448,33 @@ async def clear_all_threats():
     """Очистити всі загрози."""
     threat_manager.clear_all()
     return {"status": "ok", "message": "All threats cleared"}
+
+
+@app.post("/api/telegram/test")
+async def test_telegram_message(request: TelegramTestRequest):
+    """Сімулювати отримання повідомлення з Telegram та обробити його негайно."""
+    global telegram_monitor
+    if telegram_monitor is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram monitor not initialized or running in mock-only mode"
+        )
+    
+    if telegram_monitor.analyzer.is_configured:
+        print(f"🧪 [Test Endpoint] Analyzing message: {request.text[:80]}...")
+        results = await telegram_monitor.analyzer.analyze_batch([{"channel": request.channel, "text": request.text}])
+        if results:
+            await telegram_monitor._apply_gemini_analysis(results)
+            return {
+                "status": "ok",
+                "message": "Message analyzed via Gemini immediately",
+                "results": results
+            }
+        else:
+            return {"status": "ok", "message": "Analyzed via Gemini, but no targets identified"}
+    else:
+        await telegram_monitor._process_message_regex(request.text, request.channel)
+        return {"status": "ok", "message": "Analyzed via Regex fallback immediately"}
 
 
 @app.get("/api/shelters")
