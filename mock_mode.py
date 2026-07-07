@@ -127,22 +127,15 @@ TOPIC_MAPPING = {
     "Чернігівська область": "region_chernihiv"
 }
 
-def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None):
+def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True):
     """Надсилає Push-сповіщення у Firebase топік для відповідного регіону."""
     if not HAS_FIREBASE:
-        return
-        
-    try:
-        firebase_admin.get_app()
-    except ValueError:
-        # Firebase не ініціалізовано
         return
 
     topic = TOPIC_MAPPING.get(region)
     if not topic:
         return
-        
-    # Визначаємо звук, заголовок та текст сповіщення
+
     if level == "none":
         title = "🟢 Відбій тривоги!"
         body = f"Відбій повітряної тривоги в: {region}."
@@ -161,25 +154,25 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
         body = detail if detail else f"Повітряна тривога в: {region}. Прямуйте в укриття!"
 
     # Створюємо повідомлення для топіку з налаштуваннями звуку для iOS (APNs)
+    aps = messaging.Aps(badge=1)
+    if play_sound:
+        aps = messaging.Aps(sound=sound, badge=1)
+
     message = messaging.Message(
         notification=messaging.Notification(
             title=title,
             body=body,
         ),
         apns=messaging.APNSConfig(
-            payload=messaging.APNSPayload(
-                aps=messaging.Aps(
-                    sound=sound,
-                    badge=1
-                )
-            )
+            payload=messaging.APNSPayload(aps=aps)
         ),
         topic=topic,
     )
 
     try:
         response = messaging.send(message)
-        print(f"🚀 FCM Push sent successfully for {region} (topic: {topic}), response: {response}")
+        sound_status = "ЗІ ЗВУКОМ" if play_sound else "БЕЗ ЗВУКУ (ліміт 20с)"
+        print(f"🚀 FCM Push [{sound_status}] sent successfully for {region} (topic: {topic}), response: {response}")
     except Exception as e:
         print(f"⚠️ Помилка відправки FCM Push для {region}: {e}")
 
@@ -189,6 +182,7 @@ class MockThreatManager:
 
     def __init__(self):
         self.threats: dict[str, ThreatState] = {}
+        self.last_sound_time: float = 0.0
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState()
         self.load_from_db()
@@ -283,7 +277,15 @@ class MockThreatManager:
         self.threats[region].set_threat(level, threat_type, detail)
         
         if has_changed:
-            send_fcm_notification(region, level, threat_type, detail)
+            import time
+            now = time.time()
+            play_sound = True
+            if now - self.last_sound_time < 20.0:
+                play_sound = False
+            else:
+                self.last_sound_time = now
+                
+            send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound)
             self.save_to_db()
             
         return True
@@ -295,7 +297,15 @@ class MockThreatManager:
         has_changed = (old_state.level != "none")
         self.threats[region].clear()
         if has_changed:
-            send_fcm_notification(region, "none")
+            import time
+            now = time.time()
+            play_sound = True
+            if now - self.last_sound_time < 20.0:
+                play_sound = False
+            else:
+                self.last_sound_time = now
+                
+            send_fcm_notification(region, "none", play_sound=play_sound)
             self.save_to_db()
         return True
 
