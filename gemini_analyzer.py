@@ -120,6 +120,7 @@ class GeminiThreatAnalyzer:
 - civilian_risk_level (string): Рівень ризику для цивільного населення. "low", "moderate", "elevated", "high", "critical". Оцінюй за близькістю до великих міст та населених пунктів.
 - event_phase (string): Фаза події. "launch" (момент пуску), "cruise" (маршовий політ), "transit" (транзит через область), "terminal" (фінальний етап наближення), "impact" (влучання), "aftermath" (наслідки), "intercept" (перехоплення), "all_clear" (відбій).
 - correlation_group (string): Більш широка група для кореляції сесій. Наприклад: "shahed_night_session_2026-07-07", "massive_missile_strike_2026-07-07", "border_shelling_zaporizhzhia". Використовуй для зв'язування повідомлень з різних каналів про одну й ту саму атаку.
+- final_target_cities (list[string]): Список міст, які явно вказані як ціль у тексті (напр., ["Старокостянтинів", "Київ"]). Якщо ціль не вказана - порожній список [].
 
 ВИМОГИ ДО ФОРМАТУ (Strict JSON Array):
 Ти повинен повернути ТІЛЬКИ JSON масив без markdown обгорток.
@@ -156,7 +157,8 @@ class GeminiThreatAnalyzer:
     "strategic_priority": "energy",
     "civilian_risk_level": "elevated",
     "event_phase": "cruise",
-    "correlation_group": "shahed_night_session_2026-07-07"
+    "correlation_group": "shahed_night_session_2026-07-07",
+    "final_target_cities": []
   }
 }
 
@@ -196,7 +198,7 @@ class GeminiThreatAnalyzer:
 Для повідомлень з threat_level == "none" та is_clear == false, блоки telemetry/clearing_telemetry не обов'язкові.
 """
 
-    async def analyze_batch(self, messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    async def analyze_batch(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         if not messages:
             return []
             
@@ -205,7 +207,14 @@ class GeminiThreatAnalyzer:
             print("⚠️ Gemini in MOCK mode: Returning empty analysis.")
             return []
 
-        prompt = self.system_prompt + "\n\nОСЬ ПОВІДОМЛЕННЯ ДЛЯ АНАЛІЗУ:\n"
+        prompt = self.system_prompt + "\n\n"
+        
+        if context_messages:
+            prompt += "ПОПЕРЕДНІЙ КОНТЕКСТ (Для розуміння траєкторії, не для аналізу нових загроз):\n"
+            for msg in context_messages:
+                prompt += f"Канал: {msg['channel']}\nТекст: {msg['text']}\n---\n"
+
+        prompt += "ОСЬ НОВІ ПОВІДОМЛЕННЯ ДЛЯ АНАЛІЗУ:\n"
         for msg in messages:
             prompt += f"Канал: {msg['channel']}\nТекст: {msg['text']}\n---\n"
 
@@ -272,6 +281,7 @@ class GeminiThreatAnalyzer:
             "civilian_risk_level": "moderate",
             "event_phase": "unknown",
             "correlation_group": None,
+            "final_target_cities": [],
         }
         
         if not telemetry or not isinstance(telemetry, dict):
@@ -343,6 +353,10 @@ class GeminiThreatAnalyzer:
                 val = val if val in valid_risk else "moderate"
             elif key == "event_phase":
                 val = val if val in valid_phase else "unknown"
+            elif key == "final_target_cities":
+                if not isinstance(val, list):
+                    val = []
+                val = [str(c) for c in val]
             
             normalized[key] = val
         

@@ -160,6 +160,7 @@ class TelegramThreatMonitor:
         self.analyzer = GeminiThreatAnalyzer()
         self.message_queue = asyncio.Queue()
         self.batch_task = None
+        self.message_history = []
         
         # Session file path detection
         self.session_paths = [
@@ -371,12 +372,17 @@ class TelegramThreatMonitor:
                 try:
                     msg = self.message_queue.get_nowait()
                     messages.append(msg)
+                    self.message_history.append(msg)
                 except asyncio.QueueEmpty:
                     break
                     
+            if len(self.message_history) > 15:
+                self.message_history = self.message_history[-15:]
+                
             if messages:
                 print(f"🧠 Відправка батчу ({len(messages)} повідомлень) до Gemini API...")
-                results = await self.analyzer.analyze_batch(messages)
+                context_messages = [m for m in self.message_history if m not in messages][-10:]
+                results = await self.analyzer.analyze_batch(messages, context_messages=context_messages)
                 if results:
                     await self._apply_gemini_analysis(results)
 
@@ -666,6 +672,45 @@ class TelegramThreatMonitor:
         "border_shelling": None,  # No directional prediction
     }
 
+    CITY_TO_REGION = {
+        "Київ": "м. Київ",
+        "Старокостянтинів": "Хмельницька область",
+        "Стрий": "Львівська область",
+        "Львів": "Львівська область",
+        "Харків": "Харківська область",
+        "Одеса": "Одеська область",
+        "Дніпро": "Дніпропетровська область",
+        "Запоріжжя": "Запорізька область",
+        "Кривий Ріг": "Дніпропетровська область",
+        "Миколаїв": "Миколаївська область",
+        "Вінниця": "Вінницька область",
+        "Хмельницький": "Хмельницька область",
+        "Чернігів": "Чернігівська область",
+        "Полтава": "Полтавська область",
+        "Черкаси": "Черкаська область",
+        "Житомир": "Житомирська область",
+        "Суми": "Сумська область",
+        "Рівне": "Рівненська область",
+        "Івано-Франківськ": "Івано-Франківська область",
+        "Тернопіль": "Тернопільська область",
+        "Луцьк": "Волинська область",
+        "Ужгород": "Закарпатська область",
+        "Мукачево": "Закарпатська область",
+        "Чернівці": "Чернівецька область",
+        "Кропивницький": "Кіровоградська область",
+        "Кременчук": "Полтавська область",
+        "Миргород": "Полтавська область",
+        "Умань": "Черкаська область",
+        "Біла Церква": "Київська область",
+        "Васильків": "Київська область",
+        "Обухів": "Київська область",
+        "Бориспіль": "Київська область",
+        "Бровари": "Київська область",
+        "Фастів": "Київська область",
+        "Коломия": "Івано-Франківська область",
+        "Калуш": "Івано-Франківська область",
+    }
+
     async def _propagate_predictive_threats(self):
         """
         Predictive Propagation Engine:
@@ -718,6 +763,18 @@ class TelegramThreatMonitor:
                     "mig31k": 2500, "kab": 300,
                 }
                 speed = speed_defaults.get(threat_type, 300)
+                
+            # Pathfinding to final target cities
+            path_boost_regions = set()
+            if telemetry and telemetry.get("final_target_cities"):
+                final_targets = telemetry["final_target_cities"]
+                for city in final_targets:
+                    if city in self.CITY_TO_REGION:
+                        target_region = self.CITY_TO_REGION[city]
+                        path = self._find_path(source_region, target_region)
+                        if path:
+                            for pr in path[1:]:
+                                path_boost_regions.add(pr)
             
             # Get adjacent regions from topology
             adjacent = UKRAINE_TOPOLOGY.get(source_region, [])
@@ -773,13 +830,18 @@ class TelegramThreatMonitor:
                 
                 # Check historical patterns (known SHAHED routes)
                 route_boost = 0.0
-                for route_name, route_regions in SHAHED_ROUTES.items():
-                    if source_region in route_regions and adj_region in route_regions:
-                        src_idx = route_regions.index(source_region)
-                        adj_idx = route_regions.index(adj_region)
-                        if adj_idx > src_idx:  # Forward in the route
-                            route_boost = 0.25
-                            break
+                
+                # Apply massive boost if region is on the path to a known final target
+                if adj_region in path_boost_regions:
+                    route_boost = 0.8
+                else:
+                    for route_name, route_regions in SHAHED_ROUTES.items():
+                        if source_region in route_regions and adj_region in route_regions:
+                            src_idx = route_regions.index(source_region)
+                            adj_idx = route_regions.index(adj_region)
+                            if adj_idx > src_idx:  # Forward in the route
+                                route_boost = 0.25
+                                break
                 
                 # Check DB for historical patterns
                 db_boost = self._get_historical_route_score(source_region, adj_region)
