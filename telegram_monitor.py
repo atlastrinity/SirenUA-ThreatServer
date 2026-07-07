@@ -14,6 +14,22 @@ try:
 except Exception:
     pass
 
+def clean_user_facing_threat_detail(text: str) -> str:
+    if not text:
+        return ""
+    # Remove any brackets like [AI], [Telegram], [kpszsu], etc.
+    text = re.sub(r'\[[A-Za-z0-9_.\-\s]+\]', '', text)
+    # Remove Telegram handles like @monitoring_channel
+    text = re.sub(r'@[A-Za-z0-9_]+', '', text)
+    # Remove URL links
+    text = re.sub(r'https?://\S+', '', text)
+    # Replace references to AI / ШІ with system
+    text = re.sub(r'(?i)\bШІ\b', 'системи', text)
+    text = re.sub(r'(?i)\bAI\b', 'системи', text)
+    # Clean up double spaces or leading/trailing whitespace
+    text = re.sub(r' +', ' ', text).strip()
+    return text
+
 
 # Target Telegram channels to monitor
 TARGET_CHANNELS = [
@@ -490,9 +506,9 @@ class TelegramThreatMonitor:
                     if not eta_str:
                         eta_str = "+15-30 хв"
                     
-                detail = f"[{source_channel}] {text}"
+                detail = clean_user_facing_threat_detail(text)
                 if is_pred:
-                    detail += f"\n⚠️ Предиктивний аналіз ШІ: ціль може прямувати через область."
+                    detail += f"\n⚠️ Ціль може прямувати через область."
                     if eta_str:
                         detail += f" Очікуваний час: {eta_str}"
                 elif eta_str:
@@ -990,8 +1006,9 @@ class TelegramThreatMonitor:
                         regex_confidence = max(0, regex_confidence - 20)
                     
                     detail = self._build_region_detail(detail_text, region, threat_type)
+                    detail = clean_user_facing_threat_detail(detail)
                     if is_pred:
-                        detail += f" ⚠️ Предиктивний аналіз: ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Предиктивний аналіз: ціль може прямувати через область."
+                        detail += f" ⚠️ Ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Ціль може прямувати через область."
                     elif eta_str:
                         detail += f" (Очікуваний час: {eta_str})"
 
