@@ -274,43 +274,114 @@ class TelegramThreatMonitor:
 
     # --- Message Parser Logic (Shared by both MTProto & Web Scraper) ---
     async def _process_message(self, text, channel):
-        is_clear = any(re.search(kw, text, re.IGNORECASE) for kw in CLEAR_KEYWORDS)
-        
-        if is_clear:
-            regions = self._extract_regions(text)
-            if regions:
-                for region in regions:
-                    self.threat_manager.clear_threat(region)
-                    if region in self._clear_tasks:
-                        self._clear_tasks[region].cancel()
-                print(f"🟢 [{channel}] Зняття загрози розпізнано для: {', '.join(regions)}")
-            else:
-                self.threat_manager.clear_all()
-                print(f"🟢 [{channel}] Зняття загрози розпізнано для ВСІХ областей (відбій/чисто)")
+        # Clean double spaces and split into lines, then logical sentences
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        segments = []
+        for line in lines:
+            parts = re.split(r'(?<=[.!?])\s+', line)
+            for part in parts:
+                p = part.strip()
+                if p:
+                    segments.append(p)
+                    
+        if not segments:
             return
 
-        level = self._detect_threat_level(text)
-        if not level:
-            print(f"💡 [{channel}] Повідомлення проігноровано (не містить ключових слів загроз)")
-            return
-
-        threat_type = self._detect_threat_type(text)
-        regions = self._extract_regions(text)
+        # We will parse segment by segment with a stateful context
+        context_level = None
+        context_type = None
+        context_text = None
         
-        if not regions and level in ("critical", "high"):
-            regions = list(ALL_REGIONS)
-            print(f"🚨 [{channel}] Виявлено загальну небезпеку {level.upper()} для всієї України")
+        # Keep track of modified regions in this execution
+        set_regions = {}
+        cleared_regions = set()
+        cleared_all = False
+
+        for segment in segments:
+            is_seg_clear = any(re.search(kw, segment, re.IGNORECASE) for kw in CLEAR_KEYWORDS)
             
-        if not regions:
-            print(f"💡 [{channel}] Рівень {level.upper()} розпізнано, але не знайдено відповідних областей")
-            return
+            if is_seg_clear:
+                seg_regions = self._extract_regions(segment)
+                if seg_regions:
+                    for region in seg_regions:
+                        self.threat_manager.clear_threat(region)
+                        if region in self._clear_tasks:
+                            self._clear_tasks[region].cancel()
+                            del self._clear_tasks[region]
+                        cleared_regions.add(region)
+                else:
+                    # If it says 'clear' but names no regions, it might be a general clear.
+                    # We only clear all if the entire message contains no other region mentions
+                    if not self._extract_regions(text):
+                        self.threat_manager.clear_all()
+                        cleared_all = True
+                    else:
+                        if "област" in segment or "всіх" in segment or not seg_regions:
+                            self.threat_manager.clear_all()
+                            cleared_all = True
+                
+                # Reset context on clear
+                context_level = None
+                context_type = None
+                context_text = None
+                continue
 
-        for region in regions:
-            detail = self._build_region_detail(text, region, threat_type)
-            self.threat_manager.set_threat(region, level, threat_type, detail)
-            self._schedule_auto_clear(region)
+            # Detect threat level and type for this segment
+            level = self._detect_threat_level(segment)
+            threat_type = self._detect_threat_type(segment)
+            
+            # If this segment has a threat level, update our active context
+            if level:
+                context_level = level
+                context_type = threat_type
+                context_text = segment
+            
+            # Extract regions for this segment
+            regions = self._extract_regions(segment)
+            
+            # If no regions in segment, but we detected a threat context, apply it to the whole country
+            # if the level is critical or high (like MiG-31 takeoff, cruise missiles)
+            if not regions and context_level in ("critical", "high"):
+                if not self._extract_regions(text):
+                    regions = list(ALL_REGIONS)
+            
+            # Stateful fallback: if segment has regions but no threat level was detected in it,
+            # we use the context from the previous segment of the same message (if available)
+            if not level and regions and context_level:
+                level = context_level
+                threat_type = context_type
+                detail_text = f"{context_text} {segment}"
+            else:
+                detail_text = segment
 
-        print(f"🔴 [{channel}] Рівень {level.upper()} встановлено для {len(regions)} областей: {', '.join(regions)}")
+            # Set threat for the detected regions
+            if level and regions:
+                for region in regions:
+                    # Determine dynamic auto-clear delay based on threat type
+                    delay = 3600
+                    if threat_type == "mig31k":
+                        delay = 2700
+                    elif threat_type == "ballistic":
+                        delay = 1800
+                    elif threat_type == "shahed":
+                        delay = 10800
+                        
+                    detail = self._build_region_detail(detail_text, region, threat_type)
+                    self.threat_manager.set_threat(region, level, threat_type, detail)
+                    self._schedule_auto_clear(region, delay)
+                    set_regions[region] = level
+
+        # Print consolidated status update for the logs
+        if cleared_all:
+            print(f"🟢 [{channel}] Зняття загрози розпізнано для ВСІХ областей (відбій/чисто)")
+        elif cleared_regions:
+            print(f"🟢 [{channel}] Зняття загрози розпізнано для: {', '.join(cleared_regions)}")
+            
+        if set_regions:
+            for lvl in ["low", "medium", "high", "critical"]:
+                matching = [r for r, l in set_regions.items() if l == lvl]
+                if matching:
+                    print(f"🔴 [{channel}] Рівень {lvl.upper()} встановлено для {len(matching)} областей: {', '.join(matching)}")
 
     def _build_region_detail(self, text: str, region: str, threat_type: str) -> str:
         prefix = THREAT_TYPES.get(threat_type, "Загроза")
