@@ -408,19 +408,23 @@ class TelegramThreatMonitor:
                 delay = 3600
                 eta_str = gemini_eta if gemini_eta else ""
                 if threat_type == "mig31k":
-                    delay = 2700
+                    delay = 1800  # 30 хв (автозняття при відсутності нових повідомлень)
                     if not eta_str:
                         eta_str = "~20-40 хв"
                 elif threat_type == "ballistic":
-                    delay = 1800
+                    delay = 600   # 10 хв (короткий тайм-аут для швидких балістичних загроз)
                     if not eta_str:
                         eta_str = "~2-5 хв"
+                elif threat_type == "kab":
+                    delay = 1200  # 20 хв (тайм-аут для авіабомб)
+                    if not eta_str:
+                        eta_str = "~5-15 хв"
                 elif threat_type == "shahed":
-                    delay = 10800
+                    delay = 10800  # 3 години (шахеди літають довго)
                     if not eta_str:
                         eta_str = "+1-2 год"
                 elif threat_type == "cruise_missile":
-                    delay = 3600
+                    delay = 2700  # 45 хв
                     if not eta_str:
                         eta_str = "+15-30 хв"
                     
