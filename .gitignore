@@ -9,3 +9,6 @@ __pycache__/
 firebase-credentials.json
 
 threats_state.json
+
+*.db
+*.sqlite
