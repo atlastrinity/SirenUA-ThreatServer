@@ -555,37 +555,37 @@ class TelegramThreatMonitor:
                     # 1. Distance
                     distance = telemetry.get("distance_to_target_km")
                     if distance:
-                        telemetry_info.append(f"📍 Відстань до цілі: ~{distance:.0f} км.")
+                        telemetry_info.append(f"Відстань до цілі: ~{distance:.0f} км")
                     
                     # 2. Target Count (Кількість цілей)
                     target_count = telemetry.get("target_count")
                     if target_count:
-                        telemetry_info.append(f"👥 Кількість цілей: {target_count}.")
+                        telemetry_info.append(f"Кількість цілей: {target_count}")
                     
                     # 3. Launch Origin (Район запуску)
                     launch_origin = telemetry.get("launch_origin")
                     if launch_origin and launch_origin.lower() != "unknown":
-                        telemetry_info.append(f"🛫 Напрямок запуску: {launch_origin}.")
+                        telemetry_info.append(f"Напрямок запуску: {launch_origin}")
                         
                     # 4. Weapon Subtype (Конкретна модель)
                     weapon_subtype = telemetry.get("weapon_subtype")
                     if weapon_subtype and weapon_subtype.lower() != "unknown":
-                        telemetry_info.append(f"🎯 Тип: {weapon_subtype}.")
+                        telemetry_info.append(f"Тип: {weapon_subtype}")
                         
                     # 5. Speed (Швидкість)
                     speed = telemetry.get("speed_kmh")
                     if speed:
-                        telemetry_info.append(f"💨 Швидкість руху: ~{speed} км/год.")
+                        telemetry_info.append(f"Швидкість руху: ~{speed} км/год")
                         
                     # 6. Altitude (Висота)
                     alt = telemetry.get("altitude_category")
                     if alt and alt.lower() != "unknown":
                         alt_mapping = {"low": "мала", "medium": "середня", "high": "велика"}
                         alt_ukr = alt_mapping.get(alt.lower(), alt)
-                        telemetry_info.append(f"↕️ Висота польоту: {alt_ukr}.")
+                        telemetry_info.append(f"Висота польоту: {alt_ukr}")
                 
                 if telemetry_info:
-                    detail += "\n" + " ".join(telemetry_info)
+                    detail += "\n" + "\n".join(telemetry_info)
                 
                 if is_pred:
                     detail += f"\n⚠️ Ціль може прямувати через область."
@@ -848,13 +848,13 @@ class TelegramThreatMonitor:
             threat_type_ukr = get_ukrainian_threat_type(pred['threat_type'])
             detail = f"Ціль з {source_reg_genitive} ({threat_type_ukr}) прямує в напрямку області."
             if pred["eta_str"]:
-                detail += f"\n⏱ Очікуваний час: {pred['eta_str']}"
+                detail += f"\nОчікуваний час: {pred['eta_str']}"
             if pred["distance_km"]:
-                detail += f"\n📍 Відстань: ~{pred['distance_km']:.0f} км"
+                detail += f"\nВідстань: ~{pred['distance_km']:.0f} км"
             if pred["route_boost"] > 0:
-                detail += "\n📊 Історичний маршрут підтверджено"
+                detail += "\nІсторичний маршрут підтверджено"
             if pred["db_boost"] > 0:
-                detail += "\n🔄 Патерн підтверджений аналітикою"
+                detail += "\nПатерн підтверджений аналітикою"
             
             # Auto-clear delay for predictions (shorter than for direct threats)
             auto_clear_delay = pred.get("eta_seconds") or 1800
