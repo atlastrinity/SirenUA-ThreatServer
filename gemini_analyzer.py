@@ -56,6 +56,44 @@ class GeminiThreatAnalyzer:
 - Якщо повідомлення містить інформацію про вибухи, прильоти чи роботу ППО в певній області (наприклад, "вибухи у Харкові", "робота ППО на Київщині"), ти повинен позначити це як активну загрозу (is_clear: false) з відповідним рівнем (high або critical) та типом (наприклад, ballistic або cruise_missile). Це оновлює інформацію на карті та підтверджує, що загроза виконується.
 - Якщо повідомлення повідомляє, що загроза минула, ціль збито, локаційно втрачено або в області чисто (наприклад, "ціль зникла", "чисто", "усі збиті", "Харків відбій"), ти повинен встановити is_clear: true для відповідних областей (або для всіх областей, якщо це загальний відбій).
 
+ТЕЛЕМЕТРІЯ ЗНЯТТЯ ЗАГРОЗ (Clearing Telemetry):
+Коли повідомлення знімає загрозу (is_clear: true), ти ОБОВ'ЯЗКОВО маєш додати блок "clearing_telemetry" з повними даними про результат події. Це критично для:
+1. Валідації предиктивних (жовтих) регіонів — чи правильно було передбачено загрозу.
+2. Оцінки ефективності ППО та загального результату атаки.
+3. Побудови бази досвіду для покращення майбутніх передбачень.
+
+Параметри clearing_telemetry:
+- linked_group_id (string|null): group_id оригінальної хвилі/атаки, яку знімаємо. ВАЖЛИВО: маєш відновити group_id з контексту попередніх повідомлень або згенерувати його в тому ж форматі. Наприклад: "shahed_south_2026-07-07_wave1". null тільки якщо неможливо визначити.
+- linked_correlation_group (string|null): correlation_group оригінальної атаки для зв'язку з хвилею. Наприклад: "shahed_night_session_2026-07-07".
+- resolution_type (string): Тип завершення загрози. Одне з:
+  * "intercepted" — ціль перехоплено ППО (повністю або частково)
+  * "passed_through" — ціль пролетіла транзитом через область без ураження
+  * "impact" — зафіксовано влучання/прильот
+  * "lost_contact" — ціль втрачена радарами (зникла з моніторингу)
+  * "diverted" — ціль змінила курс і пішла в іншу область
+  * "false_alarm" — хибна тривога, загрози не було
+  * "all_clear_official" — офіційний відбій від КПСЗСУ
+  * "expired" — загроза закінчилась за часом без конкретної інформації
+  * "unknown" — причина зняття незрозуміла
+- intercepted_count (int|null): Кількість перехоплених цілей ППО (якщо повідомляється). null якщо невідомо.
+- total_targets_in_wave (int|null): Загальна кількість цілей у хвилі (якщо відомо з контексту). null якщо невідомо.
+- impact_confirmed (bool): true якщо повідомлення підтверджує влучання/прильот/вибухи. false за замовчуванням.
+- damage_assessment (string): Оцінка шкоди. "none" (немає), "minor" (незначна), "moderate" (помірна), "severe" (значна), "catastrophic" (катастрофічна), "unknown".
+- civilian_casualties_reported (bool): true якщо повідомляється про цивільні жертви. false за замовчуванням.
+- infrastructure_hit (string|null): Тип ураженої інфраструктури. "energy" (енергетика), "military" (військова), "residential" (житлова), "industrial" (промислова), "transport" (транспорт), "medical" (медична), "none", null.
+- air_defense_effectiveness (string): Загальна оцінка ефективності ППО. "excellent" (>90% перехоплення), "high" (70-90%), "medium" (40-70%), "low" (<40%), "none" (ППО не працювала), "unknown".
+- threat_duration_assessment (string): Оцінка тривалості загрози для області. "very_short" (<15 хв), "short" (15-60 хв), "medium" (1-3 год), "long" (>3 год), "unknown".
+- prediction_accuracy_hint (string): Для ПРЕДИКТИВНИХ (is_predictive: true) областей — оціни по контексту, чи була загроза реальною для цієї області:
+  * "confirmed" — загроза дійсно досягла цієї області (предикція підтвердилась)
+  * "partially_confirmed" — загроза пройшла поблизу або через сусідню область
+  * "overestimated" — загроза не досягла цієї області (хибний позитив)
+  * "underestimated" — реальна загроза була більшою ніж передбачено
+  * "not_applicable" — для НЕ-предиктивних областей
+  * "unknown" — неможливо визначити
+- clearing_context_tags (list[string]): Ключові маркери з повідомлення про зняття. Наприклад: ["відбій", "всі збиті", "прильоти у місті", "ціль зникла з радарів", "ППО спрацювала"]. Максимум 5 тегів.
+- source_reliability (string): Надійність каналу що знімає загрозу. "official", "high", "medium", "low".
+- time_of_day_category (string): Час доби зняття. "night", "dawn", "day", "dusk".
+
 ТЕЛЕМЕТРИЧНЕ ЗБАГАЧЕННЯ (Telemetry Enrichment):
 Для КОЖНОГО повідомлення з загрозою (threat_level != "none") ти ОБОВ'ЯЗКОВО маєш додати блок "telemetry" з максимально точними оцінками на основі контексту повідомлення. Це критично важливо для аналітики та предиктивного моделювання.
 
@@ -84,6 +122,8 @@ class GeminiThreatAnalyzer:
 ВИМОГИ ДО ФОРМАТУ (Strict JSON Array):
 Ти повинен повернути ТІЛЬКИ JSON масив без markdown обгорток.
 Кожен об'єкт має структуру:
+
+ДЛЯ АКТИВНИХ ЗАГРОЗ (is_clear: false):
 {
   "source_channel": "назва каналу",
   "text": "оригінальний текст",
@@ -117,9 +157,41 @@ class GeminiThreatAnalyzer:
     "correlation_group": "shahed_night_session_2026-07-07"
   }
 }
+
+ДЛЯ ЗНЯТТЯ ЗАГРОЗ (is_clear: true):
+{
+  "source_channel": "назва каналу",
+  "text": "оригінальний текст",
+  "threat_level": "none",
+  "threat_type": "shahed",
+  "source_regions": [],
+  "target_regions": [{"name": "Київська область", "is_predictive": false}],
+  "is_clear": true,
+  "confidence_score": 90,
+  "clearing_telemetry": {
+    "linked_group_id": "shahed_south_2026-07-07_wave1",
+    "linked_correlation_group": "shahed_night_session_2026-07-07",
+    "resolution_type": "intercepted",
+    "intercepted_count": 2,
+    "total_targets_in_wave": 3,
+    "impact_confirmed": false,
+    "damage_assessment": "none",
+    "civilian_casualties_reported": false,
+    "infrastructure_hit": null,
+    "air_defense_effectiveness": "high",
+    "threat_duration_assessment": "medium",
+    "prediction_accuracy_hint": "confirmed",
+    "clearing_context_tags": ["відбій", "всі збиті"],
+    "source_reliability": "official",
+    "time_of_day_category": "night"
+  }
+}
+
 Якщо повідомлень кілька, поверни масив з результатами для кожного повідомлення.
-ОБОВ'ЯЗКОВО повертай confidence_score, eta та telemetry для КОЖНОГО результату з threat_level != "none"!
-Для повідомлень з threat_level == "none" або is_clear == true, блок telemetry не обов'язковий.
+ОБОВ'ЯЗКОВО повертай:
+- confidence_score, eta та telemetry для КОЖНОГО результату з threat_level != "none" та is_clear == false.
+- confidence_score та clearing_telemetry для КОЖНОГО результату з is_clear == true.
+Для повідомлень з threat_level == "none" та is_clear == false, блоки telemetry/clearing_telemetry не обов'язкові.
 """
 
     async def analyze_batch(self, messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
@@ -155,8 +227,13 @@ class GeminiThreatAnalyzer:
             # Normalize telemetry for each result
             if isinstance(results, list):
                 for item in results:
-                    if isinstance(item, dict) and item.get("threat_level", "none") != "none" and not item.get("is_clear", False):
-                        item["telemetry"] = self.normalize_telemetry(item.get("telemetry"))
+                    if isinstance(item, dict):
+                        if item.get("is_clear", False):
+                            # Normalize clearing telemetry
+                            item["clearing_telemetry"] = self.normalize_clearing_telemetry(item.get("clearing_telemetry"))
+                        elif item.get("threat_level", "none") != "none":
+                            # Normalize threat telemetry
+                            item["telemetry"] = self.normalize_telemetry(item.get("telemetry"))
             
             return results
         except Exception as e:
@@ -269,3 +346,81 @@ class GeminiThreatAnalyzer:
         
         return normalized
 
+    @staticmethod
+    def normalize_clearing_telemetry(clearing_telemetry: dict = None) -> dict:
+        """Normalize and validate clearing telemetry block, filling defaults for missing fields."""
+        defaults = {
+            "linked_group_id": None,
+            "linked_correlation_group": None,
+            "resolution_type": "unknown",
+            "intercepted_count": None,
+            "total_targets_in_wave": None,
+            "impact_confirmed": False,
+            "damage_assessment": "unknown",
+            "civilian_casualties_reported": False,
+            "infrastructure_hit": None,
+            "air_defense_effectiveness": "unknown",
+            "threat_duration_assessment": "unknown",
+            "prediction_accuracy_hint": "not_applicable",
+            "clearing_context_tags": [],
+            "source_reliability": "medium",
+            "time_of_day_category": "unknown",
+        }
+        
+        if not clearing_telemetry or not isinstance(clearing_telemetry, dict):
+            return defaults.copy()
+        
+        normalized = defaults.copy()
+        
+        # Valid enum values
+        valid_resolution = {"intercepted", "passed_through", "impact", "lost_contact",
+                           "diverted", "false_alarm", "all_clear_official", "expired", "unknown"}
+        valid_damage = {"none", "minor", "moderate", "severe", "catastrophic", "unknown"}
+        valid_infra = {"energy", "military", "residential", "industrial", "transport", "medical", "none", None}
+        valid_ad_eff = {"excellent", "high", "medium", "low", "none", "unknown"}
+        valid_duration = {"very_short", "short", "medium", "long", "unknown"}
+        valid_pred_acc = {"confirmed", "partially_confirmed", "overestimated",
+                         "underestimated", "not_applicable", "unknown"}
+        valid_reliability = {"official", "high", "medium", "low"}
+        valid_time_cat = {"night", "dawn", "day", "dusk", "unknown"}
+        
+        for key, default in defaults.items():
+            val = clearing_telemetry.get(key, default)
+            
+            # Type coercion and validation
+            if key == "intercepted_count" and val is not None:
+                try:
+                    val = max(0, int(val))
+                except (ValueError, TypeError):
+                    val = None
+            elif key == "total_targets_in_wave" and val is not None:
+                try:
+                    val = max(0, int(val))
+                except (ValueError, TypeError):
+                    val = None
+            elif key in ("impact_confirmed", "civilian_casualties_reported"):
+                val = bool(val)
+            elif key == "clearing_context_tags":
+                if not isinstance(val, list):
+                    val = []
+                val = [str(t) for t in val[:5]]
+            elif key == "resolution_type":
+                val = val if val in valid_resolution else "unknown"
+            elif key == "damage_assessment":
+                val = val if val in valid_damage else "unknown"
+            elif key == "infrastructure_hit":
+                val = val if val in valid_infra else None
+            elif key == "air_defense_effectiveness":
+                val = val if val in valid_ad_eff else "unknown"
+            elif key == "threat_duration_assessment":
+                val = val if val in valid_duration else "unknown"
+            elif key == "prediction_accuracy_hint":
+                val = val if val in valid_pred_acc else "unknown"
+            elif key == "source_reliability":
+                val = val if val in valid_reliability else "medium"
+            elif key == "time_of_day_category":
+                val = val if val in valid_time_cat else "unknown"
+            
+            normalized[key] = val
+        
+        return normalized

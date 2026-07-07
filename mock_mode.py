@@ -481,7 +481,7 @@ class MockThreatManager:
             
         return True
 
-    def clear_threat(self, region: str) -> bool:
+    def clear_threat(self, region: str, clearing_telemetry: dict = None) -> bool:
         if region not in self.threats:
             return False
         old_state = self.threats[region]

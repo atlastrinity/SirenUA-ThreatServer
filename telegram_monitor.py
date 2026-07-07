@@ -344,21 +344,68 @@ class TelegramThreatMonitor:
                 except (ValueError, TypeError):
                     confidence = None
             
-            # Обробка відбою
+            # Обробка відбою з clearing_telemetry
             if is_clear:
+                clearing_telemetry = item.get("clearing_telemetry", {})
                 targets = item.get("target_regions", [])
+                source_channel = item.get("source_channel", "AI")
+                text = item.get("text", "")
+                
                 if not targets:
+                    # Global clearing — all regions
                     self.threat_manager.clear_all()
-                    print(f"🟢 [Gemini] Зняття загрози розпізнано для ВСІХ областей")
+                    # Log clearing for each previously active region
+                    for r_name, r_state in self.threat_manager.threats.items():
+                        if r_state.level != "none" or True:  # Log for all since we just cleared
+                            from server import log_clearing_to_db
+                            log_clearing_to_db(
+                                region=r_name,
+                                clearing_telemetry=clearing_telemetry,
+                                source_channel=source_channel,
+                                message_text=text,
+                                clearing_confidence=confidence,
+                                was_predictive=False
+                            )
+                    res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
+                    print(f"🟢 [Gemini] Зняття загрози для ВСІХ областей (тип: {res_type})")
                 else:
                     for tgt in targets:
-                        region = tgt if isinstance(tgt, str) else tgt.get("name")
-                        if region:
-                            self.threat_manager.clear_threat(region)
-                            if region in self._clear_tasks:
-                                self._clear_tasks[region].cancel()
-                                del self._clear_tasks[region]
-                            print(f"🟢 [Gemini] Зняття загрози: {region}")
+                        if isinstance(tgt, dict):
+                            region = tgt.get("name")
+                            was_pred = tgt.get("is_predictive", False)
+                        else:
+                            region = tgt
+                            was_pred = False
+                        
+                        if not region:
+                            continue
+                        
+                        # Log clearing BEFORE clearing the threat (to capture original state)
+                        from server import log_clearing_to_db
+                        log_clearing_to_db(
+                            region=region,
+                            clearing_telemetry=clearing_telemetry,
+                            source_channel=source_channel,
+                            message_text=text,
+                            clearing_confidence=confidence,
+                            was_predictive=was_pred
+                        )
+                        
+                        self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry)
+                        if region in self._clear_tasks:
+                            self._clear_tasks[region].cancel()
+                            del self._clear_tasks[region]
+                        
+                        # Enhanced clearing log
+                        res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
+                        pred_str = ""
+                        if was_pred and clearing_telemetry:
+                            pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "unknown")
+                            pred_str = f" | предикція: {pred_hint}"
+                        ad_eff = ""
+                        if clearing_telemetry and clearing_telemetry.get("air_defense_effectiveness", "unknown") != "unknown":
+                            ad_eff = f" | ППО: {clearing_telemetry['air_defense_effectiveness']}"
+                        print(f"🟢 [Gemini] Зняття загрози: {region} (тип: {res_type}{pred_str}{ad_eff})")
                 continue
 
             if level == "none":

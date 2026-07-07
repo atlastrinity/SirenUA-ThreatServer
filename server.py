@@ -102,9 +102,51 @@ def init_analytics_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_event ON telemetry_data(threat_event_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_threat_history_region_ts ON threat_history(region, timestamp)')
     
+    # --- Threat Clearings Table (lifecycle) ---
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS threat_clearings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            region TEXT NOT NULL,
+            original_threat_event_id INTEGER,
+            linked_group_id TEXT,
+            linked_correlation_group TEXT,
+            resolution_type TEXT DEFAULT 'unknown',
+            intercepted_count INTEGER,
+            total_targets_in_wave INTEGER,
+            impact_confirmed BOOLEAN DEFAULT 0,
+            damage_assessment TEXT DEFAULT 'unknown',
+            civilian_casualties_reported BOOLEAN DEFAULT 0,
+            infrastructure_hit TEXT,
+            air_defense_effectiveness TEXT DEFAULT 'unknown',
+            threat_duration_assessment TEXT DEFAULT 'unknown',
+            prediction_accuracy_hint TEXT DEFAULT 'not_applicable',
+            was_predictive BOOLEAN DEFAULT 0,
+            original_threat_level TEXT,
+            original_threat_type TEXT,
+            original_confidence INTEGER,
+            clearing_confidence INTEGER,
+            clearing_context_tags TEXT,
+            source_reliability TEXT DEFAULT 'medium',
+            time_of_day_category TEXT DEFAULT 'unknown',
+            clearing_source_channel TEXT,
+            clearing_message_text TEXT,
+            threat_set_timestamp DATETIME,
+            threat_duration_seconds INTEGER,
+            FOREIGN KEY (original_threat_event_id) REFERENCES threat_history(id)
+        )
+    ''')
+    
+    # Indexes for clearings
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_clearings_region ON threat_clearings(region)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_clearings_group ON threat_clearings(linked_group_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_clearings_original ON threat_clearings(original_threat_event_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_clearings_resolution ON threat_clearings(resolution_type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_clearings_prediction ON threat_clearings(prediction_accuracy_hint)')
+    
     conn.commit()
     conn.close()
-    print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data)")
+    print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings)")
 
 def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
@@ -162,6 +204,122 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
         return event_id
     except Exception as e:
         print(f"⚠️ Помилка запису в БД аналітики: {e}")
+        return None
+
+def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
+                       source_channel: str = None, message_text: str = None,
+                       clearing_confidence: int = None, was_predictive: bool = False):
+    """Log threat clearing event with full lifecycle data linked to original threat."""
+    if not clearing_telemetry:
+        clearing_telemetry = {}
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Look up the most recent active threat for this region
+        original_event_id = None
+        original_level = None
+        original_type = None
+        original_confidence = None
+        threat_set_ts = None
+        threat_duration_sec = None
+        
+        # First try by linked_group_id if available
+        linked_gid = clearing_telemetry.get("linked_group_id")
+        if linked_gid:
+            cursor.execute('''
+                SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
+                FROM threat_history th
+                JOIN telemetry_data td ON th.id = td.threat_event_id
+                WHERE th.region = ? AND td.group_id = ?
+                ORDER BY th.timestamp DESC LIMIT 1
+            ''', (region, linked_gid))
+        else:
+            # Fallback: find the most recent non-none threat for this region
+            cursor.execute('''
+                SELECT id, timestamp, threat_level, threat_type, confidence
+                FROM threat_history
+                WHERE region = ? AND threat_level != 'none'
+                ORDER BY timestamp DESC LIMIT 1
+            ''', (region,))
+        
+        row = cursor.fetchone()
+        if row:
+            original_event_id = row["id"]
+            original_level = row["threat_level"]
+            original_type = row["threat_type"]
+            original_confidence = row["confidence"]
+            threat_set_ts = row["timestamp"]
+            # Calculate duration in seconds
+            try:
+                from datetime import datetime
+                set_time = datetime.fromisoformat(threat_set_ts.replace('Z', '+00:00') if threat_set_ts else "")
+                now = datetime.utcnow()
+                threat_duration_sec = int((now - set_time.replace(tzinfo=None)).total_seconds())
+                if threat_duration_sec < 0:
+                    threat_duration_sec = None
+            except Exception:
+                threat_duration_sec = None
+        
+        tags_json = json.dumps(clearing_telemetry.get("clearing_context_tags", []), ensure_ascii=False)
+        
+        cursor.execute('''
+            INSERT INTO threat_clearings (
+                region, original_threat_event_id, linked_group_id, linked_correlation_group,
+                resolution_type, intercepted_count, total_targets_in_wave,
+                impact_confirmed, damage_assessment, civilian_casualties_reported,
+                infrastructure_hit, air_defense_effectiveness, threat_duration_assessment,
+                prediction_accuracy_hint, was_predictive,
+                original_threat_level, original_threat_type, original_confidence,
+                clearing_confidence, clearing_context_tags,
+                source_reliability, time_of_day_category,
+                clearing_source_channel, clearing_message_text,
+                threat_set_timestamp, threat_duration_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            region,
+            original_event_id,
+            clearing_telemetry.get("linked_group_id"),
+            clearing_telemetry.get("linked_correlation_group"),
+            clearing_telemetry.get("resolution_type", "unknown"),
+            clearing_telemetry.get("intercepted_count"),
+            clearing_telemetry.get("total_targets_in_wave"),
+            1 if clearing_telemetry.get("impact_confirmed") else 0,
+            clearing_telemetry.get("damage_assessment", "unknown"),
+            1 if clearing_telemetry.get("civilian_casualties_reported") else 0,
+            clearing_telemetry.get("infrastructure_hit"),
+            clearing_telemetry.get("air_defense_effectiveness", "unknown"),
+            clearing_telemetry.get("threat_duration_assessment", "unknown"),
+            clearing_telemetry.get("prediction_accuracy_hint", "not_applicable"),
+            1 if was_predictive else 0,
+            original_level,
+            original_type,
+            original_confidence,
+            clearing_confidence,
+            tags_json,
+            clearing_telemetry.get("source_reliability", "medium"),
+            clearing_telemetry.get("time_of_day_category", "unknown"),
+            source_channel,
+            message_text[:500] if message_text else None,
+            threat_set_ts,
+            threat_duration_sec
+        ))
+        
+        clearing_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        # Log details
+        res_type = clearing_telemetry.get("resolution_type", "unknown")
+        pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "n/a")
+        dur = f"{threat_duration_sec}с" if threat_duration_sec else "?"
+        print(f"📊 [Clearing DB] {region}: тип={res_type}, предикція={pred_hint}, тривалість={dur}, linked_event={original_event_id}")
+        
+        return clearing_id
+    except Exception as e:
+        print(f"⚠️ Помилка запису clearing в БД: {e}")
         return None
 
 # --- WebSockets Manager ---
@@ -767,6 +925,188 @@ async def get_patterns(days: int = 14):
             "strategic_priority_patterns": priority_patterns,
             "day_of_week_distribution": dow_dist,
             "civilian_risk_distribution": risk_dist
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/lifecycle/{region}")
+async def get_lifecycle_data(region: str, days: int = 30, limit: int = 50):
+    """Повний lifecycle загроз для регіону: встановлення → зняття з телеметрією обох подій."""
+    from urllib.parse import unquote
+    region = unquote(region)
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                tc.id as clearing_id,
+                tc.timestamp as clearing_timestamp,
+                tc.region,
+                tc.original_threat_event_id,
+                tc.linked_group_id,
+                tc.linked_correlation_group,
+                tc.resolution_type,
+                tc.intercepted_count,
+                tc.total_targets_in_wave,
+                tc.impact_confirmed,
+                tc.damage_assessment,
+                tc.civilian_casualties_reported,
+                tc.infrastructure_hit,
+                tc.air_defense_effectiveness,
+                tc.threat_duration_assessment,
+                tc.prediction_accuracy_hint,
+                tc.was_predictive,
+                tc.original_threat_level,
+                tc.original_threat_type,
+                tc.original_confidence,
+                tc.clearing_confidence,
+                tc.clearing_context_tags,
+                tc.source_reliability,
+                tc.time_of_day_category,
+                tc.clearing_source_channel,
+                tc.threat_set_timestamp,
+                tc.threat_duration_seconds
+            FROM threat_clearings tc
+            WHERE tc.region = ? AND tc.timestamp >= datetime('now', ?)
+            ORDER BY tc.timestamp DESC
+            LIMIT ?
+        ''', (region, f'-{days} days', min(limit, 200)))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        events = []
+        for row in rows:
+            event = dict(row)
+            if event.get("clearing_context_tags"):
+                try:
+                    event["clearing_context_tags"] = json.loads(event["clearing_context_tags"])
+                except (json.JSONDecodeError, TypeError):
+                    event["clearing_context_tags"] = []
+            events.append(event)
+        
+        return {
+            "region": region,
+            "count": len(events),
+            "lifecycle_events": events
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/predictions")
+async def get_prediction_accuracy(days: int = 30):
+    """Валідація точності предиктивних (жовтих) регіонів — ключова аналітика для покращення моделі."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        day_filter = f'-{days} days'
+        
+        # 1. Overall prediction accuracy
+        cursor.execute('''
+            SELECT 
+                prediction_accuracy_hint,
+                COUNT(*) as count
+            FROM threat_clearings
+            WHERE was_predictive = 1 AND timestamp >= datetime('now', ?)
+            GROUP BY prediction_accuracy_hint
+            ORDER BY count DESC
+        ''', (day_filter,))
+        accuracy_dist = [dict(r) for r in cursor.fetchall()]
+        
+        # 2. Prediction accuracy by region
+        cursor.execute('''
+            SELECT 
+                region,
+                prediction_accuracy_hint,
+                COUNT(*) as count
+            FROM threat_clearings
+            WHERE was_predictive = 1 AND timestamp >= datetime('now', ?)
+            GROUP BY region, prediction_accuracy_hint
+            ORDER BY region, count DESC
+        ''', (day_filter,))
+        by_region_raw = cursor.fetchall()
+        
+        region_accuracy = {}
+        for r in by_region_raw:
+            rn = r["region"]
+            if rn not in region_accuracy:
+                region_accuracy[rn] = {"region": rn, "predictions": [], "total": 0}
+            region_accuracy[rn]["predictions"].append({
+                "hint": r["prediction_accuracy_hint"],
+                "count": r["count"]
+            })
+            region_accuracy[rn]["total"] += r["count"]
+        
+        # 3. Resolution type distribution for predictive regions
+        cursor.execute('''
+            SELECT 
+                resolution_type,
+                COUNT(*) as count
+            FROM threat_clearings
+            WHERE was_predictive = 1 AND timestamp >= datetime('now', ?)
+            GROUP BY resolution_type
+            ORDER BY count DESC
+        ''', (day_filter,))
+        pred_resolution_dist = [dict(r) for r in cursor.fetchall()]
+        
+        # 4. Air defense effectiveness for predictive regions
+        cursor.execute('''
+            SELECT 
+                air_defense_effectiveness,
+                COUNT(*) as count
+            FROM threat_clearings
+            WHERE was_predictive = 1 AND air_defense_effectiveness != 'unknown'
+              AND timestamp >= datetime('now', ?)
+            GROUP BY air_defense_effectiveness
+            ORDER BY count DESC
+        ''', (day_filter,))
+        pred_ad_eff = [dict(r) for r in cursor.fetchall()]
+        
+        # 5. Average threat duration for confirmed vs overestimated predictions
+        cursor.execute('''
+            SELECT 
+                prediction_accuracy_hint,
+                AVG(threat_duration_seconds) as avg_duration_sec,
+                COUNT(*) as count
+            FROM threat_clearings
+            WHERE was_predictive = 1 AND threat_duration_seconds IS NOT NULL
+              AND timestamp >= datetime('now', ?)
+            GROUP BY prediction_accuracy_hint
+        ''', (day_filter,))
+        duration_by_accuracy = [dict(r) for r in cursor.fetchall()]
+        
+        # 6. Total stats
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as total_clearings,
+                SUM(CASE WHEN was_predictive = 1 THEN 1 ELSE 0 END) as predictive_clearings,
+                SUM(CASE WHEN was_predictive = 0 THEN 1 ELSE 0 END) as direct_clearings,
+                SUM(CASE WHEN impact_confirmed = 1 THEN 1 ELSE 0 END) as total_impacts,
+                SUM(CASE WHEN civilian_casualties_reported = 1 THEN 1 ELSE 0 END) as civilian_incidents,
+                AVG(threat_duration_seconds) as avg_duration_sec
+            FROM threat_clearings
+            WHERE timestamp >= datetime('now', ?)
+        ''', (day_filter,))
+        totals = dict(cursor.fetchone())
+        if totals.get("avg_duration_sec"):
+            totals["avg_duration_sec"] = round(totals["avg_duration_sec"], 1)
+        
+        conn.close()
+        
+        return {
+            "days": days,
+            "totals": totals,
+            "prediction_accuracy_distribution": accuracy_dist,
+            "prediction_accuracy_by_region": list(region_accuracy.values()),
+            "predictive_resolution_types": pred_resolution_dist,
+            "predictive_air_defense_effectiveness": pred_ad_eff,
+            "avg_duration_by_accuracy": duration_by_accuracy
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
