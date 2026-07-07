@@ -397,20 +397,20 @@ def on_threat_changed(region, state, telemetry=None):
     if prev_active != state.is_active:
         log_level = "high" if state.is_active else "none"
         detail = "Повітряна тривога" if state.is_active else "Відбій повітряної тривоги"
-        log_threat_to_db(region, log_level, "official_alarm", detail)
-        log_threat_to_firestore(region, log_level, "official_alarm", detail)
+        asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, log_level, "official_alarm", detail))
+        asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail))
         
     # 2. AI/Telegram threat level change logging
     if prev_level != state.level:
         current_type = state.threat_type
         if (current_type and current_type != "official_alarm") or (prev_type and prev_type != "official_alarm" and state.level == "none"):
             if state.level != "none":
-                log_threat_to_db(region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry)
-                log_threat_to_firestore(region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry)
+                asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry))
+                asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry))
             elif prev_level != "none":
                 # Threat has cleared
-                log_threat_to_db(region, "none", prev_type, "Відбій загрози")
-                log_threat_to_firestore(region, "none", prev_type, "Відбій загрози")
+                asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, "none", prev_type, "Відбій загрози"))
+                asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози"))
             
     last_logged_states[region] = (state.level, state.is_active, state.threat_type)
 
