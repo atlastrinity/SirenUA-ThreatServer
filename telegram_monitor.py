@@ -552,13 +552,37 @@ class TelegramThreatMonitor:
                 # Append telemetry details in a readable format if available
                 telemetry_info = []
                 if telemetry and isinstance(telemetry, dict):
+                    # 1. Distance
                     distance = telemetry.get("distance_to_target_km")
                     if distance:
                         telemetry_info.append(f"📍 Відстань до цілі: ~{distance:.0f} км.")
                     
+                    # 2. Target Count (Кількість цілей)
                     target_count = telemetry.get("target_count")
-                    if target_count and target_count > 1:
-                        telemetry_info.append(f"👥 Кількість цілей у групі: {target_count}.")
+                    if target_count:
+                        telemetry_info.append(f"👥 Кількість цілей: {target_count}.")
+                    
+                    # 3. Launch Origin (Район запуску)
+                    launch_origin = telemetry.get("launch_origin")
+                    if launch_origin and launch_origin.lower() != "unknown":
+                        telemetry_info.append(f"🛫 Напрямок запуску: {launch_origin}.")
+                        
+                    # 4. Weapon Subtype (Конкретна модель)
+                    weapon_subtype = telemetry.get("weapon_subtype")
+                    if weapon_subtype and weapon_subtype.lower() != "unknown":
+                        telemetry_info.append(f"🎯 Тип: {weapon_subtype}.")
+                        
+                    # 5. Speed (Швидкість)
+                    speed = telemetry.get("speed_kmh")
+                    if speed:
+                        telemetry_info.append(f"💨 Швидкість руху: ~{speed} км/год.")
+                        
+                    # 6. Altitude (Висота)
+                    alt = telemetry.get("altitude_category")
+                    if alt and alt.lower() != "unknown":
+                        alt_mapping = {"low": "мала", "medium": "середня", "high": "велика"}
+                        alt_ukr = alt_mapping.get(alt.lower(), alt)
+                        telemetry_info.append(f"↕️ Висота польоту: {alt_ukr}.")
                 
                 if telemetry_info:
                     detail += "\n" + " ".join(telemetry_info)
