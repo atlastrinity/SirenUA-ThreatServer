@@ -150,8 +150,6 @@ def init_analytics_db():
 
 def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
-    if level == "none":
-        return None
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -360,9 +358,29 @@ shelter_manager = ShelterManager()
 telegram_monitor = None
 is_live_mode = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
 
-# Hook up MockThreatManager to WebSockets and DB
+# Track last logged threat states to avoid duplicate logging and properly detect changes
+last_logged_states = {}  # region -> (level, is_active, threat_type)
+
 def on_threat_changed(region, state, telemetry=None):
-    log_threat_to_db(region, state.level, state.threat_type, state.detail, state.confidence, telemetry=telemetry)
+    global last_logged_states
+    prev_level, prev_active, prev_type = last_logged_states.get(region, ("none", False, None))
+    
+    # 1. Official air alarm status change logging
+    if prev_active != state.is_active:
+        log_level = "high" if state.is_active else "none"
+        detail = "Повітряна тривога" if state.is_active else "Відбій повітряної тривоги"
+        log_threat_to_db(region, log_level, "official_alarm", detail)
+        
+    # 2. AI/Telegram threat level change logging
+    if prev_level != state.level:
+        if state.level != "none":
+            log_threat_to_db(region, state.level, state.threat_type, state.detail, state.confidence, telemetry=telemetry)
+        elif prev_level != "none":
+            # Threat has cleared
+            log_threat_to_db(region, "none", state.threat_type or prev_type or "official_alarm", "Відбій загрози")
+            
+    last_logged_states[region] = (state.level, state.is_active, state.threat_type)
+
     asyncio.create_task(ws_manager.broadcast({
         "type": "threat_update",
         "region": region,
@@ -473,6 +491,9 @@ async def lifespan(app: FastAPI):
     # Завантаження збереженого стану загроз (асинхронно у фоновому пулі)
     try:
         await asyncio.to_thread(threat_manager.load_from_db)
+        # Ініціалізація відслідковуваного стану після завантаження
+        for r, s in threat_manager.threats.items():
+            last_logged_states[r] = (s.level, s.is_active, s.threat_type)
     except Exception as e:
         print(f"⚠️ Помилка асинхронного завантаження стану загроз: {e}")
 
