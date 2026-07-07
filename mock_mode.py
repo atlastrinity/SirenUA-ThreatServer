@@ -258,8 +258,8 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         return
 
     if level == "none":
-        title = f"🟢 Відбій тривоги — {region}"
-        body = f"Відбій повітряної тривоги в: {region}."
+        title = "🟢 Відбій повітряної тривоги"
+        body = region
         sound = "vidbiy.wav"
         is_critical = False
     else:
@@ -277,20 +277,21 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
                 type_desc = "КАБ"
 
             if type_desc:
-                title = f"⚠️ Загроза: {type_desc} — {region}"
+                title = f"⚠️ Загроза: {type_desc}"
             else:
-                title = f"⚠️ Загроза — {region}"
+                title = "⚠️ Загроза"
             sound = "warning.wav"
             # Keep it critical if the region is already under an official alarm
             # so the warning plays even if the device is muted/DND
             is_critical = is_official_alarm
+            body = detail if detail else f"Загроза в: {region}."
         else:
             # It's a general official alarm trigger (no specific threat type)
-            title = f"🚨 Повітряна тривога — {region}"
+            title = "🚨 Повітряна тривога"
+            body = region
             sound = "siren.wav"
             is_critical = True
-            
-        body = detail if detail else f"Загроза в: {region}."
+
         extra_info = []
         if confidence is not None:
             extra_info.append(f"Ймовірність: {confidence}%")
@@ -545,7 +546,7 @@ class MockThreatManager:
                 self.last_sound_time = now
             
             # Send Push Notification for official Alarm / Off
-            detail = f"Офіційне повідомлення про повітряну тривогу в: {region}!" if is_active else f"Відбій повітряної тривоги в: {region}."
+            detail = "Повітряна тривога" if is_active else "Відбій повітряної тривоги"
             send_fcm_notification(
                 region=region,
                 level="high" if is_active else "none",
