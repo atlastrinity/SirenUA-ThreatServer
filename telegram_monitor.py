@@ -7,6 +7,7 @@ from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
 from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES, UKRAINE_TOPOLOGY
+from gemini_analyzer import GeminiThreatAnalyzer
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -99,6 +100,10 @@ class TelegramThreatMonitor:
         self.client: Optional[TelegramClient] = None
         self._clear_tasks = {}
         
+        self.analyzer = GeminiThreatAnalyzer()
+        self.message_queue = asyncio.Queue()
+        self.batch_task = None
+        
         # Session file path detection
         self.session_paths = [
             "sirenua_userbot_session.session",
@@ -122,6 +127,9 @@ class TelegramThreatMonitor:
     async def start(self):
         self.is_running = True
         self._schedule_initial_auto_clears()
+        
+        # Запускаємо фоновий процес батч-аналізу через Gemini
+        self.batch_task = asyncio.create_task(self._batch_processor_loop())
         
         # 1. Try to load from environment variable (StringSession) - best for Render production
         session_string = os.environ.get("TELEGRAM_SESSION_STRING")
@@ -295,8 +303,108 @@ class TelegramThreatMonitor:
                     queue.append(new_path)
         return []
 
-    # --- Message Parser Logic (Shared by both MTProto & Web Scraper) ---
+    # --- LLM Batching Loop ---
+    async def _batch_processor_loop(self):
+        """Фоновий процес, що збирає повідомлення та відправляє їх до Gemini раз на 60с."""
+        while self.is_running:
+            await asyncio.sleep(60) # Wait 60 seconds
+            
+            messages = []
+            while not self.message_queue.empty():
+                try:
+                    msg = self.message_queue.get_nowait()
+                    messages.append(msg)
+                except asyncio.QueueEmpty:
+                    break
+                    
+            if messages:
+                print(f"🧠 Відправка батчу ({len(messages)} повідомлень) до Gemini API...")
+                results = await self.analyzer.analyze_batch(messages)
+                if results:
+                    await self._apply_gemini_analysis(results)
+
+    async def _apply_gemini_analysis(self, results):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+                
+            level = item.get("threat_level", "none")
+            threat_type = item.get("threat_type")
+            is_clear = item.get("is_clear", False)
+            source_channel = item.get("source_channel", "AI")
+            text = item.get("text", "")
+            
+            # Обробка відбою
+            if is_clear:
+                targets = item.get("target_regions", [])
+                if not targets:
+                    self.threat_manager.clear_all()
+                    print(f"🟢 [Gemini] Зняття загрози розпізнано для ВСІХ областей")
+                else:
+                    for tgt in targets:
+                        region = tgt if isinstance(tgt, str) else tgt.get("name")
+                        if region:
+                            self.threat_manager.clear_threat(region)
+                            if region in self._clear_tasks:
+                                self._clear_tasks[region].cancel()
+                                del self._clear_tasks[region]
+                            print(f"🟢 [Gemini] Зняття загрози: {region}")
+                continue
+
+            if level == "none":
+                continue
+
+            target_regions = item.get("target_regions", [])
+            for tgt in target_regions:
+                if isinstance(tgt, dict):
+                    region = tgt.get("name")
+                    is_pred = tgt.get("is_predictive", False)
+                else:
+                    region = tgt
+                    is_pred = False
+                
+                if not region or region not in ALL_REGIONS:
+                    continue
+                    
+                delay = 3600
+                eta_str = ""
+                if threat_type == "mig31k":
+                    delay = 2700
+                    eta_str = "~20-40 хв"
+                elif threat_type == "ballistic":
+                    delay = 1800
+                    eta_str = "~2-5 хв"
+                elif threat_type == "shahed":
+                    delay = 10800
+                    eta_str = "+1-2 год"
+                elif threat_type == "cruise_missile":
+                    delay = 3600
+                    eta_str = "+15-30 хв"
+                    
+                detail = f"[{source_channel}] {text}"
+                if is_pred:
+                    detail += f"\n⚠️ Предиктивний аналіз ШІ: ціль може прямувати через область."
+                    if eta_str:
+                        detail += f" Очікуваний час: {eta_str}"
+                elif eta_str:
+                    detail += f"\n(Очікуваний час: {eta_str})"
+
+                self.threat_manager.set_threat(region, level, threat_type, detail)
+                self._schedule_auto_clear(region, delay)
+                print(f"🔴 [Gemini] Встановлено загрозу ({level}) для: {region}")
+
+
     async def _process_message(self, text, channel):
+        if self.analyzer.is_configured:
+            # Queue for Gemini
+            await self.message_queue.put({"channel": channel, "text": text})
+            print(f"📥 Повідомлення додано до черги ШІ. В черзі: {self.message_queue.qsize()}")
+        else:
+            # Fallback to Regex
+            await self._process_message_regex(text, channel)
+
+    # --- Message Parser Logic (Shared by both MTProto & Web Scraper) ---
+    async def _process_message_regex(self, text, channel):
         # Clean double spaces and split into lines, then logical sentences
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         segments = []

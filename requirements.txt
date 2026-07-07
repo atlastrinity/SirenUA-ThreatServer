@@ -4,3 +4,5 @@ aiohttp
 beautifulsoup4
 firebase-admin
 telethon
+google-generativeai
+websockets

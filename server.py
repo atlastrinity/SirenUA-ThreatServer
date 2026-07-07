@@ -20,10 +20,12 @@ from datetime import datetime, timezone
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+import sqlite3
+import json
 
 from mock_mode import MockThreatManager
 from shelter_manager import ShelterManager
@@ -35,11 +37,79 @@ try:
 except ImportError:
     HAS_FIREBASE = False
 
+# --- База даних Аналітики ---
+DB_PATH = "threat_analytics.db"
+
+def init_analytics_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS threat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            region TEXT,
+            threat_level TEXT,
+            threat_type TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def log_threat_to_db(region: str, level: str, threat_type: str):
+    if level == "none":
+        return
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO threat_history (region, threat_level, threat_type) VALUES (?, ?, ?)",
+            (region, level, threat_type)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Помилка запису в БД аналітики: {e}")
+
+# --- WebSockets Manager ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        # Відправляємо оновлення всім клієнтам
+        msg_text = json.dumps(message)
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(msg_text)
+            except Exception:
+                pass
+
+ws_manager = ConnectionManager()
+
 # Глобальний менеджер загроз (in-memory)
 threat_manager = MockThreatManager()
 shelter_manager = ShelterManager()
 telegram_monitor = None
 is_live_mode = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
+
+# Hook up MockThreatManager to WebSockets and DB
+def on_threat_changed(region, state):
+    log_threat_to_db(region, state.level, state.threat_type)
+    asyncio.create_task(ws_manager.broadcast({
+        "type": "threat_update",
+        "region": region,
+        "state": state.to_dict()
+    }))
+
+threat_manager.on_change = on_threat_changed
 
 def init_firebase():
     if not HAS_FIREBASE:
@@ -100,6 +170,9 @@ async def lifespan(app: FastAPI):
     
     # Ініціалізація Firebase Cloud Messaging
     init_firebase()
+    
+    # Ініціалізація БД аналітики
+    init_analytics_db()
 
     # Завантаження бази укриттів з OpenStreetMap
     try:
@@ -188,6 +261,54 @@ async def get_threats():
         "mode": "live" if is_live_mode else "mock",
         "threats": threat_manager.get_all_threats(),
     }
+
+
+@app.get("/api/analytics/heatmap")
+async def get_heatmap_data(days: int = 7):
+    """Повертає історичні дані загроз для побудови теплової карти."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Запит рахує кількість тривог по регіонах за останні `days` днів
+        cursor.execute('''
+            SELECT region, COUNT(*) as threat_count, MAX(timestamp) as last_threat 
+            FROM threat_history 
+            WHERE timestamp >= datetime('now', ?) 
+            GROUP BY region
+            ORDER BY threat_count DESC
+        ''', (f'-{days} days',))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {
+            "days": days,
+            "data": [dict(row) for row in rows]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint для отримання живих оновлень загроз."""
+    await ws_manager.connect(websocket)
+    try:
+        # Відправляємо поточний стан одразу при підключенні
+        await websocket.send_text(json.dumps({
+            "type": "initial_state",
+            "threats": threat_manager.get_all_threats()
+        }))
+        
+        while True:
+            # Очікуємо повідомлень (keep-alive)
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
 
 
 @app.post("/api/threats/mock")
