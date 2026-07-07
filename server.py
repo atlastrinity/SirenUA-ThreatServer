@@ -50,21 +50,32 @@ def init_analytics_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             region TEXT,
             threat_level TEXT,
-            threat_type TEXT
+            threat_type TEXT,
+            detail TEXT,
+            confidence INTEGER
         )
     ''')
+    # Migrate existing tables — add columns if missing
+    try:
+        cursor.execute("ALTER TABLE threat_history ADD COLUMN detail TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
+        cursor.execute("ALTER TABLE threat_history ADD COLUMN confidence INTEGER")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     conn.close()
 
-def log_threat_to_db(region: str, level: str, threat_type: str):
+def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None):
     if level == "none":
         return
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO threat_history (region, threat_level, threat_type) VALUES (?, ?, ?)",
-            (region, level, threat_type)
+            "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence) VALUES (?, ?, ?, ?, ?)",
+            (region, level, threat_type, detail, confidence)
         )
         conn.commit()
         conn.close()
@@ -111,7 +122,7 @@ is_live_mode = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lowe
 
 # Hook up MockThreatManager to WebSockets and DB
 def on_threat_changed(region, state):
-    log_threat_to_db(region, state.level, state.threat_type)
+    log_threat_to_db(region, state.level, state.threat_type, state.detail, state.confidence)
     asyncio.create_task(ws_manager.broadcast({
         "type": "threat_update",
         "region": region,
@@ -371,6 +382,38 @@ async def get_heatmap_data(days: int = 7):
         return {
             "days": days,
             "data": [dict(row) for row in rows]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/history/{region}")
+async def get_region_history(region: str, limit: int = 50):
+    """Повертає хронологію загроз для конкретної області."""
+    # URL-decode region name
+    from urllib.parse import unquote
+    region = unquote(region)
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, timestamp, threat_level, threat_type, detail, confidence
+            FROM threat_history
+            WHERE region = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (region, min(limit, 200)))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {
+            "region": region,
+            "count": len(rows),
+            "events": [dict(row) for row in rows]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
