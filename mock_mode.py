@@ -179,8 +179,70 @@ TOPIC_MAPPING = {
     "Чернігівська область": "region_chernihiv"
 }
 
+import asyncio
+
+fcm_queue = None
+fcm_worker_task = None
+
+async def fcm_queue_worker():
+    global fcm_queue
+    while True:
+        try:
+            item = await fcm_queue.get()
+            # Send the FCM notification synchronously in a thread pool so we do not block the event loop
+            await asyncio.to_thread(
+                _send_fcm_notification_sync,
+                item["region"],
+                item["level"],
+                item["threat_type"],
+                item["detail"],
+                item["play_sound"],
+                item["confidence"],
+                item["eta"]
+            )
+            # Sleep 1.5 seconds between notifications to space out the sounds on user devices
+            await asyncio.sleep(1.5)
+            fcm_queue.task_done()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"⚠️ Помилка у воркері черги FCM: {e}")
+            await asyncio.sleep(1.0)
+
+async def start_fcm_worker():
+    global fcm_queue, fcm_worker_task
+    if fcm_queue is None:
+        fcm_queue = asyncio.Queue()
+    if fcm_worker_task is None:
+        fcm_worker_task = asyncio.create_task(fcm_queue_worker())
+        print("🚀 FCM Queue Worker успішно запущено.")
+
 def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None):
-    """Надсилає Push-сповіщення у Firebase топік для відповідного регіону."""
+    """Додає Push-сповіщення у чергу відправки FCM (якщо працює асинхронний режим) або відправляє синхронно."""
+    global fcm_queue
+    if fcm_queue is not None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(
+                fcm_queue.put_nowait,
+                {
+                    "region": region,
+                    "level": level,
+                    "threat_type": threat_type,
+                    "detail": detail,
+                    "play_sound": play_sound,
+                    "confidence": confidence,
+                    "eta": eta
+                }
+            )
+            return
+        except RuntimeError:
+            pass # Event loop not running yet
+
+    _send_fcm_notification_sync(region, level, threat_type, detail, play_sound, confidence, eta)
+
+def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None):
+    """Надсилає Push-сповіщення у Firebase топік для відповідного регіону (синхронний метод)."""
     if not HAS_FIREBASE:
         return
 
@@ -208,7 +270,6 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
             is_critical = False
             
         body = detail if detail else f"Повітряна тривога в: {region}. Прямуйте в укриття!"
-        # Append confidence and ETA to body if available
         extra_info = []
         if confidence is not None:
             extra_info.append(f"Ймовірність: {confidence}%")
@@ -217,19 +278,27 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
         if extra_info:
             body += f" ({', '.join(extra_info)})"
 
-    # Створюємо повідомлення для топіку з налаштуваннями звуку для iOS (APNs)
-    # Для Critical Alerts (обхід беззвучного режиму) використовуємо CriticalSound
-    # content-available: 1 забезпечує background delivery на заблокованому екрані
-    # mutable-content: 1 дозволяє Notification Service Extension модифікувати контент
-    aps = messaging.Aps(badge=1, content_available=True, mutable_content=True)
+    # Створюємо Aps з interruption_level для коректного відображення на Lock Screen
     if play_sound:
         if is_critical:
             critical_sound = messaging.CriticalSound(name=sound, critical=True, volume=1.0)
         else:
             critical_sound = messaging.CriticalSound(name=sound, critical=False, volume=0.8)
-        aps = messaging.Aps(sound=critical_sound, badge=1, content_available=True, mutable_content=True)
+        aps = messaging.Aps(
+            sound=critical_sound, 
+            badge=1, 
+            content_available=True, 
+            mutable_content=True,
+            custom_data={"interruption-level": "critical" if is_critical else "time-sensitive"}
+        )
+    else:
+        aps = messaging.Aps(
+            badge=1, 
+            content_available=True, 
+            mutable_content=True,
+            custom_data={"interruption-level": "critical" if is_critical else "time-sensitive"}
+        )
 
-    # Custom data payload для обробки в background
     data_payload = {
         "region": region,
         "level": level,
@@ -249,7 +318,7 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
         data=data_payload,
         apns=messaging.APNSConfig(
             headers={
-                "apns-priority": "10" if is_critical else "5",
+                "apns-priority": "10",
                 "apns-push-type": "alert",
             },
             payload=messaging.APNSPayload(aps=aps)
@@ -259,7 +328,7 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
 
     try:
         response = messaging.send(message)
-        sound_status = "ЗІ ЗВУКОМ" if play_sound else "БЕЗ ЗВУКУ (ліміт 20с)"
+        sound_status = "ЗІ ЗВУКОМ" if play_sound else "БЕЗ ЗВУКУ"
         priority = "CRITICAL" if is_critical else "NORMAL"
         print(f"🚀 FCM Push [{sound_status}|{priority}] sent for {region} (topic: {topic}), confidence: {confidence}%, response: {response}")
     except Exception as e:
