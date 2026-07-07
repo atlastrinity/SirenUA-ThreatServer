@@ -198,7 +198,8 @@ async def fcm_queue_worker():
                 item["detail"],
                 item["play_sound"],
                 item["confidence"],
-                item["eta"]
+                item["eta"],
+                item.get("is_official_alarm", False)
             )
             # Sleep 1.5 seconds between notifications to space out the sounds on user devices
             await asyncio.sleep(1.5)
@@ -217,7 +218,7 @@ async def start_fcm_worker():
         fcm_worker_task = asyncio.create_task(fcm_queue_worker())
         print("🚀 FCM Queue Worker успішно запущено.")
 
-def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None):
+def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False):
     """Додає Push-сповіщення у чергу відправки FCM (якщо працює асинхронний режим) або відправляє синхронно."""
     global fcm_queue
     if fcm_queue is not None:
@@ -232,16 +233,17 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
                     "detail": detail,
                     "play_sound": play_sound,
                     "confidence": confidence,
-                    "eta": eta
+                    "eta": eta,
+                    "is_official_alarm": is_official_alarm
                 }
             )
             return
         except RuntimeError:
             pass # Event loop not running yet
 
-    _send_fcm_notification_sync(region, level, threat_type, detail, play_sound, confidence, eta)
+    _send_fcm_notification_sync(region, level, threat_type, detail, play_sound, confidence, eta, is_official_alarm)
 
-def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None):
+def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False):
     """Надсилає Push-сповіщення у Firebase топік для відповідного регіону (синхронний метод)."""
     if not HAS_FIREBASE:
         return
@@ -256,20 +258,31 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         sound = "vidbiy.wav"
         is_critical = False
     else:
-        if threat_type == "mig31k":
-            title = "🚨 Авіаційна небезпека!"
-            sound = "siren.wav"
-            is_critical = True
-        elif level in ("high", "critical"):
-            title = "🚨 Повітряна тривога!"
-            sound = "siren.wav"
-            is_critical = True
+        if is_official_alarm:
+            if threat_type == "mig31k":
+                title = "🚨 Авіаційна небезпека!"
+                sound = "siren.wav"
+                is_critical = True
+            else:
+                title = "🚨 Повітряна тривога!"
+                sound = "siren.wav"
+                is_critical = True
         else:
-            title = "⚠️ Попередження про загрозу"
+            type_desc = "Загроза"
+            if threat_type == "mig31k":
+                type_desc = "МіГ-31К"
+            elif threat_type == "shahed":
+                type_desc = "Шахеди"
+            elif threat_type == "ballistic":
+                type_desc = "Балістика"
+            elif threat_type == "cruise_missile":
+                type_desc = "Крилаті ракети"
+                
+            title = f"⚠️ Загроза: {type_desc}"
             sound = "warning.wav"
             is_critical = False
             
-        body = detail if detail else f"Повітряна тривога в: {region}. Прямуйте в укриття!"
+        body = detail if detail else f"Загроза в: {region}."
         extra_info = []
         if confidence is not None:
             extra_info.append(f"Ймовірність: {confidence}%")
@@ -454,7 +467,7 @@ class MockThreatManager:
             else:
                 self.last_sound_time = now
                 
-            send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta)
+            send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active)
             self.save_to_db()
             if hasattr(self, 'on_change'):
                 self.on_change(region, self.threats[region])
@@ -525,7 +538,8 @@ class MockThreatManager:
                 level="high" if is_active else "none",
                 threat_type=None,
                 detail=detail,
-                play_sound=play_sound
+                play_sound=play_sound,
+                is_official_alarm=is_active
             )
             
             self.save_to_db()
