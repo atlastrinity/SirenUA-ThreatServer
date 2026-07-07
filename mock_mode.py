@@ -280,7 +280,7 @@ class MockThreatManager:
             import time
             now = time.time()
             play_sound = True
-            if now - self.last_sound_time < 20.0:
+            if now - self.last_sound_time < 10.0:
                 play_sound = False
             else:
                 self.last_sound_time = now
@@ -300,7 +300,7 @@ class MockThreatManager:
             import time
             now = time.time()
             play_sound = True
-            if now - self.last_sound_time < 20.0:
+            if now - self.last_sound_time < 10.0:
                 play_sound = False
             else:
                 self.last_sound_time = now
