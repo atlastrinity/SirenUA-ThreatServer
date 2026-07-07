@@ -10,8 +10,23 @@ import asyncio
 import math
 import time
 import logging
+import os
+import json
 from dataclasses import dataclass, asdict
 from typing import List, Optional
+
+import aiohttp
+
+try:
+    from firebase_admin import firestore
+    HAS_FIREBASE = True
+except ImportError:
+    HAS_FIREBASE = False
+
+logger = logging.getLogger("shelter_manager")
+
+GOV_DATASET_URLS = os.environ.get("GOV_DATASET_URLS", "").split(",")
+GOV_DATASET_URLS = [url.strip() for url in GOV_DATASET_URLS if url.strip()]
 
 import aiohttp
 
@@ -343,6 +358,101 @@ class ShelterManager:
     async def start_refresh_loop(self):
         """Start background refresh task."""
         self._refresh_task = asyncio.create_task(self._refresh_loop())
+        self._sync_task = asyncio.create_task(self._sync_gov_data_loop())
+
+    async def _sync_gov_data_loop(self):
+        """Автоматична синхронізація офіційних укриттів (data.gov.ua) з Firestore щоночі."""
+        if not HAS_FIREBASE:
+            return
+            
+        # Чекаємо 10 хвилин після старту сервера, щоб не навантажувати систему відразу
+        await asyncio.sleep(600)
+        
+        while True:
+            if not GOV_DATASET_URLS:
+                # Якщо URL-ів немає, чекаємо добу і перевіряємо знову
+                await asyncio.sleep(24 * 3600)
+                continue
+                
+            try:
+                logger.info("⬇️ Починаємо автоматичну синхронізацію укриттів з відкритих даних...")
+                total_synced = 0
+                
+                async with aiohttp.ClientSession() as session:
+                    for url in GOV_DATASET_URLS:
+                        try:
+                            async with session.get(url, timeout=60) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    if isinstance(data, list):
+                                        total_synced += await self._upload_to_firestore(data)
+                                    elif isinstance(data, dict) and "result" in data: # CKAN API fallback
+                                        records = data["result"].get("records", [])
+                                        total_synced += await self._upload_to_firestore(records)
+                        except Exception as e:
+                            logger.error(f"Помилка завантаження датасету з {url}: {e}")
+                            
+                logger.info(f"✅ Синхронізація завершена. Оновлено {total_synced} укриттів.")
+                
+                # Перезавантажуємо кеш, бо дані у базі оновилися
+                await self.load()
+                
+                # Успіх - чекаємо 24 години до наступної спроби
+                await asyncio.sleep(24 * 3600)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"⚠️ Помилка синхронізації офіційних укриттів: {e}")
+                # При помилці чекаємо 1 годину і повторюємо
+                await asyncio.sleep(3600)
+
+    async def _upload_to_firestore(self, records: List[dict]) -> int:
+        """Uploads a list of dictionaries to Firestore sirenua_shelters."""
+        try:
+            loop = asyncio.get_running_loop()
+            def _upload():
+                db = firestore.client()
+                batch = db.batch()
+                count = 0
+                
+                for r in records:
+                    lat = float(r.get("lat") or r.get("latitude") or 0.0)
+                    lon = float(r.get("lon") or r.get("longitude") or 0.0)
+                    if lat == 0.0 or lon == 0.0:
+                        continue
+                        
+                    # Deterministic ID to overwrite old data and avoid duplication
+                    doc_id = f"gov_{round(lat, 5)}_{round(lon, 5)}".replace(".", "_")
+                    doc_ref = db.collection("sirenua_shelters").document(doc_id)
+                    
+                    capacity_str = str(r.get("capacity") or "0")
+                    capacity = int(''.join(filter(str.isdigit, capacity_str))) if any(c.isdigit() for c in capacity_str) else 0
+
+                    batch.set(doc_ref, {
+                        "name": str(r.get("name") or r.get("title") or "Укриття"),
+                        "address": str(r.get("address") or r.get("location") or ""),
+                        "lat": lat,
+                        "lon": lon,
+                        "type": str(r.get("type") or r.get("shelter_type") or "bomb_shelter"),
+                        "capacity": capacity,
+                        "accessible": bool(r.get("accessible") or False),
+                        "source": "gov"
+                    })
+                    count += 1
+                    
+                    if count % 400 == 0:
+                        batch.commit()
+                        batch = db.batch()
+                        
+                if count % 400 != 0:
+                    batch.commit()
+                return count
+                
+            return await loop.run_in_executor(None, _upload)
+        except Exception as e:
+            logger.error(f"Firestore upload error: {e}")
+            return 0
 
     async def _refresh_loop(self):
         """Periodically re-fetch shelters from OSM."""
@@ -360,7 +470,16 @@ class ShelterManager:
     async def stop(self):
         if self._refresh_task:
             self._refresh_task.cancel()
-            try:
+        if hasattr(self, '_sync_task') and self._sync_task:
+            self._sync_task.cancel()
+        
+        try:
+            if self._refresh_task:
                 await self._refresh_task
-            except asyncio.CancelledError:
-                pass
+        except asyncio.CancelledError:
+            pass
+        try:
+            if hasattr(self, '_sync_task') and self._sync_task:
+                await self._sync_task
+        except asyncio.CancelledError:
+            pass
