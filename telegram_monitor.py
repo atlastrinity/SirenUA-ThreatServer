@@ -324,6 +324,7 @@ class TelegramThreatMonitor:
                     await self._apply_gemini_analysis(results)
 
     async def _apply_gemini_analysis(self, results):
+        """Applies Gemini AI analysis results with confidence-based filtering and level adjustment."""
         for item in results:
             if not isinstance(item, dict):
                 continue
@@ -333,6 +334,14 @@ class TelegramThreatMonitor:
             is_clear = item.get("is_clear", False)
             source_channel = item.get("source_channel", "AI")
             text = item.get("text", "")
+            confidence = item.get("confidence_score")
+            
+            # Validate confidence as int
+            if confidence is not None:
+                try:
+                    confidence = int(confidence)
+                except (ValueError, TypeError):
+                    confidence = None
             
             # Обробка відбою
             if is_clear:
@@ -354,6 +363,28 @@ class TelegramThreatMonitor:
             if level == "none":
                 continue
 
+            # Фільтрація за порогом довіри ШІ (мінімум 40%)
+            if confidence is not None and confidence < 40:
+                print(f"⚠️ [Gemini] Загроза відхилена (довіра {confidence}% < 40%): {text[:60]}...")
+                continue
+                
+            # Коригування рівня загрози на основі довіри
+            adjusted_level = level
+            if confidence is not None:
+                if confidence >= 85:
+                    # Висока довіра — зберігаємо оригінальний рівень
+                    adjusted_level = level
+                elif confidence >= 60:
+                    # Середня довіра — знижуємо на один рівень
+                    level_downgrade = {"critical": "high", "high": "medium", "medium": "low", "low": "low"}
+                    adjusted_level = level_downgrade.get(level, level)
+                else:
+                    # Низька довіра (40-59%) — встановлюємо low
+                    adjusted_level = "low"
+                    
+                if adjusted_level != level:
+                    print(f"📥 [Gemini] Рівень знижено {level} → {adjusted_level} (довіра {confidence}%)")
+
             target_regions = item.get("target_regions", [])
             for tgt in target_regions:
                 if isinstance(tgt, dict):
@@ -365,21 +396,33 @@ class TelegramThreatMonitor:
                 
                 if not region or region not in ALL_REGIONS:
                     continue
+                
+                # Знижуємо довіру для предиктивних регіонів
+                region_confidence = confidence
+                if is_pred and region_confidence is not None:
+                    region_confidence = max(0, region_confidence - 20)
+                
+                # ETA: prefer Gemini's AI-provided ETA, fallback to heuristic
+                gemini_eta = item.get("eta", "")
                     
                 delay = 3600
-                eta_str = ""
+                eta_str = gemini_eta if gemini_eta else ""
                 if threat_type == "mig31k":
                     delay = 2700
-                    eta_str = "~20-40 хв"
+                    if not eta_str:
+                        eta_str = "~20-40 хв"
                 elif threat_type == "ballistic":
                     delay = 1800
-                    eta_str = "~2-5 хв"
+                    if not eta_str:
+                        eta_str = "~2-5 хв"
                 elif threat_type == "shahed":
                     delay = 10800
-                    eta_str = "+1-2 год"
+                    if not eta_str:
+                        eta_str = "+1-2 год"
                 elif threat_type == "cruise_missile":
                     delay = 3600
-                    eta_str = "+15-30 хв"
+                    if not eta_str:
+                        eta_str = "+15-30 хв"
                     
                 detail = f"[{source_channel}] {text}"
                 if is_pred:
@@ -389,9 +432,11 @@ class TelegramThreatMonitor:
                 elif eta_str:
                     detail += f"\n(Очікуваний час: {eta_str})"
 
-                self.threat_manager.set_threat(region, level, threat_type, detail)
+                self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
+                                              confidence=region_confidence, eta=eta_str, is_predictive=is_pred)
                 self._schedule_auto_clear(region, delay)
-                print(f"🔴 [Gemini] Встановлено загрозу ({level}) для: {region}")
+                conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
+                print(f"🔴 [Gemini] Встановлено загрозу ({adjusted_level}) для: {region}{conf_str}")
 
 
     async def _process_message(self, text, channel):
@@ -536,13 +581,27 @@ class TelegramThreatMonitor:
                         
                     is_pred = region in predictive_regions
                     
+                    # Default confidence scores for regex fallback (no AI)
+                    regex_confidence = 75  # Base confidence for regex
+                    if level == "critical":
+                        regex_confidence = 90
+                    elif level == "high":
+                        regex_confidence = 80
+                    elif level == "medium":
+                        regex_confidence = 65
+                    elif level == "low":
+                        regex_confidence = 50
+                    if is_pred:
+                        regex_confidence = max(0, regex_confidence - 20)
+                    
                     detail = self._build_region_detail(detail_text, region, threat_type)
                     if is_pred:
                         detail += f" ⚠️ Предиктивний аналіз: ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Предиктивний аналіз: ціль може прямувати через область."
                     elif eta_str:
                         detail += f" (Очікуваний час: {eta_str})"
 
-                    self.threat_manager.set_threat(region, level, threat_type, detail)
+                    self.threat_manager.set_threat(region, level, threat_type, detail,
+                                                  confidence=regex_confidence, eta=eta_str, is_predictive=is_pred)
                     self._schedule_auto_clear(region, delay)
                     set_regions[region] = level
 
