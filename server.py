@@ -270,6 +270,24 @@ async def get_threats():
     }
 
 
+@app.get("/api/gemini/status")
+async def get_gemini_status():
+    """Повертає поточний статус ШІ-аналізатора Gemini."""
+    if not is_live_mode:
+        return {"status": "mock", "error": "Сервер працює в тестовому (MOCK) режимі"}
+        
+    if telegram_monitor is None or telegram_monitor.analyzer is None:
+        return {"status": "offline", "error": "Моніторинг не запущено"}
+        
+    analyzer = telegram_monitor.analyzer
+    if not analyzer.is_configured:
+        return {"status": "offline", "error": "API-ключ GEMINI_API_KEY не налаштовано"}
+        
+    if analyzer.last_error:
+        return {"status": "error", "error": analyzer.last_error}
+        
+    return {"status": "ok", "error": None}
+
 @app.get("/api/analytics/heatmap")
 async def get_heatmap_data(days: int = 7):
     """Повертає історичні дані загроз для побудови теплової карти."""

@@ -11,8 +11,10 @@ class GeminiThreatAnalyzer:
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel('gemini-2.5-flash')
             self.is_configured = True
+            self.last_error = None
         else:
             self.is_configured = False
+            self.last_error = "API key missing"
             print("⚠️ GEMINI_API_KEY is not set. GeminiAnalyzer will run in mock mode.")
 
         self.system_prompt = """Ти — спеціалізований військовий ШІ-аналітик (SirenUA Threat Intelligence).
@@ -93,7 +95,13 @@ class GeminiThreatAnalyzer:
             if result_text.endswith("```"):
                 result_text = result_text.rsplit("```", 1)[0]
                 
+            self.last_error = None
             return json.loads(result_text.strip())
         except Exception as e:
-            print(f"❌ Gemini API Error: {e}")
+            error_msg = str(e)
+            print(f"❌ Gemini API Error: {error_msg}")
+            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower():
+                self.last_error = "Rate Limit Exceeded (429)"
+            else:
+                self.last_error = error_msg
             return []
