@@ -264,18 +264,22 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         is_critical = False
     else:
         if threat_type is not None:
-            # It's a specific tactical threat warning (Shaheds, missiles, etc.)
-            type_desc = "Загроза"
+            type_desc = None
             if threat_type == "mig31k":
                 type_desc = "МіГ-31К"
             elif threat_type == "shahed":
-                type_desc = "Шахеди"
+                type_desc = "БпЛА"
             elif threat_type == "ballistic":
                 type_desc = "Балістика"
             elif threat_type == "cruise_missile":
                 type_desc = "Крилаті ракети"
+            elif threat_type == "kab":
+                type_desc = "КАБ"
 
-            title = f"⚠️ Загроза: {type_desc} — {region}"
+            if type_desc:
+                title = f"⚠️ Загроза: {type_desc} — {region}"
+            else:
+                title = f"⚠️ Загроза — {region}"
             sound = "warning.wav"
             # Keep it critical if the region is already under an official alarm
             # so the warning plays even if the device is muted/DND
