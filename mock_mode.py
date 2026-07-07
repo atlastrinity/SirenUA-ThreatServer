@@ -612,6 +612,12 @@ class MockThreatManager:
         if any_changed:
             self.save_to_db()
             self.save_to_file()
+            
+        # Clear mock/test history events from Firestore
+        try:
+            delete_test_history_from_firestore()
+        except Exception as e:
+            print(f"⚠️ Помилка очищення тестової історії з Firestore: {e}")
 
     def get_all_threats(self) -> dict:
         return {
@@ -651,3 +657,17 @@ class MockThreatManager:
                 self.on_change(region, self.threats[region], telemetry=None)
             return True
         return False
+
+def delete_test_history_from_firestore():
+    db = get_db()
+    if not db:
+        return
+    try:
+        docs = db.collection('sirenua_history').where('is_test', '==', True).get()
+        deleted_count = 0
+        for doc in docs:
+            doc.reference.delete()
+            deleted_count += 1
+        print(f"🧹 Видалено {deleted_count} тестових записів з історії Firestore")
+    except Exception as e:
+        print(f"⚠️ Помилка видалення тестової історії з Firestore: {e}")

@@ -204,7 +204,7 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
         print(f"⚠️ Помилка запису в БД аналітики: {e}")
         return None
 
-def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None):
+def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False):
     """Log threat event to Firebase Firestore."""
     db = get_db()
     if not db:
@@ -222,13 +222,14 @@ def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: s
             "threat_level": level,
             "threat_type": threat_type,
             "detail": detail,
-            "confidence": confidence
+            "confidence": confidence,
+            "is_test": is_test
         }
         if telemetry:
             doc_data["telemetry"] = telemetry
             
         db.collection('sirenua_history').add(doc_data)
-        print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type})")
+        print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type}, is_test={is_test})")
     except Exception as e:
         print(f"⚠️ Помилка запису історії в Firestore: {e}")
 
@@ -398,7 +399,7 @@ def on_threat_changed(region, state, telemetry=None):
         log_level = "high" if state.is_active else "none"
         detail = "Повітряна тривога" if state.is_active else "Відбій повітряної тривоги"
         asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, log_level, "official_alarm", detail))
-        asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail))
+        asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail, is_test=state.is_test))
         
     # 2. AI/Telegram threat level change logging
     if prev_level != state.level:
@@ -406,11 +407,11 @@ def on_threat_changed(region, state, telemetry=None):
         if (current_type and current_type != "official_alarm") or (prev_type and prev_type != "official_alarm" and state.level == "none"):
             if state.level != "none":
                 asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry))
-                asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry))
+                asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, is_test=state.is_test))
             elif prev_level != "none":
                 # Threat has cleared
                 asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, "none", prev_type, "Відбій загрози"))
-                asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози"))
+                asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози", is_test=state.is_test))
             
     last_logged_states[region] = (state.level, state.is_active, state.threat_type)
 
