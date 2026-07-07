@@ -1293,16 +1293,29 @@ class TelegramThreatMonitor:
         from datetime import datetime, timezone
         for region, state in self.threat_manager.threats.items():
             if state.level != "none" and state.since:
+                # Determine delay based on threat type
+                t_type = state.threat_type
+                delay = 3600
+                if t_type == "mig31k":
+                    delay = 1800
+                elif t_type == "ballistic":
+                    delay = 600
+                elif t_type == "kab":
+                    delay = 1200
+                elif t_type == "shahed":
+                    delay = 10800
+                elif t_type == "cruise_missile":
+                    delay = 2700
                 try:
                     since_str = state.since.replace("Z", "+00:00")
                     since_dt = datetime.fromisoformat(since_str)
                     elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
-                    remaining = 3600 - elapsed
+                    remaining = delay - elapsed
                     if remaining <= 0:
                         self.threat_manager.clear_threat(region)
-                        print(f"⏳ Загроза для {region} застаріла під час офлайну. Очищено.")
+                        print(f"⏳ Загроза для {region} ({t_type}) застаріла під час офлайну. Очищено.")
                     else:
                         self._schedule_auto_clear(region, remaining)
-                        print(f"⏳ Заплановано автозняття загрози для {region} через {int(remaining)} сек.")
+                        print(f"⏳ Заплановано автозняття загрози для {region} ({t_type}) через {int(remaining)} сек.")
                 except Exception as e:
-                    self._schedule_auto_clear(region, 3600)
+                    self._schedule_auto_clear(region, delay)
