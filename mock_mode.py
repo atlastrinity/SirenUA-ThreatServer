@@ -96,6 +96,7 @@ class ThreatState:
         self.eta: Optional[str] = None
         self.confidence: Optional[int] = None  # 0-100% AI confidence
         self.is_predictive: bool = False
+        self.is_active: bool = False
 
     def set_threat(self, level: str, threat_type: Optional[str] = None,
                    detail: Optional[str] = None, confidence: Optional[int] = None,
@@ -120,6 +121,7 @@ class ThreatState:
             "confidence": self.confidence,
             "eta": self.eta,
             "is_predictive": self.is_predictive,
+            "is_active": self.is_active,
         }
 
     def clear(self):
@@ -130,6 +132,7 @@ class ThreatState:
         self.confidence = None
         self.eta = None
         self.is_predictive = False
+        self.is_active = False
 
 
 try:
@@ -305,6 +308,7 @@ class MockThreatManager:
                             state.confidence = data.get("confidence")
                             state.eta = data.get("eta")
                             state.is_predictive = data.get("is_predictive", False)
+                            state.is_active = data.get("is_active", False)
                     print("💾 Завантажено збережений стан загроз з Firebase Firestore")
                 else:
                     print("⚠️ Документ загроз у Firebase не знайдено.")
@@ -351,6 +355,7 @@ class MockThreatManager:
                         state.confidence = data.get("confidence")
                         state.eta = data.get("eta")
                         state.is_predictive = data.get("is_predictive", False)
+                        state.is_active = data.get("is_active", False)
                 print(f"💾 Завантажено збережений стан загроз з {filepath}")
             except Exception as e:
                 print(f"⚠️ Помилка завантаження стану загроз: {e}")
@@ -422,6 +427,38 @@ class MockThreatManager:
             region: state.to_dict()
             for region, state in self.threats.items()
         }
+
+    def set_alarm_active(self, region: str, is_active: bool) -> bool:
+        if region not in self.threats:
+            return False
+        
+        old_active = self.threats[region].is_active
+        if old_active != is_active:
+            self.threats[region].is_active = is_active
+            
+            import time
+            now = time.time()
+            play_sound = True
+            if now - self.last_sound_time < 10.0:
+                play_sound = False
+            else:
+                self.last_sound_time = now
+            
+            # Send Push Notification for official Alarm / Off
+            detail = f"Офіційне повідомлення про повітряну тривогу в: {region}!" if is_active else f"Відбій повітряної тривоги в: {region}."
+            send_fcm_notification(
+                region=region,
+                level="high" if is_active else "none",
+                threat_type=None,
+                detail=detail,
+                play_sound=play_sound
+            )
+            
+            self.save_to_db()
+            if hasattr(self, 'on_change'):
+                self.on_change(region, self.threats[region])
+            return True
+        return False
 
     def set_scenario(self, scenario: str):
         """Встановлює попередньо визначений сценарій для тестування."""

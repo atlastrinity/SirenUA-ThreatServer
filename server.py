@@ -26,6 +26,7 @@ from pydantic import BaseModel
 import uvicorn
 import sqlite3
 import json
+import aiohttp
 
 from mock_mode import MockThreatManager
 from shelter_manager import ShelterManager
@@ -171,10 +172,39 @@ def init_firebase():
     except Exception as e:
         print("⚠️ Попередження: Не знайдено credentials. Сповіщення у фоні не працюватимуть.")
 
+aerial_alerts_task = None
+
+async def poll_aerial_alerts():
+    """Фонова задача для опитування офіційного API тривог."""
+    print("⏳ Запуск фонового опитування офіційних тривог з aerialalerts...")
+    url = "https://ubilling.net.ua/aerialalerts/"
+    headers = {"User-Agent": "SirenUA-ThreatServer/1.0"}
+    
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=5.0) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        states = data.get("states", {})
+                        
+                        # Оновлюємо стан кожної області
+                        for region_name, state_data in states.items():
+                            is_active = state_data.get("alertnow", False)
+                            # Перевіряємо та оновлюємо стан на сервері
+                            # (це автоматично надішле Push та WebSocket трансляцію)
+                            threat_manager.set_alarm_active(region_name, is_active)
+                    else:
+                        print(f"⚠️ Помилка опитування тривог: HTTP статус {response.status}")
+        except Exception as e:
+            print(f"⚠️ Помилка під час опитування тривог: {e}")
+        
+        await asyncio.sleep(5.0)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager — запуск/зупинка Telegram моніторингу."""
-    global telegram_monitor
+    global telegram_monitor, aerial_alerts_task
     
     # Ініціалізація Firebase Cloud Messaging
     init_firebase()
@@ -196,6 +226,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Помилка завантаження укриттів: {e}")
     
+    # Запуск фонового опитування офіційного API
+    aerial_alerts_task = asyncio.create_task(poll_aerial_alerts())
+
     if is_live_mode:
         from telegram_monitor import TelegramThreatMonitor
         telegram_monitor = TelegramThreatMonitor(threat_manager)
@@ -206,6 +239,14 @@ async def lifespan(app: FastAPI):
     
     yield
     
+    # Зупинка фонового опитування
+    if aerial_alerts_task:
+        aerial_alerts_task.cancel()
+        try:
+            await aerial_alerts_task
+        except asyncio.CancelledError:
+            pass
+            
     await shelter_manager.stop()
     if telegram_monitor:
         await telegram_monitor.stop()
