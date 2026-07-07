@@ -6,3 +6,4 @@ __pycache__/
 *.session
 *.session-journal
 *.log
+firebase-credentials.json

@@ -193,9 +193,11 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
         body = detail if detail else f"Повітряна тривога в: {region}. Прямуйте в укриття!"
 
     # Створюємо повідомлення для топіку з налаштуваннями звуку для iOS (APNs)
+    # Для Critical Alerts (обхід беззвучного режиму) використовуємо CriticalSound
     aps = messaging.Aps(badge=1)
     if play_sound:
-        aps = messaging.Aps(sound=sound, badge=1)
+        critical_sound = messaging.CriticalSound(name=sound, critical=True, volume=1.0)
+        aps = messaging.Aps(sound=critical_sound, badge=1)
 
     message = messaging.Message(
         notification=messaging.Notification(
@@ -326,6 +328,8 @@ class MockThreatManager:
                 
             send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound)
             self.save_to_db()
+            if hasattr(self, 'on_change'):
+                self.on_change(region, self.threats[region])
             
         return True
 
@@ -346,6 +350,8 @@ class MockThreatManager:
                 
             send_fcm_notification(region, "none", play_sound=play_sound)
             self.save_to_db()
+            if hasattr(self, 'on_change'):
+                self.on_change(region, self.threats[region])
         return True
 
     def clear_all(self):
