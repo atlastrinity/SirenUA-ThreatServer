@@ -6,7 +6,7 @@ from typing import Optional
 from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
-from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES
+from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES, UKRAINE_TOPOLOGY
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -272,6 +272,29 @@ class TelegramThreatMonitor:
         except Exception as e:
             pass
 
+    def _find_path(self, start_region: str, end_region: str) -> list[str]:
+        """BFS algorithm to find the shortest path between two regions."""
+        if start_region not in UKRAINE_TOPOLOGY or end_region not in UKRAINE_TOPOLOGY:
+            return []
+        
+        queue = [[start_region]]
+        visited = set([start_region])
+        
+        while queue:
+            path = queue.pop(0)
+            node = path[-1]
+            
+            if node == end_region:
+                return path
+                
+            for adjacent in UKRAINE_TOPOLOGY.get(node, []):
+                if adjacent not in visited:
+                    visited.add(adjacent)
+                    new_path = list(path)
+                    new_path.append(adjacent)
+                    queue.append(new_path)
+        return []
+
     # --- Message Parser Logic (Shared by both MTProto & Web Scraper) ---
     async def _process_message(self, text, channel):
         # Clean double spaces and split into lines, then logical sentences
@@ -291,6 +314,7 @@ class TelegramThreatMonitor:
         context_level = None
         context_type = None
         context_text = None
+        context_regions = []
         
         # Keep track of modified regions in this execution
         set_regions = {}
@@ -324,6 +348,7 @@ class TelegramThreatMonitor:
                 context_level = None
                 context_type = None
                 context_text = None
+                context_regions = []
                 continue
 
             # Detect threat level and type for this segment
@@ -345,6 +370,31 @@ class TelegramThreatMonitor:
                 if not self._extract_regions(text):
                     regions = list(ALL_REGIONS)
             
+            # Extract Vector Context (Predictive routing)
+            predictive_regions = set()
+            
+            # If we have regions in context from previous segment, maybe this is a vector
+            if context_regions and regions and not level:
+                # previous segment had regions, current segment has new regions
+                source_region = context_regions[-1]
+                target_region = regions[0]
+                path = self._find_path(source_region, target_region)
+                if len(path) > 2:
+                    for r in path[1:-1]:
+                        predictive_regions.add(r)
+            
+            # Also check if multiple regions are in the same segment
+            if len(regions) >= 2:
+                for i in range(len(regions) - 1):
+                    path = self._find_path(regions[i], regions[i+1])
+                    if len(path) > 2:
+                        for r in path[1:-1]:
+                            predictive_regions.add(r)
+
+            # Update context_regions
+            if regions:
+                context_regions = regions
+
             # Stateful fallback: if segment has regions but no threat level was detected in it,
             # we use the context from the previous segment of the same message (if available)
             if not level and regions and context_level:
@@ -354,19 +404,36 @@ class TelegramThreatMonitor:
             else:
                 detail_text = segment
 
+            # Combine explicit regions and predictive regions
+            final_regions = list(set(regions) | predictive_regions)
+
             # Set threat for the detected regions
-            if level and regions:
-                for region in regions:
-                    # Determine dynamic auto-clear delay based on threat type
+            if level and final_regions:
+                for region in final_regions:
+                    # Determine dynamic auto-clear delay and ETA based on threat type
                     delay = 3600
+                    eta_str = ""
                     if threat_type == "mig31k":
                         delay = 2700
+                        eta_str = "~20-40 хв"
                     elif threat_type == "ballistic":
                         delay = 1800
+                        eta_str = "~2-5 хв"
                     elif threat_type == "shahed":
                         delay = 10800
+                        eta_str = "+1-2 год"
+                    elif threat_type == "cruise_missile":
+                        delay = 3600
+                        eta_str = "+15-30 хв"
                         
+                    is_pred = region in predictive_regions
+                    
                     detail = self._build_region_detail(detail_text, region, threat_type)
+                    if is_pred:
+                        detail += f" ⚠️ Предиктивний аналіз: ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Предиктивний аналіз: ціль може прямувати через область."
+                    elif eta_str:
+                        detail += f" (Очікуваний час: {eta_str})"
+
                     self.threat_manager.set_threat(region, level, threat_type, detail)
                     self._schedule_auto_clear(region, delay)
                     set_regions[region] = level
