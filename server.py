@@ -148,6 +148,20 @@ class ThreatSetRequest(BaseModel):
     detail: Optional[str] = None
 
 
+class ShelterUploadItem(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    lat: float
+    lon: float
+    type: str = "bomb_shelter"
+    capacity: Optional[int] = None
+    accessible: bool = False
+
+
+class ShelterUploadRequest(BaseModel):
+    shelters: list[ShelterUploadItem]
+
+
 class ScenarioRequest(BaseModel):
     scenario: str  # mig_takeoff, shaheds_south, cruise_missiles_west, massive_attack, ballistic_kharkiv
 
@@ -247,6 +261,49 @@ async def get_shelters(lat: float, lon: float, radius: float = 1500, limit: int 
         "total_in_db": shelter_manager.total_count,
         "shelters": results,
     }
+
+
+@app.post("/api/shelters/upload_json")
+async def upload_shelters_json(req: ShelterUploadRequest):
+    """Прихований ендпоінт для завантаження масиву укриттів (JSON) в Firestore."""
+    if not HAS_FIREBASE:
+        raise HTTPException(status_code=500, detail="Firebase не ініціалізовано")
+        
+    try:
+        from firebase_admin import firestore
+        db = firestore.client()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка Firestore: {e}")
+        
+    batch = db.batch()
+    count = 0
+    
+    for s in req.shelters:
+        doc_ref = db.collection("sirenua_shelters").document()
+        batch.set(doc_ref, {
+            "name": s.name,
+            "address": s.address,
+            "lat": s.lat,
+            "lon": s.lon,
+            "type": s.type,
+            "capacity": s.capacity,
+            "accessible": s.accessible,
+            "source": "gov"
+        })
+        count += 1
+        
+        # Обмеження Firestore batch - 500 операцій
+        if count % 400 == 0:
+            batch.commit()
+            batch = db.batch()
+            
+    if count % 400 != 0:
+        batch.commit()
+        
+    # Перезавантажуємо кеш укриттів
+    asyncio.create_task(shelter_manager.load())
+    
+    return {"status": "success", "uploaded": count}
 
 
 if __name__ == "__main__":

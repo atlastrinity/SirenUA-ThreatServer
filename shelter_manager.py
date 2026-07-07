@@ -15,6 +15,12 @@ from typing import List, Optional
 
 import aiohttp
 
+try:
+    from firebase_admin import firestore
+    HAS_FIREBASE = True
+except ImportError:
+    HAS_FIREBASE = False
+
 logger = logging.getLogger("shelter_manager")
 
 # ──────────────────────────────────────────────────────────────
@@ -217,6 +223,48 @@ async def _fetch_osm_shelters() -> List[Shelter]:
     return shelters
 
 
+async def _fetch_firestore_shelters() -> List[Shelter]:
+    """Fetch official shelters from Firestore."""
+    if not HAS_FIREBASE:
+        return []
+    
+    logger.info("📡 Завантаження офіційних укриттів з Firestore (sirenua_shelters)...")
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        
+        def _get_docs():
+            try:
+                db = firestore.client()
+                return list(db.collection("sirenua_shelters").stream())
+            except ValueError:
+                return []  # Firebase not initialized yet
+                
+        docs = await loop.run_in_executor(None, _get_docs)
+        
+        shelters = []
+        for doc in docs:
+            data = doc.to_dict()
+            s = Shelter(
+                id=doc.id,
+                name=data.get("name"),
+                address=data.get("address"),
+                lat=data.get("lat", 0.0),
+                lon=data.get("lon", 0.0),
+                type=data.get("type", "bomb_shelter"),
+                capacity=data.get("capacity"),
+                accessible=data.get("accessible", False),
+                source="gov"
+            )
+            shelters.append(s)
+            
+        logger.info(f"✅ Завантажено {len(shelters)} укриттів з Firestore")
+        return shelters
+    except Exception as e:
+        logger.error(f"⚠️ Помилка завантаження з Firestore: {e}")
+        return []
+
+
 # ──────────────────────────────────────────────────────────────
 # Shelter Manager (singleton-like, used by FastAPI server)
 # ──────────────────────────────────────────────────────────────
@@ -242,16 +290,40 @@ class ShelterManager:
         return len(self._shelters)
 
     async def load(self):
-        """Initial load of shelters from OSM."""
-        shelters = await _fetch_osm_shelters()
-        if shelters:
-            idx = _GridIndex()
-            for s in shelters:
-                idx.insert(s)
+        """Initial load of shelters from OSM and Firestore."""
+        osm_shelters = await _fetch_osm_shelters()
+        gov_shelters = await _fetch_firestore_shelters()
+        
+        idx = _GridIndex()
+        final_shelters = []
+        
+        # 1. Спочатку додаємо офіційні укриття
+        for s in gov_shelters:
+            idx.insert(s)
+            final_shelters.append(s)
+            
+        # 2. Додаємо OSM укриття, уникаючи дублікатів (радіус 15 метрів)
+        skipped = 0
+        for s in osm_shelters:
+            if gov_shelters:
+                nearby = idx.find_nearby(s.lat, s.lon, radius_m=15.0, limit=1)
+                # Якщо поруч є офіційне укриття, пропускаємо OSM
+                if nearby and nearby[0].source == "gov":
+                    skipped += 1
+                    continue
+            
+            idx.insert(s)
+            final_shelters.append(s)
+
+        if skipped > 0:
+            logger.info(f"🔄 Відкинуто {skipped} дублікатів з OSM (перекрито офіційними)")
+
+        if final_shelters:
             self._index = idx
-            self._shelters = shelters
+            self._shelters = final_shelters
             self._loaded = True
             self._last_load_time = time.time()
+            logger.info(f"🌍 Всього доступно укриттів: {len(self._shelters)}")
             logger.info(f"🗺️ Індекс побудовано: {len(idx)} укриттів")
         else:
             logger.warning("⚠️ Не вдалося завантажити укриття. Буде повторна спроба через 5 хв.")
