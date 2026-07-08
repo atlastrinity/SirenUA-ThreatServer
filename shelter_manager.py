@@ -101,13 +101,20 @@ class _GridIndex:
 
     def find_nearby(self, lat: float, lon: float, radius_m: float,
                     limit: int = 50) -> List[Shelter]:
-        # How many grid cells to scan (~radius in degrees)
-        expand = max(1, int(math.ceil(radius_m / (_R * math.radians(self.CELL_SIZE_DEG)))))
+        # Cell size in latitude direction is constant (~5.5 km)
+        cell_size_lat_m = _R * math.radians(self.CELL_SIZE_DEG)
+        expand_lat = max(1, int(math.ceil(radius_m / cell_size_lat_m)))
+
+        # Cell size in longitude direction shrinks at higher latitudes
+        cos_lat = max(0.1, math.cos(math.radians(abs(lat))))
+        cell_size_lon_m = cell_size_lat_m * cos_lat
+        expand_lon = max(1, int(math.ceil(radius_m / cell_size_lon_m)))
+
         cx, cy = self._key(lat, lon)
 
         candidates: list[tuple[float, Shelter]] = []
-        for dx in range(-expand, expand + 1):
-            for dy in range(-expand, expand + 1):
+        for dx in range(-expand_lat, expand_lat + 1):
+            for dy in range(-expand_lon, expand_lon + 1):
                 cell = self._cells.get((cx + dx, cy + dy))
                 if cell:
                     for s in cell:
