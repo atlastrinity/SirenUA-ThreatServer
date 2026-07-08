@@ -744,11 +744,12 @@ class MockThreatManager:
             self.save_to_db()
             self.save_to_file()
             
-        # Clear mock/test history events from Firestore
+        # Clear mock/test history events from Firestore and SQLite
         try:
             delete_test_history_from_firestore()
+            delete_test_history_from_sqlite()
         except Exception as e:
-            print(f"⚠️ Помилка очищення тестової історії з Firestore: {e}")
+            print(f"⚠️ Помилка очищення тестової історії: {e}")
 
     def get_all_threats(self) -> dict:
         return {
@@ -823,3 +824,33 @@ def delete_test_history_from_firestore():
         print(f"🧹 Видалено {deleted_count} тестових записів з історії Firestore")
     except Exception as e:
         print(f"⚠️ Помилка видалення тестової історії з Firestore: {e}")
+
+def delete_test_history_from_sqlite():
+    import sqlite3
+    import os
+    DB_PATH = "analytics.db"
+    if os.path.exists("threat_server"):
+        DB_PATH = "threat_server/analytics.db"
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Delete telemetry associated with test threat history
+        cursor.execute('''
+            DELETE FROM telemetry_data 
+            WHERE threat_event_id IN (SELECT id FROM threat_history WHERE is_test = 1)
+        ''')
+        
+        # Delete test threat history events
+        cursor.execute("DELETE FROM threat_history WHERE is_test = 1")
+        threats_deleted = cursor.rowcount
+        
+        # Delete test threat clearings
+        cursor.execute("DELETE FROM threat_clearings WHERE is_test = 1")
+        clearings_deleted = cursor.rowcount
+        
+        conn.commit()
+        conn.close()
+        print(f"🧹 Видалено тестові записи з SQLite: {threats_deleted} загроз, {clearings_deleted} відбоїв")
+    except Exception as e:
+        print(f"⚠️ Помилка видалення тестової історії з SQLite: {e}")

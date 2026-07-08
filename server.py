@@ -52,7 +52,8 @@ def init_analytics_db():
             threat_level TEXT,
             threat_type TEXT,
             detail TEXT,
-            confidence INTEGER
+            confidence INTEGER,
+            is_test BOOLEAN DEFAULT 0
         )
     ''')
     # Migrate existing tables — add columns if missing
@@ -62,6 +63,10 @@ def init_analytics_db():
         pass  # column already exists
     try:
         cursor.execute("ALTER TABLE threat_history ADD COLUMN confidence INTEGER")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
+        cursor.execute("ALTER TABLE threat_history ADD COLUMN is_test BOOLEAN DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # column already exists
     
@@ -133,10 +138,16 @@ def init_analytics_db():
             clearing_message_text TEXT,
             threat_set_timestamp DATETIME,
             threat_duration_seconds INTEGER,
+            is_test BOOLEAN DEFAULT 0,
             FOREIGN KEY (original_threat_event_id) REFERENCES threat_history(id)
         )
     ''')
     
+    try:
+        cursor.execute("ALTER TABLE threat_clearings ADD COLUMN is_test BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     # Indexes for clearings
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_clearings_region ON threat_clearings(region)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_clearings_group ON threat_clearings(linked_group_id)')
@@ -148,14 +159,14 @@ def init_analytics_db():
     conn.close()
     print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings)")
 
-def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None):
+def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence) VALUES (?, ?, ?, ?, ?)",
-            (region, level, threat_type, detail, confidence)
+            "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
+            (region, level, threat_type, detail, confidence, 1 if is_test else 0)
         )
         event_id = cursor.lastrowid
         
@@ -235,7 +246,8 @@ def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: s
 
 def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                        source_channel: str = None, message_text: str = None,
-                       clearing_confidence: int = None, was_predictive: bool = False):
+                       clearing_confidence: int = None, was_predictive: bool = False,
+                       is_test: bool = False):
     """Log threat clearing event with full lifecycle data linked to original threat."""
     if not clearing_telemetry:
         clearing_telemetry = {}
@@ -303,8 +315,8 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                 clearing_confidence, clearing_context_tags,
                 source_reliability, time_of_day_category,
                 clearing_source_channel, clearing_message_text,
-                threat_set_timestamp, threat_duration_seconds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                threat_set_timestamp, threat_duration_seconds, is_test
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             region,
             original_event_id,
@@ -331,7 +343,8 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
             source_channel,
             message_text[:500] if message_text else None,
             threat_set_ts,
-            threat_duration_sec
+            threat_duration_sec,
+            1 if is_test else 0
         ))
         
         clearing_id = cursor.lastrowid
@@ -1280,6 +1293,7 @@ async def set_mock_threat(request: ThreatSetRequest):
         level=request.level,
         threat_type=request.threat_type,
         detail=request.detail,
+        is_test=True,
     )
 
     if not success:

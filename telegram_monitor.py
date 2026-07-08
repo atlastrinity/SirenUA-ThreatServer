@@ -887,6 +887,7 @@ class TelegramThreatMonitor:
                         "db_boost": db_boost,
                         "confidence": int(total_score * 80),  # Max 80% for predictions
                         "source_level": state.level,
+                        "is_test": state.is_test,
                     }
         
         # Apply predictions
@@ -928,6 +929,7 @@ class TelegramThreatMonitor:
                 confidence=pred["confidence"],
                 eta=pred["eta_str"],
                 is_predictive=True,
+                is_test=pred.get("is_test", False),
                 telemetry=None  # No direct telemetry for predictions
             )
             self._schedule_auto_clear(region, auto_clear_delay)
@@ -1003,7 +1005,7 @@ class TelegramThreatMonitor:
             await self._process_message_regex(text, channel)
 
     # --- Message Parser Logic (Shared by both MTProto & Web Scraper) ---
-    async def _process_message_regex(self, text, channel):
+    async def _process_message_regex(self, text, channel, is_test: bool = False):
         # Clean double spaces and split into lines, then logical sentences
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         segments = []
@@ -1044,11 +1046,11 @@ class TelegramThreatMonitor:
                     # If it says 'clear' but names no regions, it might be a general clear.
                     # We only clear all if the entire message contains no other region mentions
                     if not self._extract_regions(text):
-                        self.threat_manager.clear_all()
+                        self.threat_manager.clear_all(only_test=is_test)
                         cleared_all = True
                     else:
                         if "област" in segment or "всіх" in segment or not seg_regions:
-                            self.threat_manager.clear_all()
+                            self.threat_manager.clear_all(only_test=is_test)
                             cleared_all = True
                 
                 # Reset context on clear
@@ -1156,7 +1158,8 @@ class TelegramThreatMonitor:
                         detail += f" (Очікуваний час: {eta_str})"
 
                     self.threat_manager.set_threat(region, level, threat_type, detail,
-                                                  confidence=regex_confidence, eta=eta_str, is_predictive=is_pred)
+                                                  confidence=regex_confidence, eta=eta_str, is_predictive=is_pred,
+                                                  is_test=is_test)
                     self._schedule_auto_clear(region, delay)
                     set_regions[region] = level
 
