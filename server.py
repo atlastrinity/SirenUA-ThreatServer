@@ -635,12 +635,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Помилка асинхронного завантаження стану загроз: {e}")
 
-    # Завантаження бази укриттів з OpenStreetMap
-    try:
-        await shelter_manager.load()
-        await shelter_manager.start_refresh_loop()
-    except Exception as e:
-        print(f"⚠️ Помилка завантаження укриттів: {e}")
+    # Завантаження бази укриттів з OpenStreetMap у фоні (не блокує стартап API)
+    async def load_shelters_background():
+        try:
+            await shelter_manager.load()
+            await shelter_manager.start_refresh_loop()
+        except Exception as e:
+            print(f"⚠️ Помилка завантаження укриттів: {e}")
+            
+    asyncio.create_task(load_shelters_background())
     
     # Запуск фонового опитування офіційного API
     aerial_alerts_task = asyncio.create_task(poll_aerial_alerts())
@@ -1385,12 +1388,11 @@ async def rebuild_rules():
             count = await asyncio.to_thread(telegram_monitor.analyzer.run_rules_learner)
             return {"status": "ok", "rules_updated": count}
         
-        # Standalone fallback using threat_manager's analyzer
-        if threat_manager and hasattr(threat_manager, 'analyzer') and threat_manager.analyzer:
-            count = await asyncio.to_thread(threat_manager.analyzer.run_rules_learner)
-            return {"status": "ok", "rules_updated": count}
-            
-        raise HTTPException(status_code=503, detail="Rules engine not available")
+        # Fallback: create analyzer on the fly
+        from gemini_analyzer import GeminiThreatAnalyzer
+        analyzer = GeminiThreatAnalyzer()
+        count = await asyncio.to_thread(analyzer.run_rules_learner)
+        return {"status": "ok", "rules_updated": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -349,19 +349,6 @@ class GeminiThreatAnalyzer:
                     "count": row["occurrence_count"]
                 }, ensure_ascii=False)
                 
-                cursor.execute('''
-                    INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type,
-                        rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
-                    VALUES ('route_pattern', ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                    ON CONFLICT(rule_type, source_region, target_region, threat_type) DO UPDATE SET
-                        rule_text = excluded.rule_text,
-                        rule_json = excluded.rule_json,
-                        evidence_count = excluded.evidence_count,
-                        accuracy_score = excluded.accuracy_score,
-                        is_active = 1,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE 1=1
-                ''')  # Handled conflicts by custom logic or insert
                 # Note: target sqlite might not have composite primary key. We will delete old similar rule type to prevent duplicates.
                 cursor.execute('''
                     DELETE FROM gemini_rules 
