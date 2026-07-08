@@ -189,6 +189,9 @@ class TelegramThreatMonitor:
         # Запускаємо фоновий процес батч-аналізу через Gemini
         self.batch_task = asyncio.create_task(self._batch_processor_loop())
         
+        # Запускаємо фоновий таск самонавчання правил (кожні 6 годин)
+        self._rules_learner_task = asyncio.create_task(self._rules_learner_loop())
+        
         # 1. Try to load from environment variable (StringSession) - best for Render production
         session_string = os.environ.get("TELEGRAM_SESSION_STRING")
         if session_string:
@@ -860,6 +863,59 @@ class TelegramThreatMonitor:
                 if total_score < 0.4:
                     continue
                 
+                # --- DIFFERENTIATED CONFIDENCE CALCULATION ---
+                # Non-linear base confidence from total_score
+                if total_score >= 0.85:
+                    base_conf = 75
+                elif total_score >= 0.70:
+                    base_conf = 65
+                elif total_score >= 0.55:
+                    base_conf = 55
+                elif total_score >= 0.45:
+                    base_conf = 45
+                else:
+                    base_conf = 35
+                
+                # Distance modifier (closer = higher confidence)
+                dist_mod = 0
+                if distance_km is not None:
+                    if distance_km < 80:
+                        dist_mod = 8
+                    elif distance_km < 150:
+                        dist_mod = 4
+                    elif distance_km < 250:
+                        dist_mod = 0
+                    elif distance_km < 400:
+                        dist_mod = -4
+                    else:
+                        dist_mod = -8
+                
+                # Route history modifier (known route = higher confidence)
+                route_mod = int(route_boost * 12)  # 0-9
+                
+                # DB pattern modifier
+                db_mod = int(db_boost * 8)  # 0-1
+                
+                # Time-of-day modifier
+                time_mod = self._get_time_of_day_modifier(threat_type)
+                
+                # Learned rules correction
+                rules_correction = 0
+                try:
+                    corrections = self.analyzer.load_confidence_corrections()
+                    if adj_region in corrections:
+                        rules_correction = corrections[adj_region].get(threat_type, 0)
+                except Exception:
+                    pass
+                
+                # Final confidence with all modifiers
+                raw_confidence = base_conf + dist_mod + route_mod + db_mod + time_mod + rules_correction
+                confidence = max(25, min(80, raw_confidence))
+                
+                # Ensure uniqueness: add small pseudo-random offset based on region name hash
+                region_hash_offset = (hash(adj_region) % 5) - 2  # -2 to +2
+                confidence = max(25, min(80, confidence + region_hash_offset))
+                
                 # Generate ETA string
                 eta_str = ""
                 if eta_seconds:
@@ -885,7 +941,7 @@ class TelegramThreatMonitor:
                         "distance_km": distance_km,
                         "route_boost": route_boost,
                         "db_boost": db_boost,
-                        "confidence": int(total_score * 80),  # Max 80% for predictions
+                        "confidence": confidence,
                         "source_level": state.level,
                         "is_test": state.is_test,
                     }
@@ -1322,3 +1378,228 @@ class TelegramThreatMonitor:
                         print(f"⏳ Заплановано автозняття загрози для {region} ({t_type}) через {int(remaining)} сек.")
                 except Exception as e:
                     self._schedule_auto_clear(region, delay)
+
+    def _get_time_of_day_modifier(self, threat_type: str) -> int:
+        """Returns a confidence modifier based on current time of day and threat type.
+        Night attacks with shaheds are statistically more common → boost confidence."""
+        from datetime import datetime, timezone
+        try:
+            import zoneinfo
+            kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        except ImportError:
+            return 0
+        
+        hour = datetime.now(kyiv_tz).hour
+        
+        # Shaheds predominantly attack at night (22:00-06:00)
+        if threat_type == "shahed":
+            if 22 <= hour or hour < 6:
+                return 5  # Night shahed attack — boost
+            elif 6 <= hour < 9:
+                return 2  # Early morning — still possible
+            else:
+                return -3  # Daytime shahed — less likely
+        
+        # Ballistic and cruise missiles — any time, slight daytime bias
+        if threat_type in ("ballistic", "iskander", "cruise_missile"):
+            if 5 <= hour < 8:
+                return 3  # Dawn attacks are historically common
+            return 0
+        
+        # KABs — primarily daytime (requires visual targeting)
+        if threat_type == "kab":
+            if 7 <= hour < 17:
+                return 3  # Daytime — prime KAB window
+            else:
+                return -4  # Night — unlikely for KABs
+        
+        return 0
+
+    async def _rules_learner_loop(self):
+        """Background task that analyzes paired events every 6 hours to derive new rules."""
+        # Wait 5 minutes before first run to let data accumulate
+        await asyncio.sleep(300)
+        
+        while self.is_running:
+            try:
+                count = self._run_rules_learner()
+                if count > 0:
+                    print(f"🧠 [Rules Learner] Автонавчання завершено: {count} правил створено/оновлено")
+            except Exception as e:
+                print(f"⚠️ [Rules Learner] Помилка: {e}")
+            
+            # Sleep 6 hours
+            await asyncio.sleep(6 * 3600)
+
+    def _run_rules_learner(self) -> int:
+        """Analyze paired events and derive rules. Called by the background loop or API."""
+        import sqlite3
+        
+        try:
+            conn = sqlite3.connect("threat_analytics.db")
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            rules_created = 0
+            
+            # --- Rule Type 1: Route Patterns ---
+            cursor.execute('''
+                SELECT 
+                    pe1.region as source_region,
+                    pe2.region as target_region,
+                    pe1.threat_type,
+                    COUNT(*) as occurrence_count,
+                    AVG(CASE WHEN pe2.prediction_accuracy = 'confirmed' THEN 1.0 
+                             WHEN pe2.prediction_accuracy = 'partially_confirmed' THEN 0.7
+                             WHEN pe2.prediction_accuracy = 'overestimated' THEN 0.2
+                             ELSE 0.5 END) as accuracy
+                FROM paired_events pe1
+                JOIN paired_events pe2 ON pe1.gemini_group_id = pe2.gemini_group_id
+                    AND pe1.region != pe2.region
+                    AND pe2.was_predictive = 1
+                WHERE pe1.lifecycle_status = 'cleared'
+                    AND pe1.was_predictive = 0
+                    AND pe1.created_at >= datetime('now', '-30 days')
+                GROUP BY pe1.region, pe2.region, pe1.threat_type
+                HAVING occurrence_count >= 2
+            ''')
+            
+            for row in cursor.fetchall():
+                import json
+                rule_text = (f"Загрози типу {row['threat_type']} з {row['source_region']} "
+                            f"мають {row['accuracy']*100:.0f}% шанс досягти {row['target_region']} "
+                            f"(підтверджено {row['occurrence_count']} раз)")
+                rule_json = json.dumps({
+                    "source": row["source_region"],
+                    "target": row["target_region"],
+                    "type": row["threat_type"],
+                    "accuracy": round(row["accuracy"], 2),
+                    "count": row["occurrence_count"]
+                }, ensure_ascii=False)
+                
+                # Upsert rule
+                cursor.execute('''
+                    INSERT OR REPLACE INTO gemini_rules 
+                        (rule_type, source_region, target_region, threat_type,
+                         rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('route_pattern', ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                ''', (row["source_region"], row["target_region"], row["threat_type"],
+                      rule_text, rule_json, row["occurrence_count"], round(row["accuracy"], 2)))
+                rules_created += 1
+            
+            # --- Rule Type 2: Confidence Corrections ---
+            cursor.execute('''
+                SELECT 
+                    region,
+                    threat_type,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
+                    SUM(CASE WHEN prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+                    AVG(confidence_at_set) as avg_confidence_set
+                FROM paired_events
+                WHERE was_predictive = 1 AND lifecycle_status = 'cleared'
+                    AND created_at >= datetime('now', '-30 days')
+                GROUP BY region, threat_type
+                HAVING total >= 3
+            ''')
+            
+            for row in cursor.fetchall():
+                import json
+                total = row["total"]
+                overest = row["overestimated"]
+                conf = row["confirmed"]
+                overest_rate = overest / total if total > 0 else 0
+                confirm_rate = conf / total if total > 0 else 0
+                
+                if overest_rate > 0.6:
+                    correction = -15
+                    rule_text = (f"Для {row['region']} при {row['threat_type']} — знижувати confidence "
+                                f"на 15% ({overest}/{total} = хибні позитиви)")
+                elif confirm_rate > 0.7:
+                    correction = +10
+                    rule_text = (f"Для {row['region']} при {row['threat_type']} — підвищувати confidence "
+                                f"на 10% ({conf}/{total} = підтверджених)")
+                else:
+                    continue
+                
+                rule_json = json.dumps({
+                    "region": row["region"],
+                    "type": row["threat_type"],
+                    "correction": correction,
+                    "overestimated_rate": round(overest_rate, 2),
+                    "confirmed_rate": round(confirm_rate, 2)
+                }, ensure_ascii=False)
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO gemini_rules 
+                        (rule_type, source_region, target_region, threat_type,
+                         rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('confidence_correction', NULL, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                ''', (row["region"], row["threat_type"], rule_text, rule_json,
+                      total, round(1 - overest_rate, 2)))
+                rules_created += 1
+            
+            # --- Rule Type 3: Time Patterns ---
+            cursor.execute('''
+                SELECT 
+                    CAST(strftime('%H', pe.created_at) AS INTEGER) as hour,
+                    pe.threat_type,
+                    pe.region,
+                    COUNT(*) as count
+                FROM paired_events pe
+                WHERE pe.lifecycle_status = 'cleared'
+                    AND pe.prediction_accuracy = 'confirmed'
+                    AND pe.created_at >= datetime('now', '-30 days')
+                GROUP BY hour, pe.threat_type, pe.region
+                HAVING count >= 2
+                ORDER BY count DESC
+                LIMIT 20
+            ''')
+            
+            time_patterns = {}
+            for row in cursor.fetchall():
+                import json
+                key = (row["hour"], row["threat_type"])
+                if key not in time_patterns:
+                    time_patterns[key] = {"regions": [], "total": 0}
+                time_patterns[key]["regions"].append({"region": row["region"], "count": row["count"]})
+                time_patterns[key]["total"] += row["count"]
+            
+            for (hour, threat_type), data in time_patterns.items():
+                import json
+                if data["total"] < 3:
+                    continue
+                time_cat = "ніч" if hour < 6 or hour >= 22 else ("ранок" if hour < 9 else ("день" if hour < 18 else "вечір"))
+                top_regions = sorted(data["regions"], key=lambda x: x["count"], reverse=True)[:5]
+                regions_str = ", ".join([f"{r['region']} ({r['count']})" for r in top_regions])
+                rule_text = f"Атаки {threat_type} о {hour}:00 ({time_cat}) найчастіше цілять: {regions_str}"
+                rule_json = json.dumps({
+                    "hour": hour, "type": threat_type,
+                    "targets": top_regions, "total": data["total"]
+                }, ensure_ascii=False)
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO gemini_rules 
+                        (rule_type, threat_type,
+                         rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('time_pattern', ?, ?, ?, ?, 0.7, 1, CURRENT_TIMESTAMP)
+                ''', (threat_type, rule_text, rule_json, data["total"]))
+                rules_created += 1
+            
+            # --- Expire stale paired events ---
+            cursor.execute('''
+                UPDATE paired_events SET lifecycle_status = 'expired'
+                WHERE lifecycle_status = 'active'
+                    AND created_at < datetime('now', '-24 hours')
+            ''')
+            expired = cursor.rowcount
+            if expired > 0:
+                print(f"🗑️ [Rules Learner] Закрито {expired} застарілих paired_events")
+            
+            conn.commit()
+            conn.close()
+            
+            return rules_created
+        except Exception as e:
+            print(f"⚠️ [Rules Learner] Помилка: {e}")
+            return 0

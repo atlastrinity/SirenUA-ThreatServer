@@ -1,7 +1,9 @@
 import os
 import json
+import sqlite3
 import google.generativeai as genai
 from typing import List, Dict, Any
+from datetime import datetime
 
 class GeminiThreatAnalyzer:
     def __init__(self):
@@ -19,6 +21,8 @@ class GeminiThreatAnalyzer:
             self.last_error = "API key missing"
             print("⚠️ GEMINI_API_KEY is not set. GeminiAnalyzer will run in mock mode.")
 
+        self.db_path = "threat_analytics.db"
+        
         self.system_prompt = """Ти — спеціалізований військовий ШІ-аналітик (SirenUA Threat Intelligence).
 Твоє завдання: глибоко аналізувати батч повідомлень із Telegram-каналів і формувати JSON із виявленими загрозами ТА ПОВНОЮ ТЕЛЕМЕТРІЄЮ.
 
@@ -40,12 +44,24 @@ class GeminiThreatAnalyzer:
 4. **Балістична кінематика (Ballistic Kinematics)**:
    - При пусках балістики (наприклад, "пуск Іскандера з Криму/Бєлгорода") час підльоту критично малий (2-5 хв). Ти повинен автоматично позначити всі області в радіусі досяжності пускового сектора (наприклад, при пуску з Криму: Херсонська, Миколаївська, Одеська, Запорізька, Кіровоградська) як `is_predictive: true` або `is_predictive: false` (якщо вони безпосередньо вказані в повідомленні).
 
-ОЦІНКА ДОВІРИ (Confidence Score) ТА РІВЕНЬ ЗАГРОЗИ:
-- 90-100%: Офіційні джерела (kpszsu), або повідомлення з точними координатами, курсом, типом ракет.
-- 75-89%: Надійні радарні канали (monitorwarr) з конкретними даними про рух цілей.
-- 60-74%: Загальні повідомлення радарів без деталізації або предиктивні регіони (is_predictive: true) на шляху слідування.
-- 40-59%: Непідтверджена інформація, предиктивні цілі на великій відстані (стратегічне профілювання).
-- <40%: Чутки, нерелевантна інформація. Став `threat_level: "none"`.
+ОЦІНКА ДОВІРИ (Confidence Score) — КРИТИЧНО ВАЖЛИВІ ПРАВИЛА:
+
+ЗАБОРОНЕНО: Давати однаковий confidence_score для більше ніж 2 областей в одному аналізі. Кожна область ПОВИННА мати ІНДИВІДУАЛЬНИЙ confidence_score, розрахований за такими критеріями:
+
+- 93-100%: Офіційне підтвердження від КПСЗСУ (kpszsu) або повідомлення з точними координатами, курсом, КОНКРЕТНОЮ назвою населеного пункту.
+- 85-92%: Надійний радарний канал (monitorwarr) із зазначенням конкретного регіону, напрямку руху та типу цілі.
+- 75-84%: Надійне джерело без точних координат, але з зазначенням напрямку.
+- 65-74%: Предиктивний регіон (is_predictive: true) БЕЗПОСЕРЕДНЬО на шляху слідування (сусідня область по курсу).
+- 55-64%: Предиктивний регіон на відстані 2 областей від джерела загрози.
+- 45-54%: Стратегічне профілювання — потенційна ціль на великій відстані без прямих ознак.
+- 35-44%: Слабкі ознаки, непідтверджена інформація.
+- <35%: Чутки, нерелевантна інформація. Став `threat_level: "none"`.
+
+ДИФЕРЕНЦІАЦІЯ CONFIDENCE ДЛЯ ПРЕДИКТИВНИХ РЕГІОНІВ:
+- Регіон безпосередньо на шляху руху (відстань 1 область від джерела): confidence = 65-74%
+- Регіон на відстані 2 областей: confidence = 55-64%
+- Регіон на відстані 3+ областей або стратегічна ціль: confidence = 45-54%
+- Ти ОБОВ'ЯЗКОВО маєш зменшувати confidence пропорційно відстані від джерела загрози.
 
 ТИПИ ЗАГРОЗ ТА ОЧІКУВАНИЙ ЧАС (ETA):
 - shahed (БПЛА): "~1-3 год" (швидкість ~150-180 км/год)
@@ -198,6 +214,76 @@ class GeminiThreatAnalyzer:
 Для повідомлень з threat_level == "none" та is_clear == false, блоки telemetry/clearing_telemetry не обов'язкові.
 """
 
+    def build_rules_context(self) -> str:
+        """Load learned rules from DB and format them as context for Gemini prompt."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT rule_type, rule_text, evidence_count, accuracy_score
+                FROM gemini_rules
+                WHERE is_active = 1 AND evidence_count >= 2
+                ORDER BY evidence_count DESC, accuracy_score DESC
+                LIMIT 20
+            ''')
+            rules = cursor.fetchall()
+            conn.close()
+            
+            if not rules:
+                return ""
+            
+            context = "\nНАБУТІ ЗНАННЯ (Правила з бази досвіду — враховуй при аналізі):\n"
+            for i, rule in enumerate(rules, 1):
+                rule_type_label = {
+                    "route_pattern": "Маршрут",
+                    "confidence_correction": "Корекція довіри",
+                    "time_pattern": "Часовий патерн",
+                    "false_positive": "Хибний позитив",
+                    "weapon_profile": "Профіль зброї"
+                }.get(rule["rule_type"], rule["rule_type"])
+                
+                context += f"{i}. [{rule_type_label}] {rule['rule_text']} (доказів: {rule['evidence_count']}, точність: {rule['accuracy_score']:.0%})\n"
+            
+            return context
+        except Exception as e:
+            print(f"⚠️ Помилка завантаження правил: {e}")
+            return ""
+
+    def load_confidence_corrections(self) -> Dict[str, Dict[str, int]]:
+        """Load confidence correction rules for the predictive engine.
+        Returns dict: {region: {threat_type: correction_value}}"""
+        corrections = {}
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT target_region, threat_type, rule_json
+                FROM gemini_rules
+                WHERE rule_type = 'confidence_correction' AND is_active = 1
+                    AND evidence_count >= 3
+            ''')
+            
+            for row in cursor.fetchall():
+                try:
+                    data = json.loads(row["rule_json"])
+                    region = row["target_region"]
+                    threat_type = row["threat_type"]
+                    correction = data.get("correction", 0)
+                    if region not in corrections:
+                        corrections[region] = {}
+                    corrections[region][threat_type] = correction
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            
+            conn.close()
+        except Exception:
+            pass
+        return corrections
+
     async def analyze_batch(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         if not messages:
             return []
@@ -208,6 +294,11 @@ class GeminiThreatAnalyzer:
             return []
 
         prompt = self.system_prompt + "\n\n"
+        
+        # Inject learned rules
+        rules_ctx = self.build_rules_context()
+        if rules_ctx:
+            prompt += rules_ctx + "\n"
         
         if context_messages:
             prompt += "ПОПЕРЕДНІЙ КОНТЕКСТ (Для розуміння траєкторії, не для аналізу нових загроз):\n"
@@ -245,6 +336,11 @@ class GeminiThreatAnalyzer:
                         elif item.get("threat_level", "none") != "none":
                             # Normalize threat telemetry
                             item["telemetry"] = self.normalize_telemetry(item.get("telemetry"))
+            
+            # Log rules injection info
+            if rules_ctx:
+                rules_count = rules_ctx.count("\n") - 1
+                print(f"🧠 [Gemini] Аналіз з {rules_count} правилами самонавчання")
             
             return results
         except Exception as e:
