@@ -1,14 +1,3 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.env
-*.session
-*.session-journal
-*.log
-firebase-credentials.json
-
-threats_state.json
-
-*.db
-*.sqlite
+real_threats_state.json
+threat_analytics.db
+threat_analytics.db-journal

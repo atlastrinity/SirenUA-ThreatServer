@@ -494,6 +494,25 @@ is_live_mode = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lowe
 # Track last logged threat states to avoid duplicate logging and properly detect changes
 last_logged_states = {}  # region -> (level, is_active, threat_type)
 
+main_loop = None
+
+def safe_run_task(coro):
+    """Safely schedules a coroutine from any thread (e.g. background threadpool)
+    in the main asyncio event loop."""
+    global main_loop
+    if main_loop and main_loop.is_running():
+        asyncio.run_coroutine_threadsafe(coro, main_loop)
+    else:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            # Fallback if no loop is running in current context (unlikely but safe)
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            new_loop.run_until_complete(coro)
+            new_loop.close()
+
 def on_threat_changed(region, state, telemetry=None):
     global last_logged_states
     prev_level, prev_active, prev_type = last_logged_states.get(region, ("none", False, None))
@@ -502,24 +521,24 @@ def on_threat_changed(region, state, telemetry=None):
     if prev_active != state.is_active:
         log_level = "high" if state.is_active else "none"
         detail = "Повітряна тривога" if state.is_active else "Відбій повітряної тривоги"
-        asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, log_level, "official_alarm", detail))
-        asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail, is_test=state.is_test))
+        safe_run_task(asyncio.to_thread(log_threat_to_db, region, log_level, "official_alarm", detail))
+        safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail, is_test=state.is_test))
         
     # 2. AI/Telegram threat level change logging
     if prev_level != state.level:
         current_type = state.threat_type
         if (current_type and current_type != "official_alarm") or (prev_type and prev_type != "official_alarm" and state.level == "none"):
             if state.level != "none":
-                asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry))
-                asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, is_test=state.is_test))
+                safe_run_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry))
+                safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, is_test=state.is_test))
             elif prev_level != "none":
                 # Threat has cleared
-                asyncio.create_task(asyncio.to_thread(log_threat_to_db, region, "none", prev_type, "Відбій загрози"))
-                asyncio.create_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози", is_test=state.is_test))
+                safe_run_task(asyncio.to_thread(log_threat_to_db, region, "none", prev_type, "Відбій загрози"))
+                safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози", is_test=state.is_test))
             
     last_logged_states[region] = (state.level, state.is_active, state.threat_type)
 
-    asyncio.create_task(ws_manager.broadcast({
+    safe_run_task(ws_manager.broadcast({
         "type": "threat_update",
         "region": region,
         "state": state.to_dict()
@@ -611,7 +630,8 @@ async def poll_aerial_alerts():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager — запуск/зупинка Telegram моніторингу."""
-    global telegram_monitor, aerial_alerts_task
+    global telegram_monitor, aerial_alerts_task, main_loop
+    main_loop = asyncio.get_running_loop()
     
     # Ініціалізація Firebase Cloud Messaging
     init_firebase()
