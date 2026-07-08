@@ -1168,37 +1168,54 @@ async def get_prediction_accuracy(days: int = 30):
 
 
 @app.get("/api/history/{region}")
-async def get_region_history(region: str, limit: int = 50):
-    """Повертає хронологію загроз для конкретної області з Firebase Firestore."""
+async def get_region_history(region: str, limit: int = 200, date: str = None):
+    """Повертає хронологію загроз для конкретної області з Firebase Firestore.
+    
+    Args:
+        region: Назва області
+        limit: Максимальна кількість подій (default 200)
+        date: Дата у форматі YYYY-MM-DD. Якщо не вказано, повертає за сьогодні.
+    """
     from urllib.parse import unquote
+    from datetime import datetime as dt, timedelta
     region = unquote(region)
     
     db = get_db()
     if not db:
         raise HTTPException(status_code=503, detail="Firebase Firestore недоступний")
+    
+    # Determine date range
+    if date:
+        try:
+            target_date = dt.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Невірний формат дати. Використовуйте YYYY-MM-DD")
+    else:
+        target_date = dt.utcnow()
+    
+    date_start = target_date.strftime("%Y-%m-%d 00:00:00")
+    date_end = (target_date + timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
         
     try:
-        # Fetch matching documents from Firestore
+        # Fetch matching documents from Firestore filtered by date range
         docs = await asyncio.to_thread(
             lambda: db.collection('sirenua_history')
                       .where('region', '==', region)
+                      .where('timestamp', '>=', date_start)
+                      .where('timestamp', '<', date_end)
+                      .order_by('timestamp', direction='DESCENDING')
+                      .limit(min(limit, 200))
                       .get()
         )
         
         events = []
         for doc in docs:
             d = doc.to_dict()
-            # Ensure ID field is present and returned
             events.append(d)
-            
-        # Sort by timestamp descending
-        events.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        
-        # Limit results
-        events = events[:min(limit, 200)]
         
         return {
             "region": region,
+            "date": target_date.strftime("%Y-%m-%d"),
             "count": len(events),
             "events": events
         }
