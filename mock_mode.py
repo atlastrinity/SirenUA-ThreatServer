@@ -536,7 +536,8 @@ class MockThreatManager:
                     detail=detail,
                     confidence=confidence,
                     eta=eta,
-                    is_predictive=is_predictive
+                    is_predictive=is_predictive,
+                    is_test=True
                 )
             else:
                 if old_state.level != "none":

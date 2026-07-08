@@ -1305,7 +1305,7 @@ async def set_scenario(request: ScenarioRequest):
         )
 
     if request.scenario == "clear":
-        threat_manager.clear_all()
+        threat_manager.clear_all(only_test=True)
     else:
         threat_manager.set_scenario(request.scenario)
 
