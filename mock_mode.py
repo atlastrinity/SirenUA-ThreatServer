@@ -649,7 +649,8 @@ class MockThreatManager:
                    eta: Optional[str] = None,
                    is_predictive: bool = False,
                    is_test: bool = False,
-                   telemetry: dict = None) -> bool:
+                   telemetry: dict = None,
+                   rules_applied: list = None) -> bool:
         if region not in self.threats:
             return False
 
@@ -690,7 +691,7 @@ class MockThreatManager:
             send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active, is_test=self.threats[region].is_test)
             self.save_to_db()
             if hasattr(self, 'on_change'):
-                self.on_change(region, self.threats[region], telemetry=telemetry)
+                self.on_change(region, self.threats[region], telemetry=telemetry, rules_applied=rules_applied)
             
         return True
 

@@ -175,7 +175,8 @@ class GeminiThreatAnalyzer:
     "event_phase": "cruise",
     "correlation_group": "shahed_night_session_2026-07-07",
     "final_target_cities": []
-  }
+  },
+  "rules_applied": [1, 5]
 }
 
 ДЛЯ ЗНЯТТЯ ЗАГРОЗ (is_clear: true):
@@ -204,14 +205,15 @@ class GeminiThreatAnalyzer:
     "clearing_context_tags": ["відбій", "всі збиті"],
     "source_reliability": "official",
     "time_of_day_category": "night"
-  }
+  },
+  "rules_applied": []
 }
 
 Якщо повідомлень кілька, поверни масив з результатами для кожного повідомлення.
 ОБОВ'ЯЗКОВО повертай:
-- confidence_score, eta та telemetry для КОЖНОГО результату з threat_level != "none" та is_clear == false.
-- confidence_score та clearing_telemetry для КОЖНОГО результату з is_clear == true.
-Для повідомлень з threat_level == "none" та is_clear == false, блоки telemetry/clearing_telemetry не обов'язкові.
+- confidence_score, eta, telemetry та rules_applied для КОЖНОГО результату з threat_level != "none" та is_clear == false.
+- confidence_score, clearing_telemetry та rules_applied для КОЖНОГО результату з is_clear == true.
+Для повідомлень з threat_level == "none" та is_clear == false, блоки telemetry/clearing_telemetry не обов'язкові, але rules_applied все одно має повертатися як [].
 """
 
     def build_rules_context(self) -> str:
@@ -492,7 +494,16 @@ class GeminiThreatAnalyzer:
             print("⚠️ Gemini in MOCK mode: Returning empty analysis.")
             return []
 
-        prompt = self.system_prompt + "\n\n"
+        # Отримуємо поточний час у Києві для часового контексту Gemini
+        from datetime import datetime
+        try:
+            import zoneinfo
+            kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        except ImportError:
+            kyiv_tz = None
+        current_time_kyiv = datetime.now(kyiv_tz).strftime("%Y-%m-%d %H:%M:%S")
+
+        prompt = self.system_prompt + f"\n\nПОТОЧНИЙ КИЇВСЬКИЙ ЧАС: {current_time_kyiv}\n\n"
         
         # Inject learned rules
         rules_ctx = self.build_rules_context()

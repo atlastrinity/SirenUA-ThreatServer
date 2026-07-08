@@ -402,6 +402,7 @@ class TelegramThreatMonitor:
             text = item.get("text", "")
             confidence = item.get("confidence_score")
             telemetry = item.get("telemetry")  # Extract telemetry block
+            rules_applied = item.get("rules_applied", [])
             
             # Validate confidence as int
             if confidence is not None:
@@ -605,7 +606,7 @@ class TelegramThreatMonitor:
 
                 self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
                                                confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
-                                               is_test=is_test, telemetry=telemetry)
+                                               is_test=is_test, telemetry=telemetry, rules_applied=rules_applied)
                 self._schedule_auto_clear(region, delay)
                 
                 # Enhanced logging with telemetry info

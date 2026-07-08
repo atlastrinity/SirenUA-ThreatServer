@@ -209,7 +209,7 @@ def init_analytics_db():
     conn.close()
     print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings + gemini_rules + paired_events)")
 
-def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False):
+def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False, rules_applied: list = None):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id.
     Also creates a paired_event record for lifecycle tracking."""
     try:
@@ -267,15 +267,16 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
         
         # Create paired_event for lifecycle tracking (only for non-none threats)
         if level != "none" and event_id:
+            rules_applied_json = json.dumps(rules_applied) if rules_applied else None
             cursor.execute('''
                 INSERT INTO paired_events (
                     region, threat_event_id, telemetry_id, lifecycle_status,
                     threat_level, threat_type, confidence_at_set, was_predictive,
-                    gemini_group_id
-                ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+                    gemini_group_id, rules_applied
+                ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
             ''', (
                 region, event_id, telemetry_id, level, threat_type,
-                confidence, 1 if is_predictive else 0, group_id
+                confidence, 1 if is_predictive else 0, group_id, rules_applied_json
             ))
         
         conn.commit()
@@ -513,7 +514,7 @@ def safe_run_task(coro):
             new_loop.run_until_complete(coro)
             new_loop.close()
 
-def on_threat_changed(region, state, telemetry=None):
+def on_threat_changed(region, state, telemetry=None, rules_applied=None):
     global last_logged_states
     prev_level, prev_active, prev_type = last_logged_states.get(region, ("none", False, None))
     
@@ -529,7 +530,7 @@ def on_threat_changed(region, state, telemetry=None):
         current_type = state.threat_type
         if (current_type and current_type != "official_alarm") or (prev_type and prev_type != "official_alarm" and state.level == "none"):
             if state.level != "none":
-                safe_run_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry))
+                safe_run_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, rules_applied=rules_applied))
                 safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, is_test=state.is_test))
             elif prev_level != "none":
                 # Threat has cleared
