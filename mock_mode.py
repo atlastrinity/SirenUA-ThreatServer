@@ -546,6 +546,13 @@ class MockThreatManager:
 
     def set_scenario(self, scenario: str):
         """Встановлює попередньо визначений сценарій для тестування з інтелектуальним оновленням та чергою."""
+        
+        # Бекап реальних загроз до тестування
+        for region, state in self.threats.items():
+            if not state.is_test:
+                self.real_threats_backup[region] = state.to_dict()
+        self._execute_save_real_threats_to_db()
+        
         new_threats = {}
         
         # Format of value: (level, threat_type, detail, confidence, eta, is_predictive)
@@ -665,11 +672,9 @@ class MockThreatManager:
                 "is_active": old_state.is_active,
                 "is_test": False
             }
-            self.save_real_threats_to_db()
         else:
             if not old_state.is_test and old_state.level != "none":
                 self.real_threats_backup[region] = old_state.to_dict()
-                self.save_real_threats_to_db()
 
         self.threats[region].set_threat(level, threat_type, detail, confidence, eta, is_predictive, is_test)
         
@@ -704,7 +709,6 @@ class MockThreatManager:
                 self.real_threats_backup[region]["confidence"] = None
                 self.real_threats_backup[region]["eta"] = None
                 self.real_threats_backup[region]["is_predictive"] = False
-                self.save_real_threats_to_db()
 
         self.threats[region].clear()
         if has_changed:
@@ -824,7 +828,6 @@ class MockThreatManager:
                 "is_active": is_active,
                 "is_test": False
             }
-        self.save_real_threats_to_db()
 
         # If this region currently has a test threat, do not overwrite its active view state
         if self.threats[region].is_test:
