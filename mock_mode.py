@@ -375,10 +375,23 @@ class MockThreatManager:
         self.last_sound_time: float = 0.0
         self.real_threats_backup: dict = {}
         self._clear_lock = threading.Lock()
+        
+        self._save_timer = None
+        self._save_real_timer = None
+        self._save_lock = threading.Lock()
+        
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState()
 
     def save_to_db(self):
+        import threading
+        with self._save_lock:
+            if getattr(self, '_save_timer', None) is not None:
+                self._save_timer.cancel()
+            self._save_timer = threading.Timer(2.5, self._execute_save_to_db)
+            self._save_timer.start()
+
+    def _execute_save_to_db(self):
         db = get_db()
         if db:
             try:
@@ -430,6 +443,14 @@ class MockThreatManager:
             self.load_from_file()
 
     def save_real_threats_to_db(self):
+        import threading
+        with self._save_lock:
+            if getattr(self, '_save_real_timer', None) is not None:
+                self._save_real_timer.cancel()
+            self._save_real_timer = threading.Timer(2.5, self._execute_save_real_threats_to_db)
+            self._save_real_timer.start()
+
+    def _execute_save_real_threats_to_db(self):
         db = get_db()
         if db:
             try:
