@@ -540,7 +540,7 @@ class MockThreatManager:
                     is_test=True
                 )
             else:
-                if old_state.level != "none":
+                if old_state.level != "none" and old_state.is_test:
                     self.clear_threat(region)
 
     def set_threat(self, region: str, level: str,
