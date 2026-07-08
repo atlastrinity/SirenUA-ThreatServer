@@ -675,44 +675,15 @@ class TelegramThreatMonitor:
         "border_shelling": None,  # No directional prediction
     }
 
-    CITY_TO_REGION = {
-        "Київ": "м. Київ",
-        "Старокостянтинів": "Хмельницька область",
-        "Стрий": "Львівська область",
-        "Львів": "Львівська область",
-        "Харків": "Харківська область",
-        "Одеса": "Одеська область",
-        "Дніпро": "Дніпропетровська область",
-        "Запоріжжя": "Запорізька область",
-        "Кривий Ріг": "Дніпропетровська область",
-        "Миколаїв": "Миколаївська область",
-        "Вінниця": "Вінницька область",
-        "Хмельницький": "Хмельницька область",
-        "Чернігів": "Чернігівська область",
-        "Полтава": "Полтавська область",
-        "Черкаси": "Черкаська область",
-        "Житомир": "Житомирська область",
-        "Суми": "Сумська область",
-        "Рівне": "Рівненська область",
-        "Івано-Франківськ": "Івано-Франківська область",
-        "Тернопіль": "Тернопільська область",
-        "Луцьк": "Волинська область",
-        "Ужгород": "Закарпатська область",
-        "Мукачево": "Закарпатська область",
-        "Чернівці": "Чернівецька область",
-        "Кропивницький": "Кіровоградська область",
-        "Кременчук": "Полтавська область",
-        "Миргород": "Полтавська область",
-        "Умань": "Черкаська область",
-        "Біла Церква": "Київська область",
-        "Васильків": "Київська область",
-        "Обухів": "Київська область",
-        "Бориспіль": "Київська область",
-        "Бровари": "Київська область",
-        "Фастів": "Київська область",
-        "Коломия": "Івано-Франківська область",
-        "Калуш": "Івано-Франківська область",
-    }
+    def _city_to_region(self, city_name: str) -> str:
+        """Resolve a city/town name to its region using ALL_REGIONS keywords from mock_mode.
+        Falls back to simple substring matching. Returns None if no match."""
+        city_lower = city_name.lower().strip()
+        for region, data in ALL_REGIONS.items():
+            for kw in data.get("keywords", []):
+                if kw in city_lower or city_lower in kw:
+                    return region
+        return None
 
     async def _propagate_predictive_threats(self):
         """
@@ -772,8 +743,8 @@ class TelegramThreatMonitor:
             if telemetry and telemetry.get("final_target_cities"):
                 final_targets = telemetry["final_target_cities"]
                 for city in final_targets:
-                    if city in self.CITY_TO_REGION:
-                        target_region = self.CITY_TO_REGION[city]
+                    target_region = self._city_to_region(city)
+                    if target_region:
                         path = self._find_path(source_region, target_region)
                         if path:
                             for pr in path[1:]:
