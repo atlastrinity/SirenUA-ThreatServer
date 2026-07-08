@@ -313,6 +313,7 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         else:
             critical_sound = messaging.CriticalSound(name=sound, critical=False, volume=0.8)
         aps = messaging.Aps(
+            alert=messaging.ApsAlert(title=title, body=body),
             sound=critical_sound, 
             badge=1, 
             content_available=True, 
@@ -321,6 +322,7 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         )
     else:
         aps = messaging.Aps(
+            alert=messaging.ApsAlert(title=title, body=body),
             badge=1, 
             content_available=True, 
             mutable_content=True,
