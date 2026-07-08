@@ -1184,17 +1184,34 @@ async def get_region_history(region: str, limit: int = 200, date: str = None):
     if not db:
         raise HTTPException(status_code=503, detail="Firebase Firestore недоступний")
     
-    # Determine date range
+    # Determine date range in Europe/Kiev timezone, then convert to UTC for Firestore query comparison
+    try:
+        import zoneinfo
+    except ImportError:
+        from backports import zoneinfo
+    
+    kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+    
     if date:
         try:
-            target_date = dt.strptime(date, "%Y-%m-%d")
+            # Parse target date as local date (midnight start) in Kiev timezone
+            parsed_date = dt.strptime(date, "%Y-%m-%d")
+            local_start = parsed_date.replace(tzinfo=kyiv_tz)
         except ValueError:
             raise HTTPException(status_code=400, detail="Невірний формат дати. Використовуйте YYYY-MM-DD")
     else:
-        target_date = dt.utcnow()
+        # If no date provided, get current time in Kiev timezone
+        current_local = dt.now(kyiv_tz)
+        local_start = current_local.replace(hour=0, minute=0, second=0, microsecond=0)
     
-    date_start = target_date.strftime("%Y-%m-%d 00:00:00")
-    date_end = (target_date + timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
+    local_end = local_start + timedelta(days=1)
+    
+    # Convert local start and end of the day in Kiev to UTC
+    utc_start = local_start.astimezone(timezone.utc)
+    utc_end = local_end.astimezone(timezone.utc)
+    
+    date_start = utc_start.strftime("%Y-%m-%d %H:%M:%S")
+    date_end = utc_end.strftime("%Y-%m-%d %H:%M:%S")
         
     try:
         # Fetch by region only (avoids composite index requirement), then filter by date in Python
@@ -1220,7 +1237,7 @@ async def get_region_history(region: str, limit: int = 200, date: str = None):
         
         return {
             "region": region,
-            "date": target_date.strftime("%Y-%m-%d"),
+            "date": local_start.strftime("%Y-%m-%d"),
             "count": len(events),
             "events": events
         }
