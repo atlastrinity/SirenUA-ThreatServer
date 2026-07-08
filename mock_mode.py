@@ -662,6 +662,18 @@ class MockThreatManager:
             return False
         old_state = self.threats[region]
         has_changed = (old_state.level != "none")
+
+        if not old_state.is_test:
+            if region in self.real_threats_backup:
+                self.real_threats_backup[region]["level"] = "none"
+                self.real_threats_backup[region]["type"] = None
+                self.real_threats_backup[region]["detail"] = None
+                self.real_threats_backup[region]["since"] = None
+                self.real_threats_backup[region]["confidence"] = None
+                self.real_threats_backup[region]["eta"] = None
+                self.real_threats_backup[region]["is_predictive"] = False
+                self.save_real_threats_to_db()
+
         self.threats[region].clear()
         if has_changed:
             import time
@@ -690,6 +702,44 @@ class MockThreatManager:
                 any_changed = True
                 if hasattr(self, 'on_change'):
                     self.on_change(region, state, telemetry=None)
+        
+        # Restore real threats from backup if clearing test
+        if only_test:
+            for region, data in self.real_threats_backup.items():
+                if region in self.threats:
+                    state = self.threats[region]
+                    restored_has_changed = (
+                        state.level != data.get("level", "none") or
+                        state.threat_type != data.get("type") or
+                        state.detail != data.get("detail") or
+                        state.is_active != data.get("is_active", False) or
+                        state.is_test != False
+                    )
+                    
+                    if restored_has_changed:
+                        state.level = data.get("level", "none")
+                        state.threat_type = data.get("type")
+                        state.detail = data.get("detail")
+                        state.since = data.get("since")
+                        state.confidence = data.get("confidence")
+                        state.eta = data.get("eta")
+                        state.is_predictive = data.get("is_predictive", False)
+                        state.is_active = data.get("is_active", False)
+                        state.is_test = False
+                        
+                        any_changed = True
+                        
+                        # Send notification to update clients
+                        if state.level != "none":
+                            send_fcm_notification(region, state.level, state.threat_type, state.detail, confidence=state.confidence, eta=state.eta, is_official_alarm=state.is_active)
+                        elif state.is_active:
+                            send_fcm_notification(region, "high", is_official_alarm=True, detail="Повітряна тривога")
+                        else:
+                            send_fcm_notification(region, "none")
+                            
+                        if hasattr(self, 'on_change'):
+                            self.on_change(region, state, telemetry=None)
+
         if any_changed:
             self.save_to_db()
             self.save_to_file()
@@ -710,6 +760,27 @@ class MockThreatManager:
         if region not in self.threats:
             return False
         
+        # Update real threats backup state first
+        if region in self.real_threats_backup:
+            self.real_threats_backup[region]["is_active"] = is_active
+        else:
+            self.real_threats_backup[region] = {
+                "level": "none",
+                "type": None,
+                "detail": None,
+                "since": None,
+                "confidence": None,
+                "eta": None,
+                "is_predictive": False,
+                "is_active": is_active,
+                "is_test": False
+            }
+        self.save_real_threats_to_db()
+
+        # If this region currently has a test threat, do not overwrite its active view state
+        if self.threats[region].is_test:
+            return False
+            
         old_active = self.threats[region].is_active
         if old_active != is_active:
             self.threats[region].is_active = is_active
