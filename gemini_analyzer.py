@@ -215,7 +215,8 @@ class GeminiThreatAnalyzer:
 """
 
     def build_rules_context(self) -> str:
-        """Load learned rules from DB and format them as context for Gemini prompt."""
+        """Load learned rules from DB and format them as context for Gemini prompt.
+        Only feeds active rules with solid evidence (>= 3 events) and high accuracy (>= 60%)."""
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -224,9 +225,9 @@ class GeminiThreatAnalyzer:
             cursor.execute('''
                 SELECT rule_type, rule_text, evidence_count, accuracy_score
                 FROM gemini_rules
-                WHERE is_active = 1 AND evidence_count >= 2
+                WHERE is_active = 1 AND evidence_count >= 3 AND accuracy_score >= 0.60
                 ORDER BY evidence_count DESC, accuracy_score DESC
-                LIMIT 20
+                LIMIT 25
             ''')
             rules = cursor.fetchall()
             conn.close()
@@ -264,7 +265,7 @@ class GeminiThreatAnalyzer:
                 SELECT target_region, threat_type, rule_json
                 FROM gemini_rules
                 WHERE rule_type = 'confidence_correction' AND is_active = 1
-                    AND evidence_count >= 3
+                    AND evidence_count >= 3 AND accuracy_score >= 0.60
             ''')
             
             for row in cursor.fetchall():
@@ -283,6 +284,217 @@ class GeminiThreatAnalyzer:
         except Exception:
             pass
         return corrections
+
+    def run_rules_learner(self) -> int:
+        """Central Rules Learner engine. Analyzes historical paired events,
+        derives route/time/confidence rules, and performs rule decay (aging out old patterns)."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            rules_updated = 0
+            
+            # 1. APPLY RULE DECAY: Reduce active status if rules are outdated or inaccurate
+            # Rules with low accuracy get deactivated
+            cursor.execute('''
+                UPDATE gemini_rules 
+                SET is_active = 0 
+                WHERE is_active = 1 AND accuracy_score < 0.50
+            ''')
+            decayed_low_accuracy = cursor.rowcount
+            
+            # Rules that haven't been validated/updated in 14 days get deactivated
+            cursor.execute('''
+                UPDATE gemini_rules 
+                SET is_active = 0 
+                WHERE is_active = 1 AND datetime(updated_at) < datetime('now', '-14 days')
+            ''')
+            decayed_stale = cursor.rowcount
+            
+            if decayed_low_accuracy > 0 or decayed_stale > 0:
+                print(f"📉 [Rule Decay] Деактивовано {decayed_low_accuracy} правил через низьку точність та {decayed_stale} через застарілість")
+            
+            # 2. Rule Type 1: Route Patterns
+            cursor.execute('''
+                SELECT 
+                    pe1.region as source_region,
+                    pe2.region as target_region,
+                    pe1.threat_type,
+                    COUNT(*) as occurrence_count,
+                    AVG(CASE WHEN pe2.prediction_accuracy = 'confirmed' THEN 1.0 
+                             WHEN pe2.prediction_accuracy = 'partially_confirmed' THEN 0.7
+                             WHEN pe2.prediction_accuracy = 'overestimated' THEN 0.2
+                             ELSE 0.5 END) as accuracy
+                FROM paired_events pe1
+                JOIN paired_events pe2 ON pe1.gemini_group_id = pe2.gemini_group_id
+                    AND pe1.region != pe2.region
+                    AND pe2.was_predictive = 1
+                WHERE pe1.lifecycle_status = 'cleared'
+                    AND pe1.was_predictive = 0
+                    AND pe1.created_at >= datetime('now', '-30 days')
+                GROUP BY pe1.region, pe2.region, pe1.threat_type
+                HAVING occurrence_count >= 2
+            ''')
+            
+            for row in cursor.fetchall():
+                rule_text = (f"Загрози типу {row['threat_type']} з {row['source_region']} "
+                            f"мають {row['accuracy']*100:.0f}% шанс досягти {row['target_region']} "
+                            f"(підтверджено {row['occurrence_count']} раз)")
+                rule_json = json.dumps({
+                    "source": row["source_region"],
+                    "target": row["target_region"],
+                    "type": row["threat_type"],
+                    "accuracy": round(row["accuracy"], 2),
+                    "count": row["occurrence_count"]
+                }, ensure_ascii=False)
+                
+                cursor.execute('''
+                    INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type,
+                        rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('route_pattern', ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                    ON CONFLICT(rule_type, source_region, target_region, threat_type) DO UPDATE SET
+                        rule_text = excluded.rule_text,
+                        rule_json = excluded.rule_json,
+                        evidence_count = excluded.evidence_count,
+                        accuracy_score = excluded.accuracy_score,
+                        is_active = 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE 1=1
+                ''')  # Handled conflicts by custom logic or insert
+                # Note: target sqlite might not have composite primary key. We will delete old similar rule type to prevent duplicates.
+                cursor.execute('''
+                    DELETE FROM gemini_rules 
+                    WHERE rule_type = 'route_pattern' 
+                      AND source_region = ? AND target_region = ? AND threat_type = ?
+                ''', (row["source_region"], row["target_region"], row["threat_type"]))
+                
+                cursor.execute('''
+                    INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type,
+                        rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('route_pattern', ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                ''', (row["source_region"], row["target_region"], row["threat_type"],
+                      rule_text, rule_json, row["occurrence_count"], round(row["accuracy"], 2)))
+                rules_updated += 1
+            
+            # 3. Rule Type 2: Confidence Corrections
+            cursor.execute('''
+                SELECT 
+                    region,
+                    threat_type,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
+                    SUM(CASE WHEN prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+                    AVG(confidence_at_set) as avg_confidence_set
+                FROM paired_events
+                WHERE was_predictive = 1 AND lifecycle_status = 'cleared'
+                    AND created_at >= datetime('now', '-30 days')
+                GROUP BY region, threat_type
+                HAVING total >= 3
+            ''')
+            
+            for row in cursor.fetchall():
+                total = row["total"]
+                overest = row["overestimated"]
+                conf = row["confirmed"]
+                overest_rate = overest / total if total > 0 else 0
+                confirm_rate = conf / total if total > 0 else 0
+                
+                if overest_rate > 0.6:
+                    correction = -15
+                    rule_text = (f"Для {row['region']} при {row['threat_type']} — знижувати confidence "
+                                f"на 15% ({overest}/{total} = хибні позитиви)")
+                elif confirm_rate > 0.7:
+                    correction = +10
+                    rule_text = (f"Для {row['region']} при {row['threat_type']} — підвищувати confidence "
+                                f"на 10% ({conf}/{total} = підтверджених)")
+                else:
+                    continue
+                
+                rule_json = json.dumps({
+                    "region": row["region"],
+                    "type": row["threat_type"],
+                    "correction": correction,
+                    "overestimated_rate": round(overest_rate, 2),
+                    "confirmed_rate": round(confirm_rate, 2)
+                }, ensure_ascii=False)
+                
+                cursor.execute('''
+                    DELETE FROM gemini_rules 
+                    WHERE rule_type = 'confidence_correction' 
+                      AND target_region = ? AND threat_type = ?
+                ''', (row["region"], row["threat_type"]))
+                
+                cursor.execute('''
+                    INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type,
+                        rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('confidence_correction', NULL, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                ''', (row["region"], row["threat_type"], rule_text, rule_json,
+                      total, round(1 - overest_rate, 2)))
+                rules_updated += 1
+            
+            # 4. Rule Type 3: Time Patterns
+            cursor.execute('''
+                SELECT 
+                    CAST(strftime('%H', pe.created_at) AS INTEGER) as hour,
+                    pe.threat_type,
+                    pe.region,
+                    COUNT(*) as count
+                FROM paired_events pe
+                WHERE pe.lifecycle_status = 'cleared'
+                    AND pe.prediction_accuracy = 'confirmed'
+                    AND pe.created_at >= datetime('now', '-30 days')
+                GROUP BY hour, pe.threat_type, pe.region
+                HAVING count >= 2
+                ORDER BY count DESC
+                LIMIT 20
+            ''')
+            
+            time_patterns = {}
+            for row in cursor.fetchall():
+                key = (row["hour"], row["threat_type"])
+                if key not in time_patterns:
+                    time_patterns[key] = {"regions": [], "total": 0}
+                time_patterns[key]["regions"].append({"region": row["region"], "count": row["count"]})
+                time_patterns[key]["total"] += row["count"]
+            
+            for (hour, threat_type), data in time_patterns.items():
+                if data["total"] < 3:
+                    continue
+                time_cat = "ніч" if hour < 6 or hour >= 22 else ("ранок" if hour < 9 else ("день" if hour < 18 else "вечір"))
+                top_regions = sorted(data["regions"], key=lambda x: x["count"], reverse=True)[:5]
+                regions_str = ", ".join([f"{r['region']} ({r['count']})" for r in top_regions])
+                rule_text = f"Атаки {threat_type} о {hour}:00 ({time_cat}) найчастіше цілять: {regions_str}"
+                rule_json = json.dumps({
+                    "hour": hour, "type": threat_type,
+                    "targets": top_regions, "total": data["total"]
+                }, ensure_ascii=False)
+                
+                cursor.execute('''
+                    DELETE FROM gemini_rules 
+                    WHERE rule_type = 'time_pattern' AND threat_type = ? AND rule_text LIKE ?
+                ''', (threat_type, f"%о {hour}:00%"))
+                
+                cursor.execute('''
+                    INSERT INTO gemini_rules (rule_type, threat_type,
+                        rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('time_pattern', ?, ?, ?, ?, 0.7, 1, CURRENT_TIMESTAMP)
+                ''', (threat_type, rule_text, rule_json, data["total"]))
+                rules_updated += 1
+            
+            # 5. Clean up stale active paired events
+            cursor.execute('''
+                UPDATE paired_events SET lifecycle_status = 'expired'
+                WHERE lifecycle_status = 'active'
+                    AND created_at < datetime('now', '-24 hours')
+            ''')
+            
+            conn.commit()
+            conn.close()
+            return rules_updated
+        except Exception as e:
+            print(f"⚠️ [Rules Engine] Помилка навчання: {e}")
+            return 0
 
     async def analyze_batch(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         if not messages:
