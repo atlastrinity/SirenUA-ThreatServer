@@ -5,6 +5,7 @@ Mock Mode — генератор імітованих загроз для тес
 
 from datetime import datetime, timezone
 from typing import Optional
+import time
 
 
 # Типи загроз з описами українською
@@ -207,9 +208,9 @@ async def fcm_queue_worker():
                 item.get("is_official_alarm", False),
                 item.get("is_test", False)
             )
-            # Sleep 1.5 seconds between notifications only for real alerts to space out the sounds
-            # For tests or clearances, send them immediately with a minimal delay (0.05s)
-            if not item.get("is_test", False) and item["level"] != "none":
+            # Sleep 1.5 seconds between notifications if it plays sound, to avoid overlapping sounds
+            # Otherwise, use a minimal delay (0.05s)
+            if item.get("play_sound", True):
                 await asyncio.sleep(1.5)
             else:
                 await asyncio.sleep(0.05)
@@ -369,9 +370,11 @@ class MockThreatManager:
     """Менеджер загроз — зберігає стан для всіх областей."""
 
     def __init__(self):
+        import threading
         self.threats: dict[str, ThreatState] = {}
         self.last_sound_time: float = 0.0
         self.real_threats_backup: dict = {}
+        self._clear_lock = threading.Lock()
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState()
 
@@ -699,66 +702,81 @@ class MockThreatManager:
         return True
 
     def clear_all(self, only_test: bool = False):
-        any_changed = False
-        for region, state in self.threats.items():
-            if only_test and not state.is_test:
-                continue
-            has_changed = (state.level != "none")
-            if has_changed:
-                is_test_flag = state.is_test
-                state.clear()
-                send_fcm_notification(region, "none", is_test=is_test_flag)
-                any_changed = True
-                if hasattr(self, 'on_change'):
-                    self.on_change(region, state, telemetry=None)
-        
-        # Restore real threats from backup if clearing test
-        if only_test:
-            for region, data in self.real_threats_backup.items():
-                if region in self.threats:
-                    state = self.threats[region]
-                    restored_has_changed = (
-                        state.level != data.get("level", "none") or
-                        state.threat_type != data.get("type") or
-                        state.detail != data.get("detail") or
-                        state.is_active != data.get("is_active", False) or
-                        state.is_test != False
-                    )
-                    
-                    if restored_has_changed:
-                        state.level = data.get("level", "none")
-                        state.threat_type = data.get("type")
-                        state.detail = data.get("detail")
-                        state.since = data.get("since")
-                        state.confidence = data.get("confidence")
-                        state.eta = data.get("eta")
-                        state.is_predictive = data.get("is_predictive", False)
-                        state.is_active = data.get("is_active", False)
-                        state.is_test = False
-                        
-                        any_changed = True
-                        
-                        # Send notification to update clients
-                        if state.level != "none":
-                            send_fcm_notification(region, state.level, state.threat_type, state.detail, confidence=state.confidence, eta=state.eta, is_official_alarm=state.is_active)
-                        elif state.is_active:
-                            send_fcm_notification(region, "high", is_official_alarm=True, detail="Повітряна тривога")
-                        else:
-                            send_fcm_notification(region, "none")
-                            
-                        if hasattr(self, 'on_change'):
-                            self.on_change(region, state, telemetry=None)
-
-        if any_changed:
-            self.save_to_db()
-            self.save_to_file()
-            
-        # Clear mock/test history events from Firestore and SQLite
+        if not self._clear_lock.acquire(blocking=False):
+            print("🧹 Clear all operation is already in progress, skipping duplicate request.")
+            return
         try:
-            delete_test_history_from_firestore()
-            delete_test_history_from_sqlite()
-        except Exception as e:
-            print(f"⚠️ Помилка очищення тестової історії: {e}")
+            any_changed = False
+            for region, state in self.threats.items():
+                if only_test and not state.is_test:
+                    continue
+                has_changed = (state.level != "none")
+                if has_changed:
+                    is_test_flag = state.is_test
+                    state.clear()
+                    
+                    # Apply 10-second sound rule to clearances too, to avoid sound overlap / spamming
+                    now = time.time()
+                    play_sound = True
+                    if now - self.last_sound_time < 10.0:
+                        play_sound = False
+                    else:
+                        self.last_sound_time = now
+                        
+                    send_fcm_notification(region, "none", play_sound=play_sound, is_test=is_test_flag)
+                    any_changed = True
+                    if hasattr(self, 'on_change'):
+                        self.on_change(region, state, telemetry=None)
+            
+            # Restore real threats from backup if clearing test
+            if only_test:
+                for region, data in self.real_threats_backup.items():
+                    if region in self.threats:
+                        state = self.threats[region]
+                        restored_has_changed = (
+                            state.level != data.get("level", "none") or
+                            state.threat_type != data.get("type") or
+                            state.detail != data.get("detail") or
+                            state.is_active != data.get("is_active", False) or
+                            state.is_test != False
+                        )
+                        
+                        if restored_has_changed:
+                            state.level = data.get("level", "none")
+                            state.threat_type = data.get("type")
+                            state.detail = data.get("detail")
+                            state.since = data.get("since")
+                            state.confidence = data.get("confidence")
+                            state.eta = data.get("eta")
+                            state.is_predictive = data.get("is_predictive", False)
+                            state.is_active = data.get("is_active", False)
+                            state.is_test = False
+                            
+                            any_changed = True
+                            
+                            # Send notification to update clients
+                            if state.level != "none":
+                                send_fcm_notification(region, state.level, state.threat_type, state.detail, confidence=state.confidence, eta=state.eta, is_official_alarm=state.is_active)
+                            elif state.is_active:
+                                send_fcm_notification(region, "high", is_official_alarm=True, detail="Повітряна тривога")
+                            else:
+                                send_fcm_notification(region, "none")
+                                
+                            if hasattr(self, 'on_change'):
+                                self.on_change(region, state, telemetry=None)
+
+            if any_changed:
+                self.save_to_db()
+                self.save_to_file()
+                
+            # Clear mock/test history events from Firestore and SQLite
+            try:
+                delete_test_history_from_firestore()
+                delete_test_history_from_sqlite()
+            except Exception as e:
+                print(f"⚠️ Помилка очищення тестової історії: {e}")
+        finally:
+            self._clear_lock.release()
 
     def get_all_threats(self) -> dict:
         return {
@@ -837,9 +855,9 @@ def delete_test_history_from_firestore():
 def delete_test_history_from_sqlite():
     import sqlite3
     import os
-    DB_PATH = "analytics.db"
+    DB_PATH = "threat_analytics.db"
     if os.path.exists("threat_server"):
-        DB_PATH = "threat_server/analytics.db"
+        DB_PATH = "threat_server/threat_analytics.db"
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()

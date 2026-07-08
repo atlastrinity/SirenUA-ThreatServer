@@ -947,7 +947,7 @@ class TelegramThreatMonitor:
         """Get the latest telemetry data for a region from the DB."""
         try:
             import sqlite3
-            conn = sqlite3.connect("analytics.db")
+            conn = sqlite3.connect("threat_analytics.db")
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
@@ -968,7 +968,7 @@ class TelegramThreatMonitor:
         """Check DB for historical threat progression from source → target region."""
         try:
             import sqlite3
-            conn = sqlite3.connect("analytics.db")
+            conn = sqlite3.connect("threat_analytics.db")
             cursor = conn.cursor()
             # Look for clearings where target had a threat shortly after source
             cursor.execute('''

@@ -1319,9 +1319,9 @@ async def set_scenario(request: ScenarioRequest):
         )
 
     if request.scenario == "clear":
-        threat_manager.clear_all(only_test=True)
+        await asyncio.to_thread(threat_manager.clear_all, only_test=True)
     else:
-        threat_manager.set_scenario(request.scenario)
+        await asyncio.to_thread(threat_manager.set_scenario, request.scenario)
 
     return {"status": "ok", "scenario": request.scenario}
 
@@ -1329,7 +1329,7 @@ async def set_scenario(request: ScenarioRequest):
 @app.post("/api/threats/clear")
 async def clear_all_threats():
     """Очистити всі загрози."""
-    threat_manager.clear_all(only_test=True)
+    await asyncio.to_thread(threat_manager.clear_all, only_test=True)
     return {"status": "ok", "message": "All threats cleared"}
 
 
