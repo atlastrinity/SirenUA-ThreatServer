@@ -204,10 +204,15 @@ async def fcm_queue_worker():
                 item["play_sound"],
                 item["confidence"],
                 item["eta"],
-                item.get("is_official_alarm", False)
+                item.get("is_official_alarm", False),
+                item.get("is_test", False)
             )
-            # Sleep 1.5 seconds between notifications to space out the sounds on user devices
-            await asyncio.sleep(1.5)
+            # Sleep 1.5 seconds between notifications only for real alerts to space out the sounds
+            # For tests or clearances, send them immediately with a minimal delay (0.05s)
+            if not item.get("is_test", False) and item["level"] != "none":
+                await asyncio.sleep(1.5)
+            else:
+                await asyncio.sleep(0.05)
             fcm_queue.task_done()
         except asyncio.CancelledError:
             break
@@ -223,7 +228,7 @@ async def start_fcm_worker():
         fcm_worker_task = asyncio.create_task(fcm_queue_worker())
         print("🚀 FCM Queue Worker успішно запущено.")
 
-def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False):
+def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False, is_test: bool = False):
     """Додає Push-сповіщення у чергу відправки FCM (якщо працює асинхронний режим) або відправляє синхронно."""
     global fcm_queue
     if fcm_queue is not None:
@@ -239,16 +244,17 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
                     "play_sound": play_sound,
                     "confidence": confidence,
                     "eta": eta,
-                    "is_official_alarm": is_official_alarm
+                    "is_official_alarm": is_official_alarm,
+                    "is_test": is_test
                 }
             )
             return
         except RuntimeError:
             pass # Event loop not running yet
 
-    _send_fcm_notification_sync(region, level, threat_type, detail, play_sound, confidence, eta, is_official_alarm)
+    _send_fcm_notification_sync(region, level, threat_type, detail, play_sound, confidence, eta, is_official_alarm, is_test)
 
-def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False):
+def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False, is_test: bool = False):
     """Надсилає Push-сповіщення у Firebase топік для відповідного регіону (синхронний метод)."""
     if not HAS_FIREBASE:
         return
@@ -650,7 +656,7 @@ class MockThreatManager:
             else:
                 self.last_sound_time = now
                 
-            send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active)
+            send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active, is_test=self.threats[region].is_test)
             self.save_to_db()
             if hasattr(self, 'on_change'):
                 self.on_change(region, self.threats[region], telemetry=telemetry)
@@ -684,7 +690,7 @@ class MockThreatManager:
             else:
                 self.last_sound_time = now
                 
-            send_fcm_notification(region, "none", play_sound=play_sound)
+            send_fcm_notification(region, "none", play_sound=play_sound, is_test=old_state.is_test)
             self.save_to_db()
             if hasattr(self, 'on_change'):
                 self.on_change(region, self.threats[region], telemetry=None)
@@ -697,8 +703,9 @@ class MockThreatManager:
                 continue
             has_changed = (state.level != "none")
             if has_changed:
+                is_test_flag = state.is_test
                 state.clear()
-                send_fcm_notification(region, "none")
+                send_fcm_notification(region, "none", is_test=is_test_flag)
                 any_changed = True
                 if hasattr(self, 'on_change'):
                     self.on_change(region, state, telemetry=None)
