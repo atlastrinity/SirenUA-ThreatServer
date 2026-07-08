@@ -399,6 +399,7 @@ class MockThreatManager:
                             state.eta = data.get("eta")
                             state.is_predictive = data.get("is_predictive", False)
                             state.is_active = data.get("is_active", False)
+                            state.is_test = data.get("is_test", False)
                     print("💾 Завантажено збережений стан загроз з Firebase Firestore")
                 else:
                     print("⚠️ Документ загроз у Firebase не знайдено.")
@@ -446,6 +447,7 @@ class MockThreatManager:
                         state.eta = data.get("eta")
                         state.is_predictive = data.get("is_predictive", False)
                         state.is_active = data.get("is_active", False)
+                        state.is_test = data.get("is_test", False)
                 print(f"💾 Завантажено збережений стан загроз з {filepath}")
             except Exception as e:
                 print(f"⚠️ Помилка завантаження стану загроз: {e}")
