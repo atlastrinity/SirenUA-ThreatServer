@@ -363,6 +363,7 @@ class MockThreatManager:
     def __init__(self):
         self.threats: dict[str, ThreatState] = {}
         self.last_sound_time: float = 0.0
+        self.real_threats_backup: dict = {}
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState()
 
@@ -404,11 +405,70 @@ class MockThreatManager:
                 else:
                     print("⚠️ Документ загроз у Firebase не знайдено.")
                     self.load_from_file()
+                
+                # Load real threats backup
+                self.load_real_threats_from_db()
+                if not self.real_threats_backup:
+                    for region, state in self.threats.items():
+                        if not state.is_test:
+                            self.real_threats_backup[region] = state.to_dict()
             except Exception as e:
                 print(f"⚠️ Помилка завантаження стану загроз з Firebase: {e}")
                 self.load_from_file()
         else:
             self.load_from_file()
+
+    def save_real_threats_to_db(self):
+        db = get_db()
+        if db:
+            try:
+                doc_ref = db.collection('sirenua_state').document('real_threats')
+                doc_ref.set(self.real_threats_backup)
+            except Exception as e:
+                print(f"⚠️ Помилка збереження резервного копіювання реальних загроз у Firebase: {e}")
+        self.save_real_threats_to_file()
+
+    def save_real_threats_to_file(self):
+        import json
+        import os
+        try:
+            filepath = "real_threats_state.json"
+            if os.path.exists("threat_server"):
+                filepath = "threat_server/real_threats_state.json"
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(self.real_threats_backup, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ Помилка збереження резервної копії реальних загроз у файл: {e}")
+
+    def load_real_threats_from_db(self):
+        db = get_db()
+        loaded = False
+        if db:
+            try:
+                doc_ref = db.collection('sirenua_state').document('real_threats')
+                doc = doc_ref.get()
+                if doc.exists:
+                    self.real_threats_backup = doc.to_dict()
+                    print("💾 Завантажено резервну копію реальних загроз з Firebase")
+                    loaded = True
+            except Exception as e:
+                print(f"⚠️ Помилка завантаження резервної копії реальних загроз з Firebase: {e}")
+        if not loaded:
+            self.load_real_threats_from_file()
+
+    def load_real_threats_from_file(self):
+        import json
+        import os
+        filepath = "real_threats_state.json"
+        if os.path.exists("threat_server"):
+            filepath = "threat_server/real_threats_state.json"
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    self.real_threats_backup = json.load(f)
+                print("💾 Завантажено резервну копію реальних загроз з файлу")
+            except Exception as e:
+                print(f"⚠️ Помилка завантаження резервної копії реальних загроз з файлу: {e}")
 
     def save_to_file(self):
         import json
@@ -560,6 +620,24 @@ class MockThreatManager:
                        old_state.detail != detail or
                        old_state.confidence != confidence or
                        old_state.is_test != is_test)
+
+        if not is_test:
+            self.real_threats_backup[region] = {
+                "level": level,
+                "type": threat_type,
+                "detail": detail,
+                "since": old_state.since if old_state.level == level else None,
+                "confidence": confidence,
+                "eta": eta,
+                "is_predictive": is_predictive,
+                "is_active": old_state.is_active,
+                "is_test": False
+            }
+            self.save_real_threats_to_db()
+        else:
+            if not old_state.is_test and old_state.level != "none":
+                self.real_threats_backup[region] = old_state.to_dict()
+                self.save_real_threats_to_db()
 
         self.threats[region].set_threat(level, threat_type, detail, confidence, eta, is_predictive, is_test)
         
