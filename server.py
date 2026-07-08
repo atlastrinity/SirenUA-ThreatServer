@@ -1197,21 +1197,26 @@ async def get_region_history(region: str, limit: int = 200, date: str = None):
     date_end = (target_date + timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
         
     try:
-        # Fetch matching documents from Firestore filtered by date range
+        # Fetch by region only (avoids composite index requirement), then filter by date in Python
         docs = await asyncio.to_thread(
             lambda: db.collection('sirenua_history')
                       .where('region', '==', region)
-                      .where('timestamp', '>=', date_start)
-                      .where('timestamp', '<', date_end)
-                      .order_by('timestamp', direction='DESCENDING')
-                      .limit(min(limit, 200))
                       .get()
         )
         
         events = []
         for doc in docs:
             d = doc.to_dict()
-            events.append(d)
+            ts = d.get('timestamp', '')
+            # Filter by date range in Python
+            if date_start <= ts < date_end:
+                events.append(d)
+        
+        # Sort by timestamp descending
+        events.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        
+        # Limit results
+        events = events[:min(limit, 200)]
         
         return {
             "region": region,
