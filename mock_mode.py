@@ -726,6 +726,12 @@ class MockThreatManager:
     def set_scenario(self, scenario: str):
         """Встановлює попередньо визначений сценарій для тестування з інтелектуальним оновленням та чергою."""
         
+        # Бекап всієї бази SQLite перед початком тестування сценарію
+        try:
+            backup_sqlite_to_firestore()
+        except Exception as e:
+            print(f"⚠️ Помилка бекапу SQLite перед сценарієм: {e}")
+
         # Бекап реальних загроз до тестування
         for region, state in self.threats.items():
             if not state.is_test:
@@ -854,6 +860,14 @@ class MockThreatManager:
             }
             self.save_real_threats_to_db()
         else:
+            # Якщо це перша тестова загроза у сесії, робимо бекап SQLite у Firestore
+            any_test_active = any(s.is_test for s in self.threats.values())
+            if not any_test_active:
+                try:
+                    backup_sqlite_to_firestore()
+                except Exception as backup_err:
+                    print(f"⚠️ Помилка бекапу SQLite перед початком тесту: {backup_err}")
+
             if not old_state.is_test and old_state.level != "none":
                 self.real_threats_backup[region] = old_state.to_dict()
                 self.save_real_threats_to_db()
