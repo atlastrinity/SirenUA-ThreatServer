@@ -150,6 +150,7 @@ Telemetry parameters:
 - event_phase (string): "launch", "cruise", "transit", "terminal", "impact", "aftermath", "intercept", "all_clear".
 - correlation_group (string): Broader session grouping. Example: "shahed_night_session_2026-07-07".
 - final_target_cities (list[string]): Cities explicitly named as targets in Ukrainian. Empty list if none.
+- target_cities_coords (dict[string, list[float]]): Dict mapping each city named in final_target_cities to its [latitude, longitude] coordinates. You MUST use your general military and geographic knowledge of Ukraine to estimate these coordinates. Example: {"Умань": [48.7484, 30.2223]}. Empty dict if no cities.
 
 === OUTPUT FORMAT (Strict JSON Array) ===
 Return ONLY a JSON array without markdown wrappers.
@@ -607,6 +608,7 @@ MANDATORY fields:
             "event_phase": "unknown",
             "correlation_group": None,
             "final_target_cities": [],
+            "target_cities_coords": {},
         }
         
         if not telemetry or not isinstance(telemetry, dict):
@@ -682,6 +684,18 @@ MANDATORY fields:
                 if not isinstance(val, list):
                     val = []
                 val = [str(c) for c in val]
+            elif key == "target_cities_coords":
+                if not isinstance(val, dict):
+                    val = {}
+                else:
+                    cleaned_coords = {}
+                    for city, coords in val.items():
+                        if isinstance(coords, list) and len(coords) == 2:
+                            try:
+                                cleaned_coords[str(city)] = [float(coords[0]), float(coords[1])]
+                            except (ValueError, TypeError):
+                                pass
+                    val = cleaned_coords
             
             normalized[key] = val
         

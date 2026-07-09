@@ -107,6 +107,12 @@ def init_analytics_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_event ON telemetry_data(threat_event_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_threat_history_region_ts ON threat_history(region, timestamp)')
     
+    # Migrate telemetry_data table — add target_cities_coords if missing
+    try:
+        cursor.execute("ALTER TABLE telemetry_data ADD COLUMN target_cities_coords TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
     # --- Threat Clearings Table (lifecycle) ---
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS threat_clearings (
@@ -317,8 +323,8 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
                     air_defense_active, multiple_waves, wave_number,
                     time_of_day_category, weather_factor, source_reliability,
                     message_context_tags, strategic_priority, civilian_risk_level,
-                    event_phase, correlation_group
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    event_phase, correlation_group, target_cities_coords
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 event_id,
                 group_id,
@@ -341,7 +347,8 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
                 telemetry.get("strategic_priority"),
                 telemetry.get("civilian_risk_level", "moderate"),
                 telemetry.get("event_phase", "unknown"),
-                telemetry.get("correlation_group")
+                telemetry.get("correlation_group"),
+                json.dumps(telemetry.get("target_cities_coords", {}), ensure_ascii=False) if telemetry.get("target_cities_coords") else None
             ))
             telemetry_id = cursor.lastrowid
         

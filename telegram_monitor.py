@@ -776,13 +776,26 @@ class TelegramThreatMonitor:
         "border_shelling": None,  # No directional prediction
     }
 
-    def _get_city_coordinates(self, city_name: str) -> Optional[tuple[float, float]]:
+    def _get_city_coordinates(self, city_name: str, telemetry: dict = None) -> Optional[tuple[float, float]]:
         if not city_name:
             return None
         city_lower = city_name.lower().strip()
+        
+        # 1. Try static coordinates dictionary
         for name, coords in CITY_COORDINATES.items():
             if name in city_lower or city_lower in name:
                 return coords
+                
+        # 2. Try Gemini-determined dynamic coordinates from telemetry
+        if telemetry and telemetry.get("target_cities_coords"):
+            coords_dict = telemetry["target_cities_coords"]
+            for name, coords in coords_dict.items():
+                if name.lower().strip() in city_lower or city_lower in name.lower().strip():
+                    if isinstance(coords, list) and len(coords) == 2:
+                        try:
+                            return (float(coords[0]), float(coords[1]))
+                        except (ValueError, TypeError):
+                            pass
         return None
 
     def _city_to_region(self, city_name: str) -> str:
@@ -910,7 +923,7 @@ class TelegramThreatMonitor:
                     if telemetry and telemetry.get("final_target_cities"):
                         for city in telemetry["final_target_cities"]:
                             if self._city_to_region(city) == adj_region:
-                                target_coords = self._get_city_coordinates(city)
+                                target_coords = self._get_city_coordinates(city, telemetry)
                                 if target_coords:
                                     break
                     
@@ -1107,7 +1120,14 @@ class TelegramThreatMonitor:
             row = cursor.fetchone()
             conn.close()
             if row:
-                return dict(row)
+                res = dict(row)
+                if res.get("target_cities_coords"):
+                    try:
+                        import json
+                        res["target_cities_coords"] = json.loads(res["target_cities_coords"])
+                    except Exception:
+                        res["target_cities_coords"] = {}
+                return res
         except Exception:
             pass
         return {}
