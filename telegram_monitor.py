@@ -145,6 +145,49 @@ CLEAR_KEYWORDS = [
     r"дорозвідка"
 ]
 
+CITY_COORDINATES = {
+    "київ": (50.4501, 30.5234),
+    "харків": (50.0000, 36.2300),
+    "одеса": (46.4825, 30.7233),
+    "дніпро": (48.4647, 35.0462),
+    "львів": (49.8397, 24.0297),
+    "запоріжжя": (47.8388, 35.1396),
+    "кривий ріг": (47.9105, 33.3918),
+    "миколаїв": (46.9750, 31.9946),
+    "маріуполь": (47.0971, 37.5434),
+    "луганськ": (48.5740, 39.3078),
+    "вінниця": (49.2331, 28.4682),
+    "херсон": (46.6354, 32.6169),
+    "полтава": (49.5883, 34.5514),
+    "чернігів": (51.4982, 31.2893),
+    "черкаси": (49.4444, 32.0598),
+    "суми": (50.9077, 34.7981),
+    "житомир": (50.2547, 28.6587),
+    "хмельницький": (49.4230, 26.9871),
+    "рівне": (50.6199, 26.2516),
+    "кропивницький": (48.5079, 32.2623),
+    "кам'янське": (48.5140, 34.6148),
+    "чернівці": (48.2908, 25.9345),
+    "кременчук": (49.0630, 33.4038),
+    "івано-франківськ": (48.9215, 24.7097),
+    "тернопіль": (49.5535, 25.5948),
+    "луцьк": (50.7472, 25.3254),
+    "біла церква": (49.8020, 30.1154),
+    "краматорськ": (48.7390, 37.5838),
+    "ужгород": (48.6208, 22.2879),
+    "бровари": (50.5112, 30.7900),
+    "конотоп": (51.2407, 33.2040),
+    "умань": (48.7484, 30.2223),
+    "шостка": (51.8622, 33.4842),
+    "старокостянтинів": (49.7547, 27.2206),
+    "миргород": (49.9678, 33.6119),
+    "шепетівка": (50.1808, 27.0658),
+    "стрий": (49.2570, 23.8560),
+    "коростень": (50.9542, 28.6367),
+    "ковель": (51.2163, 24.6936),
+    "коломия": (48.5284, 25.0396),
+}
+
 # API credentials
 TELEGRAM_API_ID = 20294647
 TELEGRAM_API_HASH = "454a9c055308a8d118608bb6b032bc30"
@@ -367,12 +410,24 @@ class TelegramThreatMonitor:
 
     # --- Pre-filter: skip obviously non-threat messages before sending to Gemini ---
     _THREAT_KEYWORDS = {
-        "бпла", "бпла!", "шахед", "shahed", "ракет", "пуск", "балістик", "балістич",
-        "кинджал", "мігом", "міг-31", "міг31", "каб", "кабами",
-        "калібр", "х-101", "х-55", "іскандер", "тривог", "вибух",
-        "ппо", "зліт", "повітр", "курс", "напрямк", "загроз",
-        "крилат", "дрон", "безпілотник", "цілі", "ціль", "перехопл",
-        "відбій", "чисто", "збит", "зник", "відстежен", "маневру"
+        # Дрони / БПЛА
+        "бпла", "бпла!", "шахед", "shahed", "дрон", "безпілотник", "мопед", "балалайк",
+        "крило", "орлан", "supercam",
+        # Ракети / Балістика
+        "ракет", "пуск", "балістик", "балістич", "кинджал", "х-47", "х47м2",
+        "міг-31", "міг31", "mig-31", "mig31", "калібр", "іскандер", "крилат",
+        "х-101", "х-55", "х-555", "х-22", "х-32", "х-59", "х-69", "с-300", "с-400", "c300", "c400",
+        # Авіація
+        "су-34", "су-35", "су-30", "су-57", "сушки", "сушка", "су ",
+        "ту-95", "ту-22", "ту-160", "ту95", "ту22", "ту160", "міг-29", "міг29", "mig-29", "mig29",
+        "борт", "авіац", "зліт", "виліт", "посадка", "підйом", "активність",
+        # Бомби / КАБи
+        "каб", "кабами", "фаб", "уаб", "авіабомб",
+        # Тривоги / Стан
+        "тривог", "вибух", "ппо", "повітр", "курс", "напрямк", "загроз",
+        "цілі", "ціль", "перехопл", "відбій", "відбої", "чисто", "збит", "зник",
+        "відстежен", "маневру", "дорозвідка", "безпечно", "увага", "небезпека", "гучно",
+        "приліт", "прильот", "обстріл", "артилерія", "рсзв", "град", "смерч", "ураган"
     }
     
     def _is_threat_relevant(self, text: str) -> bool:
@@ -721,6 +776,15 @@ class TelegramThreatMonitor:
         "border_shelling": None,  # No directional prediction
     }
 
+    def _get_city_coordinates(self, city_name: str) -> Optional[tuple[float, float]]:
+        if not city_name:
+            return None
+        city_lower = city_name.lower().strip()
+        for name, coords in CITY_COORDINATES.items():
+            if name in city_lower or city_lower in name:
+                return coords
+        return None
+
     def _city_to_region(self, city_name: str) -> str:
         """Resolve a city/town name to its region using ALL_REGIONS keywords from mock_mode.
         Falls back to simple substring matching. Returns None if no match."""
@@ -840,7 +904,18 @@ class TelegramThreatMonitor:
                 distance_km = None
                 if source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
                     src = self.REGION_CENTROIDS[source_region]
-                    adj = self.REGION_CENTROIDS[adj_region]
+                    
+                    # If target region has a specific final target city, use its exact coordinates!
+                    target_coords = None
+                    if telemetry and telemetry.get("final_target_cities"):
+                        for city in telemetry["final_target_cities"]:
+                            if self._city_to_region(city) == adj_region:
+                                target_coords = self._get_city_coordinates(city)
+                                if target_coords:
+                                    break
+                    
+                    adj = target_coords if target_coords else self.REGION_CENTROIDS[adj_region]
+                    
                     # Approximate distance in km (Haversine simplified)
                     dlat = abs(src[0] - adj[0]) * 111
                     dlon = abs(src[1] - adj[1]) * 111 * math.cos(math.radians((src[0] + adj[0]) / 2))

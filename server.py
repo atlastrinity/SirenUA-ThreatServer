@@ -659,6 +659,20 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
         # Validate Gemini predictions when official alarm turns ON
         if state.is_active:
             safe_run_task(asyncio.to_thread(validate_prediction_on_alarm, region))
+        else:
+            # Official alarm turned OFF -> Close paired event for official alarm in SQLite
+            clearing_telemetry = {
+                "resolution_type": "all_clear_official",
+                "prediction_accuracy_hint": "confirmed"
+            }
+            safe_run_task(asyncio.to_thread(
+                log_clearing_to_db,
+                region=region,
+                clearing_telemetry=clearing_telemetry,
+                source_channel="official_alarm",
+                message_text="Відбій повітряної тривоги (офіційно)",
+                is_test=state.is_test
+            ))
         
         if is_batch:
             # Buffer for batch flush
@@ -704,6 +718,30 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
             elif prev_level != "none":
                 # Threat has cleared
                 safe_run_task(asyncio.to_thread(log_threat_to_db, region, "none", prev_type, "Відбій загрози"))
+                
+                # Automatically close the active paired event in SQLite
+                resolution_type = "expired"
+                prediction_accuracy = "overestimated"
+                if state.is_active:
+                    prediction_accuracy = "confirmed"
+                    resolution_type = "impact"
+                
+                clearing_telemetry = {
+                    "resolution_type": resolution_type,
+                    "prediction_accuracy_hint": prediction_accuracy,
+                    "damage_assessment": "unknown",
+                    "impact_confirmed": state.is_active
+                }
+                
+                safe_run_task(asyncio.to_thread(
+                    log_clearing_to_db,
+                    region=region,
+                    clearing_telemetry=clearing_telemetry,
+                    source_channel="auto_clear" if not state.is_active else "official_alarm",
+                    message_text="Автоматичне зняття загрози або відбій тривоги",
+                    is_test=state.is_test
+                ))
+                
                 if is_batch:
                     from datetime import datetime, timezone
                     import time
