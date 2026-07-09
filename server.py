@@ -903,6 +903,14 @@ async def lifespan(app: FastAPI):
     if telegram_monitor:
         await telegram_monitor.stop()
 
+    # Створення фінальної резервної копії SQLite у Firestore перед вимкненням сервера
+    try:
+        from mock_mode import backup_sqlite_to_firestore
+        await asyncio.to_thread(backup_sqlite_to_firestore)
+        print("💾 [Lifespan Shutdown] Фінальний бекап SQLite успішно створено.")
+    except Exception as e:
+        print(f"⚠️ [Lifespan Shutdown] Помилка створення фінального бекапу: {e}")
+
 
 app = FastAPI(
     title="SirenUA Threat Monitor",

@@ -583,11 +583,6 @@ class MockThreatManager:
                         print(f"⚠️ Помилка збереження стану загроз у Firebase: {e}")
                         break
         self.save_to_file()
-        # Автоматичний бекап SQLite БД у Firestore
-        try:
-            backup_sqlite_to_firestore()
-        except Exception as backup_err:
-            print(f"⚠️ Помилка авто-бекапу SQLite: {backup_err}")
 
     def load_from_db(self):
         db = get_db()
