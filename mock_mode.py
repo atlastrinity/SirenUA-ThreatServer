@@ -215,8 +215,8 @@ def backup_sqlite_to_firestore():
         print(f"⚠️ [Backup] Помилка резервного копіювання SQLite у Firestore: {e}")
         return False
 
-def restore_sqlite_from_firestore():
-    """Відновлює локальну базу даних SQLite зі стиснутого бекапу в Firestore (якщо локальна БД порожня)."""
+def restore_sqlite_from_firestore(force: bool = False):
+    """Відновлює локальну базу даних SQLite зі стиснутого бекапу в Firestore (якщо локальна БД порожня або примусово)."""
     import sqlite3
     import os
     import json
@@ -233,7 +233,7 @@ def restore_sqlite_from_firestore():
         return False
         
     try:
-        # Перевіряємо чи є дані локально. Якщо правила чи зв'язані події вже є — пропуск відновлення
+        # Перевіряємо чи є дані локально. Якщо правила чи зв'язані події вже є — пропуск відновлення (якщо не примусово)
         if os.path.exists(DB_PATH):
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
@@ -251,7 +251,7 @@ def restore_sqlite_from_firestore():
                 events_count = cursor.fetchone()[0]
             conn.close()
             
-            if rules_count > 0 or events_count > 0:
+            if not force and (rules_count > 0 or events_count > 0):
                 print("💾 [Restore] Локальна SQLite вже містить дані (rules чи events), пропуск відновлення.")
                 return False
                 
@@ -1035,12 +1035,22 @@ class MockThreatManager:
                 self.save_to_db()
                 self.save_to_file()
                 
+            # Відновлення бази SQLite до до-тестового стану з бекапу Firestore (якщо очищуємо лише тести)
+            restored_sqlite = False
+            if only_test:
+                try:
+                    restored_sqlite = restore_sqlite_from_firestore(force=True)
+                except Exception as e:
+                    print(f"⚠️ Помилка примусового відновлення SQLite з Firestore: {e}")
+
             # Clear mock/test history events from Firestore and SQLite
             try:
                 delete_test_history_from_firestore()
-                delete_test_history_from_sqlite()
-                # Негайний бекап очищеної бази в Firestore
-                backup_sqlite_to_firestore()
+                if not restored_sqlite:
+                    # Якщо примусове відновлення не відпрацювало (наприклад, офлайн), робимо класичне очищення
+                    delete_test_history_from_sqlite()
+                    # Негайний бекап очищеної бази в Firestore
+                    backup_sqlite_to_firestore()
             except Exception as e:
                 print(f"⚠️ Помилка очищення тестової історії: {e}")
         finally:
@@ -1129,6 +1139,14 @@ def delete_test_history_from_sqlite():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
+        # Delete paired events referencing test threats or test clearings
+        cursor.execute('''
+            DELETE FROM paired_events 
+            WHERE threat_event_id IN (SELECT id FROM threat_history WHERE is_test = 1)
+               OR clearing_event_id IN (SELECT id FROM threat_clearings WHERE is_test = 1)
+        ''')
+        paired_deleted = cursor.rowcount
+
         # Delete telemetry associated with test threat history
         cursor.execute('''
             DELETE FROM telemetry_data 
@@ -1145,6 +1163,6 @@ def delete_test_history_from_sqlite():
         
         conn.commit()
         conn.close()
-        print(f"🧹 Видалено тестові записи з SQLite: {threats_deleted} загроз, {clearings_deleted} відбоїв")
+        print(f"🧹 Видалено тестові записи з SQLite: {threats_deleted} загроз, {clearings_deleted} відбоїв, {paired_deleted} зв'язаних подій")
     except Exception as e:
         print(f"⚠️ Помилка видалення тестової історії з SQLite: {e}")
