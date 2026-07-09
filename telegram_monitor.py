@@ -366,9 +366,9 @@ class TelegramThreatMonitor:
 
     # --- LLM Batching Loop ---
     async def _batch_processor_loop(self):
-        """Фоновий процес, що збирає повідомлення та відправляє їх до Gemini раз на 60с."""
+        """Фоновий процес, що збирає повідомлення та відправляє їх до Gemini раз на 30с."""
         while self.is_running:
-            await asyncio.sleep(60) # Wait 60 seconds
+            await asyncio.sleep(30) # Wait 30 seconds
             
             messages = []
             while not self.message_queue.empty():
@@ -387,7 +387,16 @@ class TelegramThreatMonitor:
                 context_messages = [m for m in self.message_history if m not in messages][-10:]
                 results = await self.analyzer.analyze_batch(messages, context_messages=context_messages)
                 if results:
-                    await self._apply_gemini_analysis(results)
+                    # Enable batch mode: skip individual Firestore saves during batch processing
+                    self.threat_manager._batch_mode = True
+                    try:
+                        await self._apply_gemini_analysis(results)
+                    finally:
+                        self.threat_manager._batch_mode = False
+                    # One atomic Firestore save for the entire batch
+                    self.threat_manager._execute_save_to_db()
+                    print(f"💾 Атомарний запис у Firestore після батчу ({len(results)} результатів)")
+
 
     async def _apply_gemini_analysis(self, results, is_test: bool = False):
         """Applies Gemini AI analysis results with confidence-based filtering, level adjustment, and telemetry enrichment."""

@@ -380,6 +380,7 @@ class MockThreatManager:
         self.last_sound_time: float = 0.0
         self.real_threats_backup: dict = {}
         self._clear_lock = threading.Lock()
+        self._batch_mode: bool = False  # When True, skip individual Firestore saves (batch will save once)
         
         self._save_timer = None
         self._save_real_timer = None
@@ -705,7 +706,8 @@ class MockThreatManager:
                 self.last_sound_time = now
                 
             send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active, is_test=self.threats[region].is_test)
-            self.save_to_db()
+            if not self._batch_mode:
+                self.save_to_db()
             if hasattr(self, 'on_change'):
                 self.on_change(region, self.threats[region], telemetry=telemetry, rules_applied=rules_applied)
             
@@ -742,7 +744,8 @@ class MockThreatManager:
                 self.last_sound_time = now
                 
             send_fcm_notification(region, "none", play_sound=play_sound, is_official_alarm=keep_active, is_test=old_state.is_test)
-            self.save_to_db()
+            if not self._batch_mode:
+                self.save_to_db()
             if hasattr(self, 'on_change'):
                 self.on_change(region, self.threats[region], telemetry=None)
         return True
