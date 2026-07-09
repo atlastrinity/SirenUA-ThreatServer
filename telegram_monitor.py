@@ -157,7 +157,8 @@ class TelegramThreatMonitor:
         self.client: Optional[TelegramClient] = None
         self._clear_tasks = {}
         
-        self.analyzer = GeminiThreatAnalyzer()
+        from server import log_error_to_db, log_rule_audit_to_db
+        self.analyzer = GeminiThreatAnalyzer(error_callback=log_error_to_db, rule_audit_callback=log_rule_audit_to_db)
         self.message_queue = asyncio.Queue()
         self.batch_task = None
         self.message_history = []

@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 
 class GeminiThreatAnalyzer:
-    def __init__(self):
+    def __init__(self, error_callback=None, rule_audit_callback=None):
         # Configure Gemini
         api_key = os.environ.get("GEMINI_API_KEY", "")
         model_name = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -22,6 +22,8 @@ class GeminiThreatAnalyzer:
             print("⚠️ GEMINI_API_KEY is not set. GeminiAnalyzer will run in mock mode.")
 
         self.db_path = "threat_analytics.db"
+        self._error_callback = error_callback
+        self._rule_audit_callback = rule_audit_callback
         
         self.system_prompt = """You are a specialized military AI threat analyst (SirenUA Threat Intelligence System).
 Your task: deeply analyze batches of messages from Ukrainian Telegram channels and produce a JSON array with detected threats AND full telemetry data.
@@ -302,6 +304,11 @@ MANDATORY fields:
             
             if decayed_low_accuracy > 0 or decayed_stale > 0:
                 print(f"📉 [Rule Decay] Деактивовано {decayed_low_accuracy} правил через низьку точність та {decayed_stale} через застарілість")
+                if self._rule_audit_callback:
+                    if decayed_low_accuracy > 0:
+                        self._rule_audit_callback("deactivated", reason=f"Low accuracy (<0.50): {decayed_low_accuracy} rules")
+                    if decayed_stale > 0:
+                        self._rule_audit_callback("deactivated", reason=f"Stale (>14 days): {decayed_stale} rules")
             
             # 2. Rule Type 1: Route Patterns
             cursor.execute('''
@@ -351,6 +358,10 @@ MANDATORY fields:
                 ''', (row["source_region"], row["target_region"], row["threat_type"],
                       rule_text, rule_json, row["occurrence_count"], round(row["accuracy"], 2)))
                 rules_updated += 1
+                if self._rule_audit_callback:
+                    self._rule_audit_callback("added", rule_type="route_pattern", rule_text=rule_text,
+                        source_region=row["source_region"], target_region=row["target_region"],
+                        threat_type=row["threat_type"], reason=f"evidence={row['occurrence_count']}, accuracy={row['accuracy']:.2f}")
             
             # 3. Rule Type 2: Confidence Corrections
             cursor.execute('''
@@ -407,6 +418,10 @@ MANDATORY fields:
                 ''', (row["region"], row["threat_type"], rule_text, rule_json,
                       total, round(1 - overest_rate, 2)))
                 rules_updated += 1
+                if self._rule_audit_callback:
+                    self._rule_audit_callback("added", rule_type="confidence_correction", rule_text=rule_text,
+                        target_region=row["region"], threat_type=row["threat_type"],
+                        reason=f"overest_rate={overest_rate:.2f}, confirm_rate={confirm_rate:.2f}")
             
             # 4. Rule Type 3: Time Patterns
             # Note: created_at is in UTC (CURRENT_TIMESTAMP). Ukraine uses UTC+3 (EEST).
@@ -458,6 +473,9 @@ MANDATORY fields:
                     VALUES ('time_pattern', ?, ?, ?, ?, 0.7, 1, CURRENT_TIMESTAMP)
                 ''', (threat_type, rule_text, rule_json, data["total"]))
                 rules_updated += 1
+                if self._rule_audit_callback:
+                    self._rule_audit_callback("added", rule_type="time_pattern", rule_text=rule_text,
+                        threat_type=threat_type, reason=f"total={data['total']}, hour={hour}")
             
             # 5. Clean up stale active paired events
             cursor.execute('''
@@ -471,6 +489,8 @@ MANDATORY fields:
             return rules_updated
         except Exception as e:
             print(f"⚠️ [Rules Engine] Помилка навчання: {e}")
+            if self._error_callback:
+                self._error_callback("gemini", str(e), endpoint="run_rules_learner")
             return 0
 
     async def analyze_batch(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> List[Dict[str, Any]]:
@@ -548,6 +568,9 @@ MANDATORY fields:
                 self.last_error = "Rate Limit Exceeded (429)"
             else:
                 self.last_error = error_msg
+            # Log error via callback
+            if self._error_callback:
+                self._error_callback("gemini", error_msg, endpoint="analyze_batch", context=f"messages_count={len(messages)}")
             return []
 
     @staticmethod

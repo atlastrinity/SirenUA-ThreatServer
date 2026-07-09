@@ -205,9 +205,90 @@ def init_analytics_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_paired_threat ON paired_events(threat_event_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_paired_group ON paired_events(gemini_group_id)')
     
+    # --- Error Log Table ---
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS error_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            source TEXT NOT NULL,
+            error_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            endpoint TEXT,
+            context TEXT
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_error_source ON error_log(source)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_error_type ON error_log(error_type)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_error_ts ON error_log(timestamp)')
+    
+    # --- Gemini Rules Audit Log ---
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS gemini_rules_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            action TEXT NOT NULL,
+            rule_type TEXT,
+            rule_text TEXT,
+            source_region TEXT,
+            target_region TEXT,
+            threat_type TEXT,
+            reason TEXT
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rules_audit_ts ON gemini_rules_audit(timestamp)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rules_audit_action ON gemini_rules_audit(action)')
+
     conn.commit()
     conn.close()
-    print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings + gemini_rules + paired_events)")
+    print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings + gemini_rules + paired_events + error_log + gemini_rules_audit)")
+
+
+def log_error_to_db(source: str, message: str, endpoint: str = None, context: str = None):
+    """Log an error event to the error_log table. Source: 'server', 'firebase', 'gemini'."""
+    error_msg = str(message)
+    # Classify error type
+    if "429" in error_msg or "Quota" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower():
+        error_type = "429_rate_limit"
+    elif "500" in error_msg or "Internal" in error_msg:
+        error_type = "500_server"
+    elif "timeout" in error_msg.lower() or "Timeout" in error_msg:
+        error_type = "timeout"
+    elif "connection" in error_msg.lower() or "ConnectionError" in error_msg:
+        error_type = "connection"
+    elif "auth" in error_msg.lower() or "permission" in error_msg.lower() or "403" in error_msg:
+        error_type = "auth"
+    else:
+        error_type = "general"
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO error_log (source, error_type, message, endpoint, context) VALUES (?, ?, ?, ?, ?)",
+            (source, error_type, error_msg[:2000], endpoint, context)
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # Don't recurse on logging failure
+
+
+def log_rule_audit_to_db(action: str, rule_type: str = None, rule_text: str = None,
+                          source_region: str = None, target_region: str = None,
+                          threat_type: str = None, reason: str = None):
+    """Log a Gemini rule addition/removal/deactivation to the audit table."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (action, rule_type, rule_text[:1000] if rule_text else None, source_region, target_region, threat_type, reason)
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
 
 def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False, rules_applied: list = None, is_predictive: bool = False):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id.
@@ -283,6 +364,7 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
         return event_id
     except Exception as e:
         print(f"⚠️ Помилка запису в БД аналітики: {e}")
+        log_error_to_db("server", str(e), endpoint="log_threat_to_db", context=f"region={region}, level={level}")
         return None
 
 def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False):
@@ -319,9 +401,11 @@ def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: s
             if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
                 wait = (2 ** attempt) * 5  # 5s, 10s
                 print(f"⚠️ Firestore quota hit writing history for {region}, retry {attempt+1}/{max_retries} in {wait}s")
+                log_error_to_db("firebase", str(e), endpoint="log_threat_to_firestore", context=f"region={region}, attempt={attempt+1}")
                 time.sleep(wait)
             else:
                 print(f"⚠️ Помилка запису історії в Firestore: {e}")
+                log_error_to_db("firebase", str(e), endpoint="log_threat_to_firestore", context=f"region={region}, final_failure")
                 return
     print(f"❌ Firestore history write failed after {max_retries} retries for {region}")
 
@@ -462,6 +546,7 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
         return clearing_id
     except Exception as e:
         print(f"⚠️ Помилка запису clearing в БД: {e}")
+        log_error_to_db("server", str(e), endpoint="log_clearing_to_db", context=f"region={region}")
         return None
 
 
@@ -502,6 +587,7 @@ def validate_prediction_on_alarm(region: str):
             print(f"✅ [Validation] Офіційна тривога підтвердила {updated} предикцій Gemini для {region}")
     except Exception as e:
         print(f"⚠️ [Validation] Помилка валідації предикції: {e}")
+        log_error_to_db("server", str(e), endpoint="validate_prediction_on_alarm", context=f"region={region}")
 
 def flush_history_batch():
     """Flush all buffered Firestore history writes in a single batch operation."""
@@ -533,9 +619,11 @@ def flush_history_batch():
             if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
                 wait = (2 ** attempt) * 5
                 print(f"⚠️ Firestore quota hit on batch flush, retry {attempt+1}/{max_retries} in {wait}s")
+                log_error_to_db("firebase", str(e), endpoint="flush_history_batch", context=f"batch_size={len(items)}, attempt={attempt+1}")
                 time.sleep(wait)
             else:
                 print(f"⚠️ Помилка batch flush Firestore history: {e}")
+                log_error_to_db("firebase", str(e), endpoint="flush_history_batch", context=f"batch_size={len(items)}, final_failure")
                 return
 
 
@@ -739,6 +827,8 @@ async def poll_aerial_alerts():
                         print(f"⚠️ Помилка опитування тривог (URL: {url}): HTTP статус {response.status}")
         except Exception as e:
             print(f"⚠️ Помилка під час опитування тривог (URL: {url}): {e}")
+            log_error_to_db("server", str(e), endpoint="poll_aerial_alerts", context=f"url={url}")
+        
         
         sleep_interval = 15.0 if token else 10.0
         await asyncio.sleep(sleep_interval)
@@ -1526,7 +1616,7 @@ async def rebuild_rules():
         
         # Fallback: create analyzer on the fly
         from gemini_analyzer import GeminiThreatAnalyzer
-        analyzer = GeminiThreatAnalyzer()
+        analyzer = GeminiThreatAnalyzer(error_callback=log_error_to_db, rule_audit_callback=log_rule_audit_to_db)
         count = await asyncio.to_thread(analyzer.run_rules_learner)
         return {"status": "ok", "rules_updated": count}
     except Exception as e:
@@ -1863,6 +1953,608 @@ async def seed_history():
         return {"status": "success", "message": f"Додано {total_added} записів хронології у Firestore для всіх областей"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ========================== ADMIN PANEL API ==========================
+
+@app.get("/api/admin/errors")
+async def get_admin_errors(source: str = None, error_type: str = None, days: int = 7, limit: int = 100):
+    """Список помилок з фільтрами."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        query = "SELECT * FROM error_log WHERE timestamp >= datetime('now', ?)"
+        params = [f'-{days} days']
+        
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+        if error_type:
+            query += " AND error_type = ?"
+            params.append(error_type)
+        
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(min(limit, 500))
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {
+            "total": len(rows),
+            "errors": [dict(r) for r in rows]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/errors/stats")
+async def get_admin_errors_stats(days: int = 7):
+    """Агреговані лічильники помилок."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        day_filter = f'-{days} days'
+        
+        # By source
+        cursor.execute('''
+            SELECT source, COUNT(*) as count FROM error_log
+            WHERE timestamp >= datetime('now', ?)
+            GROUP BY source ORDER BY count DESC
+        ''', (day_filter,))
+        by_source = [dict(r) for r in cursor.fetchall()]
+        
+        # By type
+        cursor.execute('''
+            SELECT error_type, COUNT(*) as count FROM error_log
+            WHERE timestamp >= datetime('now', ?)
+            GROUP BY error_type ORDER BY count DESC
+        ''', (day_filter,))
+        by_type = [dict(r) for r in cursor.fetchall()]
+        
+        # Hourly (last 48h)
+        cursor.execute('''
+            SELECT strftime('%Y-%m-%d %H:00', timestamp) as hour, COUNT(*) as count
+            FROM error_log
+            WHERE timestamp >= datetime('now', '-2 days')
+            GROUP BY hour ORDER BY hour
+        ''')
+        hourly = [dict(r) for r in cursor.fetchall()]
+        
+        # Total
+        cursor.execute("SELECT COUNT(*) as total FROM error_log WHERE timestamp >= datetime('now', ?)", (day_filter,))
+        total = cursor.fetchone()["total"]
+        
+        conn.close()
+        return {"total": total, "by_source": by_source, "by_type": by_type, "hourly": hourly}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/chronology")
+async def get_admin_chronology(region: str = None, days: int = 7):
+    """Хронологія загроз: встановлення → зняття, з match_type."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        day_filter = f'-{days} days'
+        
+        query = '''
+            SELECT pe.id, pe.region, pe.threat_level, pe.threat_type,
+                   pe.confidence_at_set, pe.confidence_at_clear,
+                   pe.was_predictive, pe.prediction_accuracy,
+                   pe.lifecycle_status, pe.duration_seconds,
+                   pe.gemini_group_id,
+                   th.timestamp as threat_timestamp,
+                   th.detail as threat_detail,
+                   tc.timestamp as clearing_timestamp,
+                   tc.resolution_type
+            FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+            LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
+            WHERE pe.created_at >= datetime('now', ?)
+        '''
+        params = [day_filter]
+        
+        if region:
+            from urllib.parse import unquote
+            query += " AND pe.region = ?"
+            params.append(unquote(region))
+        
+        query += " ORDER BY th.timestamp DESC LIMIT 500"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        # Daily aggregation
+        daily_agg_query = '''
+            SELECT date(th.timestamp) as day,
+                   COUNT(*) as total_events,
+                   SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
+                   SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
+                   SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+                   SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
+                   SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
+            FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE pe.created_at >= datetime('now', ?)
+        '''
+        agg_params = [day_filter]
+        if region:
+            daily_agg_query += " AND pe.region = ?"
+            agg_params.append(unquote(region))
+        daily_agg_query += " GROUP BY day ORDER BY day"
+        
+        cursor.execute(daily_agg_query, agg_params)
+        daily_stats = [dict(r) for r in cursor.fetchall()]
+        
+        conn.close()
+        
+        events = []
+        for row in rows:
+            event = dict(row)
+            # Determine match_type
+            if event.get("prediction_accuracy") == "confirmed":
+                event["match_type"] = "match"
+            elif event.get("prediction_accuracy") == "overestimated":
+                event["match_type"] = "mismatch"
+            elif event.get("lifecycle_status") == "active":
+                event["match_type"] = "active"
+            else:
+                event["match_type"] = "cleared"
+            events.append(event)
+        
+        return {
+            "total": len(events),
+            "days": days,
+            "events": events,
+            "daily_stats": daily_stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/rules/history")
+async def get_admin_rules_history(days: int = 30, limit: int = 200):
+    """Аудит-лог змін правил Gemini."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM gemini_rules_audit
+            WHERE timestamp >= datetime('now', ?)
+            ORDER BY timestamp DESC LIMIT ?
+        ''', (f'-{days} days', min(limit, 500)))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {
+            "total": len(rows),
+            "entries": [dict(r) for r in rows]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========================== HTML ADMIN PANEL ==========================
+
+from fastapi.responses import HTMLResponse
+
+ADMIN_HTML = '''<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SirenUA Admin Panel</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--red:#f85149;--green:#3fb950;--yellow:#d29922;--orange:#db6d28;--purple:#bc8cff}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.5}
+.header{background:linear-gradient(135deg,#1a1e26,#161b22);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;gap:16px}
+.header h1{font-size:20px;font-weight:600;background:linear-gradient(135deg,var(--accent),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header .status{margin-left:auto;font-size:13px;color:var(--text2)}
+.header .status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.tabs{display:flex;background:var(--card);border-bottom:1px solid var(--border);padding:0 24px;gap:4px}
+.tab{padding:12px 20px;cursor:pointer;color:var(--text2);font-size:14px;font-weight:500;border-bottom:2px solid transparent;transition:all .2s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px;vertical-align:middle}
+.tab .badge.red{background:rgba(248,81,73,.2);color:var(--red)}
+.tab .badge.blue{background:rgba(88,166,255,.2);color:var(--accent)}
+.tab .badge.green{background:rgba(63,185,80,.2);color:var(--green)}
+.content{padding:24px;display:none}
+.content.active{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.stat-card h3{font-size:13px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.stat-card .value{font-size:32px;font-weight:700}
+.stat-card .value.red{color:var(--red)}
+.stat-card .value.green{color:var(--green)}
+.stat-card .value.yellow{color:var(--yellow)}
+.chart-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.chart-box h3{font-size:14px;margin-bottom:12px;color:var(--text)}
+.chart-box canvas{max-height:250px}
+.filters{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.filters select,.filters input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px}
+.filters label{font-size:13px;color:var(--text2)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 12px;background:var(--card);border-bottom:2px solid var(--border);color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.3px;font-size:11px;position:sticky;top:0}
+td{padding:10px 12px;border-bottom:1px solid var(--border)}
+tr:hover{background:rgba(88,166,255,.05)}
+.badge-src{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-src.server{background:rgba(88,166,255,.15);color:var(--accent)}
+.badge-src.firebase{background:rgba(219,109,40,.15);color:var(--orange)}
+.badge-src.gemini{background:rgba(188,140,255,.15);color:var(--purple)}
+.badge-type{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-type.rate{background:rgba(248,81,73,.2);color:var(--red)}
+.badge-type.timeout{background:rgba(210,153,34,.2);color:var(--yellow)}
+.badge-type.general{background:rgba(139,148,158,.2);color:var(--text2)}
+.match-icon{font-size:16px;margin-right:4px}
+.timeline-day{margin-bottom:16px}
+.timeline-day h4{font-size:14px;color:var(--accent);padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:8px}
+.tl-event{display:grid;grid-template-columns:180px 1fr 120px 100px;gap:8px;padding:8px 4px;border-bottom:1px solid rgba(48,54,61,.5);align-items:center;font-size:13px}
+.tl-event:hover{background:rgba(88,166,255,.05)}
+.rule-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:8px}
+.rule-card.added{border-left:3px solid var(--green)}
+.rule-card.removed,.rule-card.deactivated{border-left:3px solid var(--red)}
+.rule-card.decayed{border-left:3px solid var(--yellow)}
+.rule-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.rule-action{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.rule-action.added{background:rgba(63,185,80,.15);color:var(--green)}
+.rule-action.removed,.rule-action.deactivated{background:rgba(248,81,73,.15);color:var(--red)}
+.table-wrapper{max-height:600px;overflow-y:auto;border-radius:8px;border:1px solid var(--border)}
+.empty{text-align:center;padding:40px;color:var(--text2);font-size:14px}
+.refresh-info{font-size:11px;color:var(--text2);text-align:right;padding:4px 0}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🚨 SirenUA Admin Panel</h1>
+  <div class="status"><span class="dot"></span>Live Monitoring</div>
+</div>
+<div class="tabs">
+  <div class="tab active" data-tab="errors">🔴 Помилки <span class="badge red" id="err-badge">0</span></div>
+  <div class="tab" data-tab="chronology">📊 Хронологія <span class="badge blue" id="chr-badge">0</span></div>
+  <div class="tab" data-tab="rules">🧠 Правила Gemini <span class="badge green" id="rul-badge">0</span></div>
+</div>
+
+<!-- TAB 1: ERRORS -->
+<div class="content active" id="tab-errors">
+  <div class="filters">
+    <label>Джерело:</label>
+    <select id="f-source"><option value="">Всі</option><option value="server">Server</option><option value="firebase">Firebase</option><option value="gemini">Gemini</option></select>
+    <label>Тип:</label>
+    <select id="f-type"><option value="">Всі</option><option value="429_rate_limit">429 Rate Limit</option><option value="500_server">500 Server</option><option value="timeout">Timeout</option><option value="connection">Connection</option><option value="auth">Auth</option><option value="general">General</option></select>
+    <label>Днів:</label>
+    <select id="f-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="30">30</option></select>
+    <button onclick="loadErrors()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
+  </div>
+  <div class="grid">
+    <div class="stat-card"><h3>Всього помилок</h3><div class="value red" id="err-total">0</div></div>
+    <div class="stat-card"><h3>429 Rate Limit</h3><div class="value yellow" id="err-429">0</div></div>
+    <div class="stat-card"><h3>Firebase</h3><div class="value" style="color:var(--orange)" id="err-fb">0</div></div>
+    <div class="stat-card"><h3>Gemini</h3><div class="value" style="color:var(--purple)" id="err-gem">0</div></div>
+  </div>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div class="chart-box"><h3>Помилки по джерелах</h3><canvas id="chart-src"></canvas></div>
+    <div class="chart-box"><h3>Помилки по годинах (48г)</h3><canvas id="chart-hourly"></canvas></div>
+  </div>
+  <div class="table-wrapper"><table><thead><tr><th>Час</th><th>Джерело</th><th>Тип</th><th>Повідомлення</th><th>Endpoint</th></tr></thead><tbody id="err-body"></tbody></table></div>
+  <div class="refresh-info">Автооновлення кожні 60с</div>
+</div>
+
+<!-- TAB 2: CHRONOLOGY -->
+<div class="content" id="tab-chronology">
+  <div class="filters">
+    <label>Днів:</label>
+    <select id="chr-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="14">14</option><option value="30">30</option></select>
+    <label>Область:</label>
+    <select id="chr-region"><option value="">Всі</option></select>
+    <button onclick="loadChronology()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
+  </div>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div class="chart-box"><h3>Загрози / Зняття по днях</h3><canvas id="chart-daily"></canvas></div>
+    <div class="chart-box"><h3>Точність передбачень (%)</h3><canvas id="chart-accuracy"></canvas></div>
+  </div>
+  <div class="grid">
+    <div class="stat-card"><h3>Всього подій</h3><div class="value" style="color:var(--accent)" id="chr-total">0</div></div>
+    <div class="stat-card"><h3>✅ Співпадіння</h3><div class="value green" id="chr-match">0</div></div>
+    <div class="stat-card"><h3>❌ Неспівпадіння</h3><div class="value red" id="chr-mismatch">0</div></div>
+    <div class="stat-card"><h3>⏱️ Активні</h3><div class="value yellow" id="chr-active">0</div></div>
+  </div>
+  <div id="timeline-container"></div>
+  <div class="refresh-info">Автооновлення кожні 60с</div>
+</div>
+
+<!-- TAB 3: RULES -->
+<div class="content" id="tab-rules">
+  <div class="filters">
+    <label>Днів аудиту:</label>
+    <select id="rul-days"><option value="7">7</option><option value="14">14</option><option value="30" selected>30</option></select>
+    <button onclick="loadRules()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
+  </div>
+  <h3 style="margin:16px 0 8px;font-size:15px">Активні правила</h3>
+  <div class="table-wrapper" style="max-height:400px"><table><thead><tr><th>Тип</th><th>Правило</th><th>Регіон</th><th>Тип загрози</th><th>Accuracy</th><th>Evidence</th><th>Оновлено</th></tr></thead><tbody id="rules-active-body"></tbody></table></div>
+  <h3 style="margin:24px 0 8px;font-size:15px">📜 Аудит-лог правил</h3>
+  <div id="rules-audit"></div>
+  <div class="refresh-info">Автооновлення кожні 60с</div>
+</div>
+
+<script>
+const API = '';
+let srcChart, hourlyChart, dailyChart, accChart;
+
+// Tabs
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.content').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('tab-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  try {
+    const d = new Date(ts + (ts.includes('Z') || ts.includes('+') ? '' : 'Z'));
+    return d.toLocaleString('uk-UA', {timeZone:'Europe/Kiev', hour:'2-digit', minute:'2-digit', second:'2-digit', day:'2-digit', month:'2-digit'});
+  } catch(e) { return ts; }
+}
+
+function fmtDuration(s) {
+  if (!s) return '—';
+  if (s < 60) return s + 'с';
+  if (s < 3600) return Math.round(s/60) + 'хв';
+  return Math.round(s/3600*10)/10 + 'год';
+}
+
+// === ERRORS ===
+async function loadErrors() {
+  const src = document.getElementById('f-source').value;
+  const typ = document.getElementById('f-type').value;
+  const days = document.getElementById('f-days').value;
+  
+  const params = new URLSearchParams({days});
+  if (src) params.set('source', src);
+  if (typ) params.set('error_type', typ);
+  
+  try {
+    const [errRes, statRes] = await Promise.all([
+      fetch(API + '/api/admin/errors?' + params),
+      fetch(API + '/api/admin/errors/stats?days=' + days)
+    ]);
+    const errors = await errRes.json();
+    const stats = await statRes.json();
+    
+    document.getElementById('err-total').textContent = stats.total;
+    document.getElementById('err-badge').textContent = stats.total;
+    
+    const r429 = stats.by_type.find(x => x.error_type === '429_rate_limit');
+    document.getElementById('err-429').textContent = r429 ? r429.count : 0;
+    const fb = stats.by_source.find(x => x.source === 'firebase');
+    document.getElementById('err-fb').textContent = fb ? fb.count : 0;
+    const gm = stats.by_source.find(x => x.source === 'gemini');
+    document.getElementById('err-gem').textContent = gm ? gm.count : 0;
+    
+    // Source chart
+    if (srcChart) srcChart.destroy();
+    const srcLabels = stats.by_source.map(x => x.source);
+    const srcData = stats.by_source.map(x => x.count);
+    const srcColors = srcLabels.map(s => s === 'server' ? '#58a6ff' : s === 'firebase' ? '#db6d28' : '#bc8cff');
+    srcChart = new Chart(document.getElementById('chart-src'), {
+      type: 'doughnut',
+      data: {labels: srcLabels, datasets: [{data: srcData, backgroundColor: srcColors, borderWidth: 0}]},
+      options: {responsive: true, plugins: {legend: {position: 'bottom', labels: {color: '#c9d1d9', font: {size: 12}}}}}
+    });
+    
+    // Hourly chart
+    if (hourlyChart) hourlyChart.destroy();
+    hourlyChart = new Chart(document.getElementById('chart-hourly'), {
+      type: 'line',
+      data: {
+        labels: stats.hourly.map(x => x.hour.split(' ')[1] || x.hour),
+        datasets: [{label: 'Помилки', data: stats.hourly.map(x => x.count), borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,.1)', fill: true, tension: .3, pointRadius: 2}]
+      },
+      options: {responsive: true, scales: {x: {ticks: {color: '#8b949e', maxTicksLimit: 12}}, y: {ticks: {color: '#8b949e'}, beginAtZero: true}}, plugins: {legend: {display: false}}}
+    });
+    
+    // Table
+    const body = document.getElementById('err-body');
+    if (!errors.errors.length) {
+      body.innerHTML = '<tr><td colspan="5" class="empty">Помилок не знайдено 🎉</td></tr>';
+    } else {
+      body.innerHTML = errors.errors.map(e => {
+        const srcCls = e.source;
+        const typCls = e.error_type.includes('429') ? 'rate' : e.error_type.includes('timeout') ? 'timeout' : 'general';
+        return `<tr>
+          <td style="white-space:nowrap">${fmtTime(e.timestamp)}</td>
+          <td><span class="badge-src ${srcCls}">${e.source}</span></td>
+          <td><span class="badge-type ${typCls}">${e.error_type}</span></td>
+          <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.message||'').replace(/"/g,'&quot;')}">${e.message||''}</td>
+          <td style="color:var(--text2);font-size:12px">${e.endpoint||'—'}</td>
+        </tr>`;
+      }).join('');
+    }
+  } catch(e) { console.error('Errors load failed:', e); }
+}
+
+// === CHRONOLOGY ===
+async function loadChronology() {
+  const days = document.getElementById('chr-days').value;
+  const region = document.getElementById('chr-region').value;
+  const params = new URLSearchParams({days});
+  if (region) params.set('region', region);
+  
+  try {
+    const res = await fetch(API + '/api/admin/chronology?' + params);
+    const data = await res.json();
+    
+    const matches = data.events.filter(e => e.match_type === 'match').length;
+    const mismatches = data.events.filter(e => e.match_type === 'mismatch').length;
+    const active = data.events.filter(e => e.match_type === 'active').length;
+    
+    document.getElementById('chr-total').textContent = data.total;
+    document.getElementById('chr-badge').textContent = data.total;
+    document.getElementById('chr-match').textContent = matches;
+    document.getElementById('chr-mismatch').textContent = mismatches;
+    document.getElementById('chr-active').textContent = active;
+    
+    // Daily bar chart
+    if (dailyChart) dailyChart.destroy();
+    dailyChart = new Chart(document.getElementById('chart-daily'), {
+      type: 'bar',
+      data: {
+        labels: data.daily_stats.map(d => d.day),
+        datasets: [
+          {label: 'Загрози', data: data.daily_stats.map(d => d.total_events), backgroundColor: 'rgba(248,81,73,.6)'},
+          {label: 'Зняття', data: data.daily_stats.map(d => d.cleared), backgroundColor: 'rgba(63,185,80,.6)'}
+        ]
+      },
+      options: {responsive: true, scales: {x: {ticks: {color: '#8b949e'}}, y: {ticks: {color: '#8b949e'}, beginAtZero: true}}, plugins: {legend: {labels: {color: '#c9d1d9'}}}}
+    });
+    
+    // Accuracy line chart
+    if (accChart) accChart.destroy();
+    const accData = data.daily_stats.map(d => {
+      const total = (d.confirmed || 0) + (d.overestimated || 0);
+      return total > 0 ? Math.round(d.confirmed / total * 100) : null;
+    });
+    accChart = new Chart(document.getElementById('chart-accuracy'), {
+      type: 'line',
+      data: {
+        labels: data.daily_stats.map(d => d.day),
+        datasets: [{label: 'Точність %', data: accData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,.1)', fill: true, tension: .3, pointRadius: 3, spanGaps: true}]
+      },
+      options: {responsive: true, scales: {x: {ticks: {color: '#8b949e'}}, y: {ticks: {color: '#8b949e'}, beginAtZero: true, max: 100}}, plugins: {legend: {display: false}}}
+    });
+    
+    // Timeline
+    const container = document.getElementById('timeline-container');
+    const grouped = {};
+    data.events.forEach(ev => {
+      const day = (ev.threat_timestamp || '').split(' ')[0] || 'Невідомо';
+      if (!grouped[day]) grouped[day] = [];
+      grouped[day].push(ev);
+    });
+    
+    if (Object.keys(grouped).length === 0) {
+      container.innerHTML = '<div class="empty">Подій не знайдено</div>';
+    } else {
+      container.innerHTML = Object.entries(grouped).sort((a,b) => b[0].localeCompare(a[0])).map(([day, events]) => {
+        return `<div class="timeline-day"><h4>📅 ${day} (${events.length} подій)</h4>
+        ${events.map(ev => {
+          const icon = ev.match_type === 'match' ? '✅' : ev.match_type === 'mismatch' ? '❌' : ev.match_type === 'active' ? '⏱️' : '🔄';
+          return `<div class="tl-event">
+            <div style="color:var(--text2)">${fmtTime(ev.threat_timestamp)}</div>
+            <div><span class="match-icon">${icon}</span><strong>${ev.region||''}</strong> — ${ev.threat_type||''} (${ev.threat_level||''})</div>
+            <div style="font-size:12px;color:var(--text2)">${fmtDuration(ev.duration_seconds)}</div>
+            <div style="font-size:12px;color:var(--text2)">${ev.lifecycle_status||''}</div>
+          </div>`;
+        }).join('')}
+        </div>`;
+      }).join('');
+    }
+  } catch(e) { console.error('Chronology load failed:', e); }
+}
+
+// === RULES ===
+async function loadRules() {
+  const days = document.getElementById('rul-days').value;
+  
+  try {
+    const [rulesRes, auditRes] = await Promise.all([
+      fetch(API + '/api/analytics/rules?active_only=true&limit=100'),
+      fetch(API + '/api/admin/rules/history?days=' + days)
+    ]);
+    const rules = await rulesRes.json();
+    const audit = await auditRes.json();
+    
+    document.getElementById('rul-badge').textContent = rules.total;
+    
+    // Active rules table
+    const tbody = document.getElementById('rules-active-body');
+    if (!rules.rules.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">Немає активних правил</td></tr>';
+    } else {
+      tbody.innerHTML = rules.rules.map(r => `<tr>
+        <td><span class="badge-src" style="background:rgba(63,185,80,.15);color:var(--green)">${r.rule_type||''}</span></td>
+        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.rule_text||'').replace(/"/g,'&quot;')}">${r.rule_text||''}</td>
+        <td style="font-size:12px">${r.source_region||''} → ${r.target_region||''}</td>
+        <td style="font-size:12px">${r.threat_type||''}</td>
+        <td style="font-weight:600;color:${r.accuracy_score >= 0.7 ? 'var(--green)' : r.accuracy_score >= 0.5 ? 'var(--yellow)' : 'var(--red)'}">${(r.accuracy_score*100).toFixed(0)}%</td>
+        <td>${r.evidence_count||0}</td>
+        <td style="font-size:12px;color:var(--text2)">${fmtTime(r.updated_at)}</td>
+      </tr>`).join('');
+    }
+    
+    // Audit log
+    const auditDiv = document.getElementById('rules-audit');
+    if (!audit.entries.length) {
+      auditDiv.innerHTML = '<div class="empty">Аудит-лог порожній</div>';
+    } else {
+      auditDiv.innerHTML = audit.entries.map(e => {
+        const cls = e.action === 'added' ? 'added' : e.action === 'deactivated' ? 'deactivated' : 'removed';
+        return `<div class="rule-card ${cls}">
+          <div class="rule-header">
+            <span class="rule-action ${cls}">${e.action}</span>
+            <span style="font-size:12px;color:var(--text2)">${fmtTime(e.timestamp)}</span>
+          </div>
+          <div style="font-size:13px;margin-bottom:4px">${e.rule_text || e.reason || '—'}</div>
+          <div style="font-size:11px;color:var(--text2)">
+            ${e.rule_type ? 'Тип: ' + e.rule_type + ' | ' : ''}
+            ${e.threat_type ? 'Загроза: ' + e.threat_type + ' | ' : ''}
+            ${e.source_region ? e.source_region + ' → ' + (e.target_region||'') + ' | ' : ''}
+            ${e.reason ? 'Причина: ' + e.reason : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+  } catch(e) { console.error('Rules load failed:', e); }
+}
+
+// Populate region selector
+async function loadRegions() {
+  try {
+    const res = await fetch(API + '/api/threats');
+    const data = await res.json();
+    const sel = document.getElementById('chr-region');
+    Object.keys(data.threats || {}).sort().forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r; opt.textContent = r;
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+}
+
+// Initial load
+loadErrors();
+loadChronology();
+loadRules();
+loadRegions();
+
+// Auto-refresh every 60s
+setInterval(() => {
+  const active = document.querySelector('.tab.active')?.dataset.tab;
+  if (active === 'errors') loadErrors();
+  else if (active === 'chronology') loadChronology();
+  else if (active === 'rules') loadRules();
+}, 60000);
+</script>
+</body>
+</html>'''
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_panel():
+    """HTML адмін-панель моніторингу."""
+    return ADMIN_HTML
 
 
 if __name__ == "__main__":
