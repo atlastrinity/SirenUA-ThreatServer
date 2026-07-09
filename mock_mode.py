@@ -265,8 +265,12 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         return
 
     if level == "none":
-        title = "🟢 Відбій повітряної тривоги"
-        body = region
+        if is_official_alarm:
+            title = "🟢 Відбій загрози"
+            body = f"Загрозу знято в: {region}."
+        else:
+            title = "🟢 Відбій повітряної тривоги"
+            body = region
         sound = "vidbiy.wav"
         is_critical = False
     else:
@@ -722,7 +726,11 @@ class MockThreatManager:
                 self.real_threats_backup[region]["eta"] = None
                 self.real_threats_backup[region]["is_predictive"] = False
 
+        keep_active = old_state.is_active if not old_state.is_test else False
         self.threats[region].clear()
+        if keep_active:
+            self.threats[region].is_active = True
+
         if has_changed:
             import time
             now = time.time()
@@ -732,7 +740,7 @@ class MockThreatManager:
             else:
                 self.last_sound_time = now
                 
-            send_fcm_notification(region, "none", play_sound=play_sound, is_test=old_state.is_test)
+            send_fcm_notification(region, "none", play_sound=play_sound, is_official_alarm=keep_active, is_test=old_state.is_test)
             self.save_to_db()
             if hasattr(self, 'on_change'):
                 self.on_change(region, self.threats[region], telemetry=None)
