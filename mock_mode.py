@@ -312,19 +312,20 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         if extra_info:
             body += f" ({', '.join(extra_info)})"
 
-    # Створюємо Aps з interruption_level для коректного відображення на Lock Screen
+    # Створюємо Aps з interruption_level для коректного відображення на Lock Screen.
+    # Оскільки додаток наразі не має погодженого Apple Critical Alerts entitlement (com.apple.developer.usernotifications.critical-alerts),
+    # використання словникової структури CriticalSound та interruption-level = "critical" призводить до того,
+    # що iOS мовчки видаляє пуші на закритому екрані. 
+    # Замість цього використовуємо стандартне ім'я звуку (рядок) та interruption-level = "time-sensitive",
+    # що дозволяє обходити режим DND без додаткових дозволів від Apple.
     if play_sound:
-        if is_critical:
-            critical_sound = messaging.CriticalSound(name=sound, critical=True, volume=1.0)
-        else:
-            critical_sound = messaging.CriticalSound(name=sound, critical=False, volume=0.8)
         aps = messaging.Aps(
             alert=messaging.ApsAlert(title=title, body=body),
-            sound=critical_sound, 
+            sound=sound, 
             badge=1, 
             content_available=True, 
             mutable_content=True,
-            custom_data={"interruption-level": "critical" if is_critical else "time-sensitive"}
+            custom_data={"interruption-level": "time-sensitive"}
         )
     else:
         aps = messaging.Aps(
@@ -332,7 +333,7 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
             badge=1, 
             content_available=True, 
             mutable_content=True,
-            custom_data={"interruption-level": "critical" if is_critical else "time-sensitive"}
+            custom_data={"interruption-level": "time-sensitive"}
         )
 
     data_payload = {
