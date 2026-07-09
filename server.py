@@ -1994,15 +1994,19 @@ async def get_admin_errors_stats(days: int = 7):
     """Агреговані лічильники помилок."""
     try:
         try:
-            import zoneinfo
-            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
-        except ImportError:
-            from backports import zoneinfo
-            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+            try:
+                import zoneinfo
+                kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+            except Exception:
+                from backports import zoneinfo
+                kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
             
-        from datetime import datetime
-        dt = datetime.now(kiev_tz)
-        offset_hours = int(dt.strftime('%z')[:3])
+            from datetime import datetime
+            dt = datetime.now(kiev_tz)
+            offset_hours = int(dt.strftime('%z')[:3])
+        except Exception:
+            offset_hours = 3  # Fallback to Kyiv default (UTC+3)
+            
         tz_modifier = f"'{offset_hours:+d} hours'"
         
         conn = sqlite3.connect(DB_PATH)
@@ -2050,15 +2054,19 @@ async def get_admin_chronology(region: str = None, days: int = 7):
     """Хронологія загроз: встановлення → зняття, з match_type."""
     try:
         try:
-            import zoneinfo
-            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
-        except ImportError:
-            from backports import zoneinfo
-            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+            try:
+                import zoneinfo
+                kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+            except Exception:
+                from backports import zoneinfo
+                kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
             
-        from datetime import datetime
-        dt = datetime.now(kiev_tz)
-        offset_hours = int(dt.strftime('%z')[:3])
+            from datetime import datetime
+            dt = datetime.now(kiev_tz)
+            offset_hours = int(dt.strftime('%z')[:3])
+        except Exception:
+            offset_hours = 3  # Fallback to Kyiv default (UTC+3)
+            
         tz_modifier = f"'{offset_hours:+d} hours'"
         
         conn = sqlite3.connect(DB_PATH)
