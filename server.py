@@ -613,31 +613,57 @@ def init_firebase():
 aerial_alerts_task = None
 
 async def poll_aerial_alerts():
-    """Фонова задача для опитування офіційного API тривог."""
-    print("⏳ Запуск фонового опитування офіційних тривог з aerialalerts...")
-    url = "https://ubilling.net.ua/aerialalerts/"
-    headers = {"User-Agent": "SirenUA-ThreatServer/1.0"}
+    """Фонова задача для опитування офіційного API тривог (alerts.in.ua або ubilling)."""
+    token = os.environ.get("ALERTS_TOKEN")
     
+    if token:
+        print("⏳ Запуск фонового опитування офіційних тривог з alerts.in.ua...")
+        url = "https://api.alerts.in.ua/v1/alerts/active.json"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "SirenUA-ThreatServer/1.0"
+        }
+    else:
+        print("⏳ Запуск фонового опитування офіційних тривог з ubilling (резервний режим, ALERTS_TOKEN не знайдено)...")
+        url = "https://ubilling.net.ua/aerialalerts/"
+        headers = {"User-Agent": "SirenUA-ThreatServer/1.0"}
+
     while True:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=5.0) as response:
+                async with session.get(url, headers=headers, timeout=8.0) as response:
                     if response.status == 200:
                         data = await response.json()
-                        states = data.get("states", {})
                         
-                        # Оновлюємо стан кожної області
-                        for region_name, state_data in states.items():
-                            is_active = state_data.get("alertnow", False)
-                            # Перевіряємо та оновлюємо стан на сервері
-                            # (це автоматично надішле Push та WebSocket трансляцію)
-                            threat_manager.set_alarm_active(region_name, is_active)
+                        if token:
+                            # Парсинг формату alerts.in.ua
+                            active_alerts = data.get("alerts", [])
+                            active_regions = set()
+                            
+                            for alert in active_alerts:
+                                loc_type = alert.get("location_type")
+                                loc_title = alert.get("location_title")
+                                if loc_title:
+                                    if loc_type == "oblast" or loc_title == "м. Київ":
+                                        active_regions.add(loc_title)
+                            
+                            from mock_mode import ALL_REGIONS
+                            for region_name in ALL_REGIONS.keys():
+                                is_active = region_name in active_regions
+                                threat_manager.set_alarm_active(region_name, is_active)
+                        else:
+                            # Резервний парсинг ubilling
+                            states = data.get("states", {})
+                            for region_name, state_data in states.items():
+                                is_active = state_data.get("alertnow", False)
+                                threat_manager.set_alarm_active(region_name, is_active)
                     else:
-                        print(f"⚠️ Помилка опитування тривог: HTTP статус {response.status}")
+                        print(f"⚠️ Помилка опитування тривог (URL: {url}): HTTP статус {response.status}")
         except Exception as e:
-            print(f"⚠️ Помилка під час опитування тривог: {e}")
+            print(f"⚠️ Помилка під час опитування тривог (URL: {url}): {e}")
         
-        await asyncio.sleep(5.0)
+        sleep_interval = 15.0 if token else 10.0
+        await asyncio.sleep(sleep_interval)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
