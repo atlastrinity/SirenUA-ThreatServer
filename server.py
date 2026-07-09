@@ -1993,6 +1993,18 @@ async def get_admin_errors(source: str = None, error_type: str = None, days: int
 async def get_admin_errors_stats(days: int = 7):
     """Агреговані лічильники помилок."""
     try:
+        try:
+            import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        except ImportError:
+            from backports import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+            
+        from datetime import datetime
+        dt = datetime.now(kiev_tz)
+        offset_hours = int(dt.strftime('%z')[:3])
+        tz_modifier = f"'{offset_hours:+d} hours'"
+        
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -2015,8 +2027,8 @@ async def get_admin_errors_stats(days: int = 7):
         by_type = [dict(r) for r in cursor.fetchall()]
         
         # Hourly (last 48h)
-        cursor.execute('''
-            SELECT strftime('%Y-%m-%d %H:00', timestamp) as hour, COUNT(*) as count
+        cursor.execute(f'''
+            SELECT strftime('%Y-%m-%d %H:00', datetime(timestamp, {tz_modifier})) as hour, COUNT(*) as count
             FROM error_log
             WHERE timestamp >= datetime('now', '-2 days')
             GROUP BY hour ORDER BY hour
@@ -2037,6 +2049,18 @@ async def get_admin_errors_stats(days: int = 7):
 async def get_admin_chronology(region: str = None, days: int = 7):
     """Хронологія загроз: встановлення → зняття, з match_type."""
     try:
+        try:
+            import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        except ImportError:
+            from backports import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+            
+        from datetime import datetime
+        dt = datetime.now(kiev_tz)
+        offset_hours = int(dt.strftime('%z')[:3])
+        tz_modifier = f"'{offset_hours:+d} hours'"
+        
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -2069,8 +2093,8 @@ async def get_admin_chronology(region: str = None, days: int = 7):
         rows = cursor.fetchall()
         
         # Daily aggregation
-        daily_agg_query = '''
-            SELECT date(th.timestamp) as day,
+        daily_agg_query = f'''
+            SELECT date(datetime(th.timestamp, {tz_modifier})) as day,
                    COUNT(*) as total_events,
                    SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
                    SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
