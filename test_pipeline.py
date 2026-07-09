@@ -14,21 +14,18 @@ class TestThreatManager(MockThreatManager):
         super().__init__()
         self.sent_notifications = []
 
-    def set_threat(self, region: str, level: str, threat_type=None, detail=None, confidence=None, eta=None, is_predictive=False):
-        res = super().set_threat(region, level, threat_type, detail, confidence, eta, is_predictive)
+    def set_threat(self, region: str, level: str, threat_type=None, detail=None, *args, **kwargs):
+        res = super().set_threat(region, level, threat_type, detail, *args, **kwargs)
         self.sent_notifications.append({
             "region": region,
             "level": level,
             "type": threat_type,
-            "detail": detail,
-            "confidence": confidence,
-            "eta": eta,
-            "is_predictive": is_predictive
+            "detail": detail
         })
         return res
 
-    def clear_threat(self, region: str) -> bool:
-        res = super().clear_threat(region)
+    def clear_threat(self, region: str, *args, **kwargs) -> bool:
+        res = super().clear_threat(region, *args, **kwargs)
         self.sent_notifications.append({
             "region": region,
             "level": "none",
@@ -37,11 +34,9 @@ class TestThreatManager(MockThreatManager):
         })
         return res
 
-    def clear_all(self, only_test: bool = False):
-        super().clear_all(only_test)
+    def clear_all(self, *args, **kwargs):
+        super().clear_all(*args, **kwargs)
         for region in ALL_REGIONS:
-            if only_test and not self.threats[region].is_test:
-                continue
             self.sent_notifications.append({
                 "region": region,
                 "level": "none",

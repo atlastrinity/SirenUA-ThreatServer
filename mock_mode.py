@@ -156,6 +156,166 @@ def get_db():
         print(f"⚠️ Помилка отримання Firestore клієнта: {e}")
         return None
 
+def backup_sqlite_to_firestore():
+    """Стискає всю локальну базу даних SQLite та робить резервну копію у Firestore."""
+    import sqlite3
+    import os
+    import json
+    import gzip
+    import base64
+    
+    DB_PATH = "threat_analytics.db"
+    if os.path.exists("threat_server"):
+        DB_PATH = "threat_server/threat_analytics.db"
+        
+    db = get_db()
+    if not db:
+        print("⚠️ [Backup] Firebase не ініціалізовано, пропуск резервного копіювання SQLite.")
+        return False
+        
+    try:
+        if not os.path.exists(DB_PATH):
+            return False
+            
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Перевірка наявності таблиць перед зчитуванням
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables_in_db = [r["name"] for r in cursor.fetchall()]
+        
+        backup_data = {}
+        target_tables = ["gemini_rules", "paired_events", "threat_history", "threat_clearings", "telemetry_data", "gemini_rules_audit"]
+        
+        for table in target_tables:
+            if table in tables_in_db:
+                cursor.execute(f"SELECT * FROM {table}")
+                backup_data[table] = [dict(row) for row in cursor.fetchall()]
+            else:
+                backup_data[table] = []
+                
+        conn.close()
+        
+        # Додаємо мітку часу
+        backup_data["backup_timestamp"] = str(datetime.now(timezone.utc))
+        
+        json_str = json.dumps(backup_data, ensure_ascii=False)
+        compressed = gzip.compress(json_str.encode('utf-8'))
+        encoded = base64.b64encode(compressed).decode('utf-8')
+        
+        db.collection('sirenua_backup').document('sqlite_compressed').set({
+            "data": encoded,
+            "size_kb": round(len(encoded) / 1024, 2),
+            "updated_at": firestore.SERVER_TIMESTAMP
+        })
+        print(f"💾 [Backup] SQLite успішно збережено у Firestore (розмір: {len(encoded) / 1024:.2f} KB)")
+        return True
+    except Exception as e:
+        print(f"⚠️ [Backup] Помилка резервного копіювання SQLite у Firestore: {e}")
+        return False
+
+def restore_sqlite_from_firestore():
+    """Відновлює локальну базу даних SQLite зі стиснутого бекапу в Firestore (якщо локальна БД порожня)."""
+    import sqlite3
+    import os
+    import json
+    import gzip
+    import base64
+    
+    DB_PATH = "threat_analytics.db"
+    if os.path.exists("threat_server"):
+        DB_PATH = "threat_server/threat_analytics.db"
+        
+    db = get_db()
+    if not db:
+        print("⚠️ [Restore] Firebase не ініціалізовано, пропуск відновлення SQLite.")
+        return False
+        
+    try:
+        # Перевіряємо чи є дані локально. Якщо правила чи зв'язані події вже є — пропуск відновлення
+        if os.path.exists(DB_PATH):
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            # Перевіряємо наявність таблиць
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gemini_rules'")
+            has_rules_table = cursor.fetchone()
+            
+            rules_count = 0
+            events_count = 0
+            if has_rules_table:
+                cursor.execute("SELECT COUNT(*) FROM gemini_rules")
+                rules_count = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM paired_events")
+                events_count = cursor.fetchone()[0]
+            conn.close()
+            
+            if rules_count > 0 or events_count > 0:
+                print("💾 [Restore] Локальна SQLite вже містить дані (rules чи events), пропуск відновлення.")
+                return False
+                
+        doc_ref = db.collection('sirenua_backup').document('sqlite_compressed')
+        doc = doc_ref.get()
+        if not doc.exists:
+            print("⚠️ [Restore] Бекап SQLite не знайдено у Firestore.")
+            return False
+            
+        payload = doc.to_dict()
+        encoded = payload.get("data")
+        if not encoded:
+            print("⚠️ [Restore] Дані бекапу SQLite порожні.")
+            return False
+            
+        compressed = base64.b64decode(encoded)
+        json_str = gzip.decompress(compressed).decode('utf-8')
+        backup_data = json.loads(json_str)
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        tables = [
+            ("gemini_rules", ["id", "created_at", "updated_at", "rule_type", "source_region", "target_region", "threat_type", "rule_text", "rule_json", "evidence_count", "accuracy_score", "is_active", "last_validated"]),
+            ("paired_events", ["id", "created_at", "region", "threat_event_id", "telemetry_id", "clearing_event_id", "lifecycle_status", "threat_level", "threat_type", "confidence_at_set", "confidence_at_clear", "was_predictive", "prediction_accuracy", "duration_seconds", "gemini_group_id", "rules_applied"]),
+            ("threat_history", ["id", "timestamp", "region", "threat_level", "threat_type", "detail", "confidence", "is_test"]),
+            ("threat_clearings", ["id", "timestamp", "region", "original_threat_event_id", "linked_group_id", "linked_correlation_group", "resolution_type", "intercepted_count", "total_targets_in_wave", "impact_confirmed", "damage_assessment", "civilian_casualties_reported", "infrastructure_hit", "air_defense_effectiveness", "threat_duration_assessment", "prediction_accuracy_hint", "was_predictive", "original_threat_level", "original_threat_type", "original_confidence", "clearing_confidence", "clearing_context_tags", "source_reliability", "time_of_day_category", "clearing_source_channel", "clearing_message_text", "threat_set_timestamp", "threat_duration_seconds", "is_test"]),
+            ("telemetry_data", ["id", "threat_event_id", "group_id", "attack_vector", "target_count", "speed_kmh", "altitude_category", "heading_degrees", "distance_to_target_km", "launch_origin", "weapon_subtype", "engagement_status", "air_defense_active", "multiple_waves", "wave_number", "time_of_day_category", "weather_factor", "source_reliability", "message_context_tags", "strategic_priority", "civilian_risk_level", "event_phase", "correlation_group"]),
+            ("gemini_rules_audit", ["id", "timestamp", "action", "rule_type", "rule_text", "source_region", "target_region", "threat_type", "reason"])
+        ]
+        
+        # Тимчасово вимикаємо перевірку зовнішніх ключів під час відновлення
+        cursor.execute("PRAGMA foreign_keys = OFF")
+        
+        for table_name, columns in tables:
+            # Перевіряємо чи таблиця взагалі існує в локальній БД
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            if not cursor.fetchone():
+                continue
+                
+            rows = backup_data.get(table_name, [])
+            if not rows:
+                continue
+                
+            # Очищуємо таблицю перед відновленням
+            cursor.execute(f"DELETE FROM {table_name}")
+            
+            for row in rows:
+                row_keys = [k for k in row.keys() if k in columns]
+                placeholders = ", ".join(["?"] * len(row_keys))
+                cols_str = ", ".join(row_keys)
+                vals = [row[k] for k in row_keys]
+                
+                cursor.execute(f"INSERT OR REPLACE INTO {table_name} ({cols_str}) VALUES ({placeholders})", vals)
+                
+        cursor.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+        conn.close()
+        print("💾 [Restore] SQLite успішно відновлено з бекапу Firestore!")
+        return True
+    except Exception as e:
+        print(f"⚠️ [Restore] Помилка відновлення SQLite з Firestore: {e}")
+        return False
+
 # Мапування українських назв областей на відповідні теми (Topics) у Firebase
 TOPIC_MAPPING = {
     "Вінницька область": "region_vinnytsia",
@@ -423,6 +583,11 @@ class MockThreatManager:
                         print(f"⚠️ Помилка збереження стану загроз у Firebase: {e}")
                         break
         self.save_to_file()
+        # Автоматичний бекап SQLite БД у Firestore
+        try:
+            backup_sqlite_to_firestore()
+        except Exception as backup_err:
+            print(f"⚠️ Помилка авто-бекапу SQLite: {backup_err}")
 
     def load_from_db(self):
         db = get_db()
@@ -692,9 +857,11 @@ class MockThreatManager:
                 "is_active": old_state.is_active,
                 "is_test": False
             }
+            self.save_real_threats_to_db()
         else:
             if not old_state.is_test and old_state.level != "none":
                 self.real_threats_backup[region] = old_state.to_dict()
+                self.save_real_threats_to_db()
 
         self.threats[region].set_threat(level, threat_type, detail, confidence, eta, is_predictive, is_test)
         
@@ -764,6 +931,7 @@ class MockThreatManager:
                 self.real_threats_backup[region]["confidence"] = None
                 self.real_threats_backup[region]["eta"] = None
                 self.real_threats_backup[region]["is_predictive"] = False
+                self.save_real_threats_to_db()
 
         keep_active = old_state.is_active if not old_state.is_test else False
         self.threats[region].clear()
@@ -849,6 +1017,10 @@ class MockThreatManager:
                                 
                             if hasattr(self, 'on_change'):
                                 self.on_change(region, state, telemetry=None)
+                
+                # Після відновлення очищуємо бекап реальних загроз
+                self.real_threats_backup.clear()
+                self.save_real_threats_to_db()
 
             if any_changed:
                 self.save_to_db()
@@ -858,6 +1030,8 @@ class MockThreatManager:
             try:
                 delete_test_history_from_firestore()
                 delete_test_history_from_sqlite()
+                # Негайний бекап очищеної бази в Firestore
+                backup_sqlite_to_firestore()
             except Exception as e:
                 print(f"⚠️ Помилка очищення тестової історії: {e}")
         finally:

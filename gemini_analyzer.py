@@ -486,6 +486,14 @@ MANDATORY fields:
             
             conn.commit()
             conn.close()
+            
+            # Автоматично створюємо резервну копію у Firestore після навчання правил
+            try:
+                from mock_mode import backup_sqlite_to_firestore
+                backup_sqlite_to_firestore()
+            except Exception as backup_err:
+                print(f"⚠️ [Backup] Не вдалося автоматично зберегти правила у Firestore: {backup_err}")
+                
             return rules_updated
         except Exception as e:
             print(f"⚠️ [Rules Engine] Помилка навчання: {e}")

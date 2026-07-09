@@ -852,6 +852,13 @@ async def lifespan(app: FastAPI):
     # Ініціалізація БД аналітики
     init_analytics_db()
 
+    # Відновлення БД SQLite з Firestore (якщо локальна БД порожня)
+    try:
+        from mock_mode import restore_sqlite_from_firestore
+        await asyncio.to_thread(restore_sqlite_from_firestore)
+    except Exception as e:
+        print(f"⚠️ Помилка автоматичного відновлення SQLite: {e}")
+
     # Завантаження збереженого стану загроз (асинхронно у фоновому пулі)
     try:
         await asyncio.to_thread(threat_manager.load_from_db)
