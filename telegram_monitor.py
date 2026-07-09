@@ -52,6 +52,9 @@ def get_ukrainian_threat_type(threat_type: str) -> str:
         "ballistic": "балістика",
         "mig31k": "МіГ-31К",
         "kab": "КАБ",
+        "tu95": "Ту-95МС",
+        "iskander": "Іскандер-М",
+        "artillery": "обстріл",
     }
     return mapping.get(threat_type, threat_type)
 
@@ -656,6 +659,18 @@ class TelegramThreatMonitor:
                     delay = 2700  # 45 хв
                     if not eta_str:
                         eta_str = "+15-30 хв"
+                elif threat_type == "tu95":
+                    delay = 5400  # 1.5 год
+                    if not eta_str:
+                        eta_str = "~30-90 хв"
+                elif threat_type == "iskander":
+                    delay = 1200  # 20 хв
+                    if not eta_str:
+                        eta_str = "~2-5 хв"
+                elif threat_type == "artillery":
+                    delay = 1800  # 30 хв
+                    if not eta_str:
+                        eta_str = "~0-5 хв"
                     
                 detail = clean_user_facing_threat_detail(text)
                 
@@ -857,7 +872,8 @@ class TelegramThreatMonitor:
                 # Default speeds by threat type
                 speed_defaults = {
                     "shahed": 165, "cruise_missile": 850, "ballistic": 4000,
-                    "mig31k": 2500, "kab": 300,
+                    "mig31k": 2500, "kab": 300, "tu95": 800, "iskander": 4500,
+                    "artillery": 1200,
                 }
                 speed = speed_defaults.get(threat_type, 300)
                 
@@ -958,7 +974,7 @@ class TelegramThreatMonitor:
                 base_score = direction_score * 0.5 + 0.2  # 20-70% base from direction
                 
                 # Threat type weight (slow = more predictable trajectory)
-                type_weight = {"shahed": 0.15, "cruise_missile": 0.08, "mig31k": 0.05, "ballistic": 0.0, "kab": 0.02}
+                type_weight = {"shahed": 0.15, "cruise_missile": 0.08, "mig31k": 0.05, "ballistic": 0.0, "kab": 0.02, "tu95": 0.10, "iskander": 0.0, "artillery": 0.01}
                 base_score += type_weight.get(threat_type, 0.05)
                 
                 # Apply boosts
@@ -1302,6 +1318,15 @@ class TelegramThreatMonitor:
                     elif threat_type == "cruise_missile":
                         delay = 3600
                         eta_str = "+15-30 хв"
+                    elif threat_type == "tu95":
+                        delay = 5400
+                        eta_str = "~30-90 хв"
+                    elif threat_type == "iskander":
+                        delay = 1800
+                        eta_str = "~2-5 хв"
+                    elif threat_type == "artillery":
+                        delay = 1800
+                        eta_str = "~0-5 хв"
                         
                     is_pred = region in predictive_regions
                     
@@ -1477,6 +1502,12 @@ class TelegramThreatMonitor:
                     delay = 10800
                 elif t_type == "cruise_missile":
                     delay = 2700
+                elif t_type == "tu95":
+                    delay = 5400
+                elif t_type == "iskander":
+                    delay = 1200
+                elif t_type == "artillery":
+                    delay = 1800
                 try:
                     since_str = state.since.replace("Z", "+00:00")
                     since_dt = datetime.fromisoformat(since_str)

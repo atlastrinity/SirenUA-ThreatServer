@@ -93,10 +93,14 @@ PREDICTIVE REGION CONFIDENCE DIFFERENTIATION:
 
 === THREAT TYPES AND EXPECTED ETA ===
 - shahed (UAV/drone): "~1-3 год" (speed ~150-180 km/h)
-- cruise_missile (Kh-101/Kalibr): "~15-40 хв"
-- ballistic (Iskander): "~2-5 хв"
-- mig31k (Kinzhal): "~20-40 хв"
-- kab (guided aerial bomb): "~5-15 хв"
+- cruise_missile (Kh-101/Kalibr): "~15-40 хв" (speed ~800-900 km/h)
+- ballistic (ballistic missile): "~2-5 хв" (speed ~4500-7000 km/h)
+- mig31k (Kinzhal): "~20-40 хв" (speed ~2500 km/h)
+- kab (guided aerial bomb): "~5-15 хв" (speed ~300 km/h)
+- tu95 (strategic bomber takeoff/threat): "~30-90 хв" (speed ~800 km/h)
+- iskander (Iskander-M ballistic missile): "~2-5 хв" (speed ~4500-7000 km/h)
+- artillery (artillery shelling/MLRS): "~0-5 хв" (speed ~1000-2500 km/h)
+
 
 === THREAT CONFIRMATION AND CLEARING ===
 - If a message reports explosions, impacts, or air defense engagement in a specific oblast DURING an active attack, mark it as an active threat (is_clear: false) with appropriate level (high or critical).
@@ -160,7 +164,7 @@ FOR ACTIVE THREATS (is_clear: false):
   "source_channel": "channel name",
   "text": "original text in Ukrainian",
   "threat_level": "none" | "low" | "medium" | "high" | "critical",
-  "threat_type": "shahed" | "ballistic" | "mig31k" | "kab" | "cruise_missile" | null,
+  "threat_type": "shahed" | "ballistic" | "mig31k" | "kab" | "cruise_missile" | "tu95" | "iskander" | "artillery" | null,
   "source_regions": ["Сумська область"],
   "target_regions": [{"name": "Київська область", "is_predictive": false}, {"name": "Чернігівська область", "is_predictive": true}],
   "is_clear": false,
