@@ -268,10 +268,11 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         if is_official_alarm:
             title = "🟢 Відбій загрози"
             body = f"Загрозу знято в: {region}."
+            sound = "clearance.wav"
         else:
             title = "🟢 Відбій повітряної тривоги"
             body = region
-        sound = "vidbiy.wav"
+            sound = "vidbiy.wav"
         is_critical = False
     else:
         if threat_type is not None:
