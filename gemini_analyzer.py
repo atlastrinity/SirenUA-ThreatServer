@@ -136,7 +136,7 @@ Telemetry parameters:
 - group_id (string): Unique wave/attack ID. Format: "{threat_type}_{vector}_{date}_{waveN}". Use SAME group_id for messages about the same wave.
 - attack_vector (string): One of: "south_to_north", "east_to_west", "north_to_south", "west_to_east", "southeast_to_northwest", "northeast_to_southwest", "crimea_inland", "sea_to_coast", "border_shelling", "unknown".
 - target_count (int|null): Number of detected targets. If "група" → 3-5. If single → 1. null if unknown.
-- speed_kmh (int|null): Estimated speed: shahed=150-180, cruise_missile=800-900, ballistic=2000-7000, mig31k=2500, kab=300. null if impossible to estimate.
+- speed_kmh (int|null): Estimated speed: shahed=150-180, cruise_missile=800-900, ballistic=4500-7000, mig31k=2500, kab=300, tu95=800, iskander=4500-7000, artillery=1000-2500. null if impossible to estimate.
 - altitude_category (string): "low" (UAV <500m), "medium" (cruise 50-100m), "high" (ballistic/strategic >10000m), "unknown".
 - heading_degrees (int|null): Heading in degrees (0=north, 90=east, 180=south, 270=west). null if unknown.
 - distance_to_target_km (float|null): Estimated distance to nearest major city. null if impossible.

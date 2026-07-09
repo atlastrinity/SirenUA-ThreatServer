@@ -1413,19 +1413,21 @@ class TelegramThreatMonitor:
 
     def _detect_threat_type(self, text: str):
         text_lower = text.lower()
-        if any(kw in text_lower for kw in ["міг-31", "міг31", "mig-31", "mig31", "кинджал"]):
+        if any(kw in text_lower for kw in ["міг-31", "міг31", "mig-31", "mig31", "кинджал", "х-47", "х47"]):
             return "mig31k"
-        if any(kw in text_lower for kw in ["ту-95", "ту95", "tu-95", "tu95", "ту-22", "ту22", "tu-22", "tu22"]):
+        if any(kw in text_lower for kw in ["ту-95", "ту95", "tu-95", "tu95", "ту-22", "ту22", "tu-22", "tu22", "ту-160", "tu160"]):
             return "tu95"
-        if any(kw in text_lower for kw in ["шахед", "shahed", "бпла", "дрон", "мопед"]):
+        if any(kw in text_lower for kw in ["шахед", "shahed", "бпла", "дрон", "мопед", "гербер", "орлан", "supercam", "крило"]):
             return "shahed"
-        if any(kw in text_lower for kw in ["балісти", "іскандер"]):
+        if any(kw in text_lower for kw in ["іскандер", "iskander"]):
+            return "iskander"
+        if any(kw in text_lower for kw in ["балісти", "с-300", "с300", "с-400", "с400", "c-300", "c300", "c-400", "c400"]):
             return "ballistic"
-        if any(kw in text_lower for kw in ["ракет", "крилат", "калібр", "х-101"]):
+        if any(kw in text_lower for kw in ["ракет", "крилат", "калібр", "х-101", "х101", "х-55", "х55", "х-555", "х555", "х-59", "х59", "х-69", "х69"]):
             return "cruise_missile"
-        if any(kw in text_lower for kw in ["артилерія", "рсзв", "обстріл"]):
+        if any(kw in text_lower for kw in ["артилерія", "рсзв", "обстріл", "град", "смерч", "ураган", "міномет"]):
             return "artillery"
-        if re.search(r"\bкаб(и|ів)?\b|авіабомб", text_lower):
+        if re.search(r"\bкаб(и|ів)?\b|авіабомб|фаб|уаб", text_lower) or any(kw in text_lower for kw in ["су-34", "су-35", "су-30", "су-57", "сушка", "сушки"]):
             return "kab"
         return "unknown"
 
