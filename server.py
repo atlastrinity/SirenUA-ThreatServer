@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -464,37 +464,6 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
         print(f"⚠️ Помилка запису clearing в БД: {e}")
         return None
 
-# --- WebSockets Manager ---
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        # Відправляємо оновлення всім клієнтам паралельно
-        msg_text = json.dumps(message)
-        dead_connections = []
-
-        async def send(connection):
-            try:
-                await connection.send_text(msg_text)
-            except Exception:
-                dead_connections.append(connection)
-
-        if self.active_connections:
-            await asyncio.gather(*(send(conn) for conn in self.active_connections))
-            
-        for dead in dead_connections:
-            self.disconnect(dead)
-
-ws_manager = ConnectionManager()
 
 # Глобальний менеджер загроз (in-memory)
 threat_manager = MockThreatManager()
@@ -664,12 +633,6 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
                     safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози", is_test=state.is_test))
             
     last_logged_states[region] = (state.level, state.is_active, state.threat_type)
-
-    safe_run_task(ws_manager.broadcast({
-        "type": "threat_update",
-        "region": region,
-        "state": state.to_dict()
-    }))
 
 threat_manager.on_change = on_threat_changed
 
@@ -1648,24 +1611,7 @@ async def get_region_history(region: str, limit: int = 200, date: str = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint для отримання живих оновлень загроз."""
-    await ws_manager.connect(websocket)
-    try:
-        # Відправляємо поточний стан одразу при підключенні
-        await websocket.send_text(json.dumps({
-            "type": "initial_state",
-            "threats": threat_manager.get_all_threats()
-        }))
-        
-        while True:
-            # Очікуємо повідомлень (keep-alive)
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
-    except WebSocketDisconnect:
-        ws_manager.disconnect(websocket)
+
 
 
 @app.post("/api/threats/mock")
