@@ -209,7 +209,7 @@ def init_analytics_db():
     conn.close()
     print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings + gemini_rules + paired_events)")
 
-def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False, rules_applied: list = None):
+def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False, rules_applied: list = None, is_predictive: bool = False):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id.
     Also creates a paired_event record for lifecycle tracking."""
     try:
@@ -223,7 +223,6 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
         
         telemetry_id = None
         group_id = None
-        is_predictive = False
         
         # Insert telemetry if provided
         if telemetry and isinstance(telemetry, dict) and event_id:
@@ -376,10 +375,10 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
             threat_set_ts = row["timestamp"]
             # Calculate duration in seconds
             try:
-                from datetime import datetime
+                from datetime import datetime, timezone
                 set_time = datetime.fromisoformat(threat_set_ts.replace('Z', '+00:00') if threat_set_ts else "")
-                now = datetime.utcnow()
-                threat_duration_sec = int((now - set_time.replace(tzinfo=None)).total_seconds())
+                now = datetime.now(timezone.utc)
+                threat_duration_sec = int((now - set_time.replace(tzinfo=timezone.utc)).total_seconds())
                 if threat_duration_sec < 0:
                     threat_duration_sec = None
             except Exception:
@@ -541,7 +540,7 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
         current_type = state.threat_type
         if (current_type and current_type != "official_alarm") or (prev_type and prev_type != "official_alarm" and state.level == "none"):
             if state.level != "none":
-                safe_run_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, rules_applied=rules_applied))
+                safe_run_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, rules_applied=rules_applied, is_predictive=getattr(state, 'is_predictive', False)))
                 safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, is_test=state.is_test))
             elif prev_level != "none":
                 # Threat has cleared
