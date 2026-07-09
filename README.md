@@ -62,6 +62,8 @@ graph TD
     FastAPI -->|GET /api/threats| App
 ```
 
+![Схема архітектури SirenUA](assets/architecture_schema.png)
+
 ---
 
 ## 🛠️ Як працює система
