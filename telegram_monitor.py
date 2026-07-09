@@ -364,6 +364,24 @@ class TelegramThreatMonitor:
                     queue.append(new_path)
         return []
 
+    # --- Pre-filter: skip obviously non-threat messages before sending to Gemini ---
+    _THREAT_KEYWORDS = {
+        "бпла", "бпла!", "шахед", "shahed", "ракет", "пуск", "балістик", "балістич",
+        "кинджал", "мігом", "міг-31", "міг31", "каб", "кабами",
+        "калібр", "х-101", "х-55", "іскандер", "тривог", "вибух",
+        "ппо", "зліт", "повітр", "курс", "напрямк", "загроз",
+        "крилат", "дрон", "безпілотник", "цілі", "ціль", "перехопл",
+        "відбій", "чисто", "збит", "зник", "відстежен", "маневру"
+    }
+    
+    def _is_threat_relevant(self, text: str) -> bool:
+        """Quick keyword check to filter out obviously informational messages."""
+        text_lower = text.lower()
+        for kw in self._THREAT_KEYWORDS:
+            if kw in text_lower:
+                return True
+        return False
+
     # --- LLM Batching Loop ---
     async def _batch_processor_loop(self):
         """Фоновий процес, що збирає повідомлення та відправляє їх до Gemini раз на 30с."""
@@ -383,9 +401,20 @@ class TelegramThreatMonitor:
                 self.message_history = self.message_history[-15:]
                 
             if messages:
-                print(f"🧠 Відправка батчу ({len(messages)} повідомлень) до Gemini API...")
-                context_messages = [m for m in self.message_history if m not in messages][-10:]
-                results = await self.analyzer.analyze_batch(messages, context_messages=context_messages)
+                # Pre-filter: separate threat-relevant vs informational messages
+                threat_messages = [m for m in messages if self._is_threat_relevant(m.get("text", ""))]
+                skipped = len(messages) - len(threat_messages)
+                
+                if skipped > 0:
+                    print(f"📋 [Pre-filter] Пропущено {skipped} інформаційних повідомлень (не відправлено до Gemini)")
+                
+                if not threat_messages:
+                    print(f"📋 [Pre-filter] Всі {len(messages)} повідомлень — інформаційні. Gemini API не викликано.")
+                    continue
+                
+                print(f"🧠 Відправка батчу ({len(threat_messages)} повідомлень) до Gemini API...")
+                context_messages = [m for m in self.message_history if m not in threat_messages][-10:]
+                results = await self.analyzer.analyze_batch(threat_messages, context_messages=context_messages)
                 if results:
                     # Enable batch mode: skip individual Firestore saves during batch processing
                     self.threat_manager._batch_mode = True
@@ -395,7 +424,13 @@ class TelegramThreatMonitor:
                         self.threat_manager._batch_mode = False
                     # One atomic Firestore save for the entire batch
                     self.threat_manager._execute_save_to_db()
+                    # Flush buffered Firestore history writes in one batch
+                    from server import flush_history_batch
+                    flush_history_batch()
+                    # Flush buffered FCM notifications (sound only on first)
+                    self.threat_manager.flush_fcm_batch()
                     print(f"💾 Атомарний запис у Firestore після батчу ({len(results)} результатів)")
+
 
 
     async def _apply_gemini_analysis(self, results, is_test: bool = False):

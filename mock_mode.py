@@ -385,6 +385,7 @@ class MockThreatManager:
         self._save_timer = None
         self._save_real_timer = None
         self._save_lock = threading.Lock()
+        self._fcm_batch_buffer = []  # Collects FCM notifications during batch mode
         
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState()
@@ -704,14 +705,48 @@ class MockThreatManager:
                 play_sound = False
             else:
                 self.last_sound_time = now
-                
-            send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active, is_test=self.threats[region].is_test)
+            
+            if self._batch_mode:
+                # Buffer FCM during batch — will flush as summary after batch
+                self._fcm_batch_buffer.append({
+                    "region": region, "level": level, "threat_type": threat_type,
+                    "detail": detail, "confidence": confidence, "eta": eta,
+                    "is_official_alarm": self.threats[region].is_active,
+                    "is_test": self.threats[region].is_test
+                })
+            else:
+                send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active, is_test=self.threats[region].is_test)
             if not self._batch_mode:
                 self.save_to_db()
             if hasattr(self, 'on_change'):
                 self.on_change(region, self.threats[region], telemetry=telemetry, rules_applied=rules_applied)
             
         return True
+
+    def flush_fcm_batch(self):
+        """Send buffered FCM notifications after batch processing.
+        Groups by threat type and sends per-region pushes but with sound only on first."""
+        if not self._fcm_batch_buffer:
+            return
+        
+        items = list(self._fcm_batch_buffer)
+        self._fcm_batch_buffer.clear()
+        
+        # Send first notification with sound, rest without (to avoid audio spam)
+        for i, item in enumerate(items):
+            play_sound = (i == 0)  # Only first push plays sound
+            send_fcm_notification(
+                region=item["region"],
+                level=item["level"],
+                threat_type=item["threat_type"],
+                detail=item["detail"],
+                play_sound=play_sound,
+                confidence=item["confidence"],
+                eta=item["eta"],
+                is_official_alarm=item["is_official_alarm"],
+                is_test=item["is_test"]
+            )
+        print(f"🚀 FCM batch flush: {len(items)} сповіщень (звук тільки у першому)")
 
     def clear_threat(self, region: str, clearing_telemetry: dict = None) -> bool:
         if region not in self.threats:

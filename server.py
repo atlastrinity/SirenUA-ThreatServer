@@ -505,7 +505,70 @@ is_live_mode = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lowe
 # Track last logged threat states to avoid duplicate logging and properly detect changes
 last_logged_states = {}  # region -> (level, is_active, threat_type)
 
+# Firestore history batch buffer — collects writes during _batch_mode for one flush
+_history_batch_buffer = []
+
 main_loop = None
+
+def validate_prediction_on_alarm(region: str):
+    """When an official alarm activates for a region, check if Gemini had a
+    predictive (yellow) threat for it and mark the prediction as 'confirmed'.
+    This feeds the Rules Learner with validation data."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        # Find active predictive paired_events for this region
+        cursor.execute('''
+            UPDATE paired_events 
+            SET prediction_accuracy = 'confirmed'
+            WHERE region = ? 
+              AND was_predictive = 1 
+              AND lifecycle_status = 'active'
+              AND prediction_accuracy IS NULL
+        ''', (region,))
+        updated = cursor.rowcount
+        conn.commit()
+        conn.close()
+        if updated > 0:
+            print(f"✅ [Validation] Офіційна тривога підтвердила {updated} предикцій Gemini для {region}")
+    except Exception as e:
+        print(f"⚠️ [Validation] Помилка валідації предикції: {e}")
+
+def flush_history_batch():
+    """Flush all buffered Firestore history writes in a single batch operation."""
+    global _history_batch_buffer
+    if not _history_batch_buffer:
+        return
+    
+    db = get_db()
+    if not db:
+        _history_batch_buffer.clear()
+        return
+    
+    import time
+    items = list(_history_batch_buffer)
+    _history_batch_buffer.clear()
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            batch = db.batch()
+            for doc_data in items:
+                ref = db.collection('sirenua_history').document()
+                batch.set(ref, doc_data)
+            batch.commit()
+            print(f"🔥 Batch flush: {len(items)} history записів за один Firestore write")
+            return
+        except Exception as e:
+            err_str = str(e)
+            if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
+                wait = (2 ** attempt) * 5
+                print(f"⚠️ Firestore quota hit on batch flush, retry {attempt+1}/{max_retries} in {wait}s")
+                time.sleep(wait)
+            else:
+                print(f"⚠️ Помилка batch flush Firestore history: {e}")
+                return
+
 
 def safe_run_task(coro):
     """Safely schedules a coroutine from any thread (e.g. background threadpool)
@@ -525,15 +588,37 @@ def safe_run_task(coro):
             new_loop.close()
 
 def on_threat_changed(region, state, telemetry=None, rules_applied=None):
-    global last_logged_states
+    global last_logged_states, _history_batch_buffer
     prev_level, prev_active, prev_type = last_logged_states.get(region, ("none", False, None))
+    
+    is_batch = getattr(threat_manager, '_batch_mode', False)
     
     # 1. Official air alarm status change logging
     if prev_active != state.is_active:
         log_level = "high" if state.is_active else "none"
         detail = "Повітряна тривога" if state.is_active else "Відбій повітряної тривоги"
         safe_run_task(asyncio.to_thread(log_threat_to_db, region, log_level, "official_alarm", detail))
-        safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail, is_test=state.is_test))
+        
+        # Validate Gemini predictions when official alarm turns ON
+        if state.is_active:
+            safe_run_task(asyncio.to_thread(validate_prediction_on_alarm, region))
+        
+        if is_batch:
+            # Buffer for batch flush
+            from datetime import datetime, timezone
+            import time
+            _history_batch_buffer.append({
+                "id": int(time.time() * 1000),
+                "region": region,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                "threat_level": log_level,
+                "threat_type": "official_alarm",
+                "detail": detail,
+                "confidence": None,
+                "is_test": state.is_test
+            })
+        else:
+            safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail, is_test=state.is_test))
         
     # 2. AI/Telegram threat level change logging
     if prev_level != state.level:
@@ -541,11 +626,42 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
         if (current_type and current_type != "official_alarm") or (prev_type and prev_type != "official_alarm" and state.level == "none"):
             if state.level != "none":
                 safe_run_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, rules_applied=rules_applied, is_predictive=getattr(state, 'is_predictive', False)))
-                safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, is_test=state.is_test))
+                if is_batch:
+                    from datetime import datetime, timezone
+                    import time
+                    doc_data = {
+                        "id": int(time.time() * 1000),
+                        "region": region,
+                        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                        "threat_level": state.level,
+                        "threat_type": current_type,
+                        "detail": state.detail,
+                        "confidence": state.confidence,
+                        "is_test": state.is_test
+                    }
+                    if telemetry:
+                        doc_data["telemetry"] = telemetry
+                    _history_batch_buffer.append(doc_data)
+                else:
+                    safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, is_test=state.is_test))
             elif prev_level != "none":
                 # Threat has cleared
                 safe_run_task(asyncio.to_thread(log_threat_to_db, region, "none", prev_type, "Відбій загрози"))
-                safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози", is_test=state.is_test))
+                if is_batch:
+                    from datetime import datetime, timezone
+                    import time
+                    _history_batch_buffer.append({
+                        "id": int(time.time() * 1000),
+                        "region": region,
+                        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                        "threat_level": "none",
+                        "threat_type": prev_type,
+                        "detail": "Відбій загрози",
+                        "confidence": None,
+                        "is_test": state.is_test
+                    })
+                else:
+                    safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози", is_test=state.is_test))
             
     last_logged_states[region] = (state.level, state.is_active, state.threat_type)
 
