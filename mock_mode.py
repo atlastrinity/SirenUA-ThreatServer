@@ -388,21 +388,32 @@ class MockThreatManager:
         with self._save_lock:
             if getattr(self, '_save_timer', None) is not None:
                 self._save_timer.cancel()
-            self._save_timer = threading.Timer(2.5, self._execute_save_to_db)
+            self._save_timer = threading.Timer(5.0, self._execute_save_to_db)
             self._save_timer.start()
 
     def _execute_save_to_db(self):
+        import time as _time
         db = get_db()
         if db:
-            try:
-                state_data = {
-                    region: state.to_dict()
-                    for region, state in self.threats.items()
-                }
-                doc_ref = db.collection('sirenua_state').document('threats')
-                doc_ref.set(state_data)
-            except Exception as e:
-                print(f"⚠️ Помилка збереження стану загроз у Firebase: {e}")
+            state_data = {
+                region: state.to_dict()
+                for region, state in self.threats.items()
+            }
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    doc_ref = db.collection('sirenua_state').document('threats')
+                    doc_ref.set(state_data)
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
+                        wait = (2 ** attempt) * 5  # 5s, 10s
+                        print(f"⚠️ Firestore quota hit saving state, retry {attempt+1}/{max_retries} in {wait}s")
+                        _time.sleep(wait)
+                    else:
+                        print(f"⚠️ Помилка збереження стану загроз у Firebase: {e}")
+                        break
         self.save_to_file()
 
     def load_from_db(self):

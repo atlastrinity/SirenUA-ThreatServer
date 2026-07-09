@@ -287,33 +287,44 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
         return None
 
 def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False):
-    """Log threat event to Firebase Firestore."""
+    """Log threat event to Firebase Firestore with retry on quota errors."""
     db = get_db()
     if not db:
         return
-    try:
-        import time
-        from datetime import datetime, timezone
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        unique_id = int(time.time() * 1000)
-        
-        doc_data = {
-            "id": unique_id,
-            "region": region,
-            "timestamp": timestamp,
-            "threat_level": level,
-            "threat_type": threat_type,
-            "detail": detail,
-            "confidence": confidence,
-            "is_test": is_test
-        }
-        if telemetry:
-            doc_data["telemetry"] = telemetry
-            
-        db.collection('sirenua_history').add(doc_data)
-        print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type}, is_test={is_test})")
-    except Exception as e:
-        print(f"⚠️ Помилка запису історії в Firestore: {e}")
+    import time
+    from datetime import datetime, timezone
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    unique_id = int(time.time() * 1000)
+    
+    doc_data = {
+        "id": unique_id,
+        "region": region,
+        "timestamp": timestamp,
+        "threat_level": level,
+        "threat_type": threat_type,
+        "detail": detail,
+        "confidence": confidence,
+        "is_test": is_test
+    }
+    if telemetry:
+        doc_data["telemetry"] = telemetry
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            db.collection('sirenua_history').add(doc_data)
+            print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type}, is_test={is_test})")
+            return
+        except Exception as e:
+            err_str = str(e)
+            if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
+                wait = (2 ** attempt) * 5  # 5s, 10s
+                print(f"⚠️ Firestore quota hit writing history for {region}, retry {attempt+1}/{max_retries} in {wait}s")
+                time.sleep(wait)
+            else:
+                print(f"⚠️ Помилка запису історії в Firestore: {e}")
+                return
+    print(f"❌ Firestore history write failed after {max_retries} retries for {region}")
 
 def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                        source_channel: str = None, message_text: str = None,
