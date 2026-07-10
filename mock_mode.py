@@ -1034,7 +1034,8 @@ class MockThreatManager:
                    is_predictive: bool = False,
                    is_test: bool = False,
                    telemetry: dict = None,
-                   rules_applied: list = None) -> bool:
+                   rules_applied: list = None,
+                   eta_seconds: Optional[int] = None) -> bool:
         if region not in self.threats:
             return False
 
@@ -1045,6 +1046,13 @@ class MockThreatManager:
         group_id = None
         if telemetry and isinstance(telemetry, dict):
             group_id = telemetry.get("group_id")
+
+        # Розраховуємо eta_seconds з телеметрії, якщо не передано явно
+        if eta_seconds is None and telemetry and isinstance(telemetry, dict):
+            speed = telemetry.get("speed_kmh")
+            dist = telemetry.get("distance_to_target_km")
+            if speed and dist and speed > 0:
+                eta_seconds = int((dist / speed) * 3600)
 
         if not is_test:
             self.real_threats_backup[region] = old_state.to_dict()
@@ -1064,7 +1072,8 @@ class MockThreatManager:
 
         has_changed = self.threats[region].set_threat(
             level, threat_type, detail, confidence, eta,
-            is_predictive, is_test, group_id=group_id
+            is_predictive, is_test, group_id=group_id,
+            eta_seconds=eta_seconds
         )
         
         if has_changed:

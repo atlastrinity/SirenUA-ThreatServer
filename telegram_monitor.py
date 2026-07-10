@@ -635,12 +635,32 @@ class TelegramThreatMonitor:
                 
                 # Try to calculate delay from telemetry speed + distance
                 telemetry_delay = None
+                eta_seconds = None
                 if telemetry and isinstance(telemetry, dict):
                     t_speed = telemetry.get("speed_kmh")
                     t_distance = telemetry.get("distance_to_target_km")
                     if t_speed and t_distance and t_speed > 0:
-                        # Calculate ETA in seconds: distance/speed * 3600, with 50% buffer
-                        telemetry_delay = int((t_distance / t_speed) * 3600 * 1.5)
+                        # Calculate ETA in seconds: distance/speed * 3600
+                        eta_seconds = int((t_distance / t_speed) * 3600)
+                        
+                        # Generate dynamic ETA string if not provided by Gemini
+                        if not eta_str:
+                            if eta_seconds < 300:
+                                eta_str = "~2-5 хв"
+                            elif eta_seconds < 900:
+                                eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
+                            elif eta_seconds < 3600:
+                                eta_str = f"~{eta_seconds // 60} хв"
+                            else:
+                                h = eta_seconds // 3600
+                                m = (eta_seconds % 3600) // 60
+                                if m > 0:
+                                    eta_str = f"~{h} год {m} хв"
+                                else:
+                                    eta_str = f"~{h} год"
+                        
+                        # Calculate delay with 50% buffer
+                        telemetry_delay = int(eta_seconds * 1.5)
                         telemetry_delay = max(300, min(telemetry_delay, 14400))  # clamp 5min-4hours
                 
                 if telemetry_delay:
@@ -727,7 +747,8 @@ class TelegramThreatMonitor:
 
                 self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
                                                confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
-                                               is_test=is_test, telemetry=telemetry, rules_applied=rules_applied)
+                                               is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
+                                               eta_seconds=eta_seconds)
                 self._schedule_auto_clear(region, delay)
                 
                 # Enhanced logging with telemetry info
@@ -1117,7 +1138,8 @@ class TelegramThreatMonitor:
                 eta=pred["eta_str"],
                 is_predictive=True,
                 is_test=pred.get("is_test", False),
-                telemetry=None  # No direct telemetry for predictions
+                telemetry=None,  # No direct telemetry for predictions
+                eta_seconds=pred.get("eta_seconds")
             )
             self._schedule_auto_clear(region, auto_clear_delay)
             predictions_applied += 1
