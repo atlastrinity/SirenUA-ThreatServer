@@ -504,6 +504,8 @@ class TelegramThreatMonitor:
                 
             level = item.get("threat_level", "none")
             threat_type = item.get("threat_type")
+            if threat_type:
+                threat_type = threat_type.lower().strip()
             is_clear = item.get("is_clear", False)
             source_channel = item.get("source_channel", "AI")
             text = item.get("text", "")

@@ -201,14 +201,14 @@ class ThreatState:
         """Шукає дублікат загрози серед активних.
         Дублікатом вважається загроза з:
         1) Тим самим group_id, АБО
-        2) Тим самим threat_type (якщо тип загрози не None)
+        2) Тим самим threat_type (включаючи None для загальних загроз)
         """
         for t in self.active_threats:
             # Точний збіг за group_id
             if group_id and t.group_id and t.group_id == group_id:
                 return t
             # Збіг за типом загрози
-            if t.threat_type == threat_type and threat_type is not None:
+            if t.threat_type == threat_type:
                 return t
         return None
 
@@ -218,6 +218,9 @@ class ThreatState:
                    is_test: bool = False, group_id: Optional[str] = None,
                    eta_seconds: Optional[int] = None) -> bool:
         """Додає або оновлює загрозу. Повертає True якщо щось змінилось."""
+        if threat_type:
+            threat_type = threat_type.lower().strip()
+            
         if level == "none":
             return False
 
