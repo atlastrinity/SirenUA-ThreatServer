@@ -391,15 +391,15 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         
         apns_config = None
         if sound:
+            crit_sound = messaging.CriticalSound(
+                name=sound,
+                volume=1.0,
+                critical=True
+            )
             apns_config = messaging.APNSConfig(
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(
-                        sound=sound,
-                        critical_sound=messaging.CriticalSound(
-                            name=sound,
-                            volume=1.0,
-                            critical=True
-                        )
+                        sound=crit_sound
                     )
                 )
             )
