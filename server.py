@@ -247,6 +247,27 @@ def init_analytics_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_rules_audit_ts ON gemini_rules_audit(timestamp)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_rules_audit_action ON gemini_rules_audit(action)')
 
+    # Seed mock rules and audit entries if empty and in mock mode
+    if not is_live_mode:
+        cursor.execute("SELECT COUNT(*) as c FROM gemini_rules")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                INSERT INTO gemini_rules (id, rule_type, source_region, target_region, threat_type, confidence_delta, accuracy_score, evidence_count, is_active)
+                VALUES ('mock_rule_1', 'route_pattern', 'Crimea', 'Zaporizhzhia', 'shahed', 15, 0.85, 12, 1)
+            """)
+            cursor.execute("""
+                INSERT INTO gemini_rules (id, rule_type, source_region, target_region, threat_type, confidence_delta, accuracy_score, evidence_count, is_active)
+                VALUES ('mock_rule_2', 'confidence_correction', 'Kursk', 'Sumy', 'mig31k', 25, 0.90, 8, 1)
+            """)
+            cursor.execute("""
+                INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
+                VALUES ('added', 'route_pattern', 'Детекція БПЛА типу Shahed з Криму в бік Запоріжжя', 'Crimea', 'Zaporizhzhia', 'shahed', 'Аналіз 12 аналогічних траєкторій за тиждень')
+            """)
+            cursor.execute("""
+                INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
+                VALUES ('added', 'confidence_correction', 'Зліт МіГ-31К з Курська в бік Сум', 'Kursk', 'Sumy', 'mig31k', 'Корекція рівня загрози на основі високої ймовірності ракетного удару')
+            """)
+
     conn.commit()
     conn.close()
     print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings + gemini_rules + paired_events + error_log + gemini_rules_audit)")
