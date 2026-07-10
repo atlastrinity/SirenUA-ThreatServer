@@ -1,6 +1,7 @@
 """
 Mock Mode — генератор імітованих загроз для тестування.
 Зберігає стан загроз в пам'яті (без бази даних).
+# Deploy trigger: Sync cleaned Firestore state on reload
 """
 
 from datetime import datetime, timezone
