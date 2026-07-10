@@ -500,6 +500,7 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
         
         # First try by linked_group_id if available
         linked_gid = clearing_telemetry.get("linked_group_id")
+        row = None
         if linked_gid:
             cursor.execute('''
                 SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
@@ -509,8 +510,21 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                 WHERE th.region = ? AND td.group_id = ? AND pe.lifecycle_status = 'active'
                 ORDER BY th.timestamp DESC LIMIT 1
             ''', (region, linked_gid))
-        else:
-            # Fallback: find the most recent non-none active threat for this region
+            row = cursor.fetchone()
+            
+        # Fallback 1: Look for an uncleared official alarm in threat_history (which has no paired_events)
+        if not row:
+            cursor.execute('''
+                SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
+                FROM threat_history th
+                LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
+                WHERE th.region = ? AND th.threat_type = 'official_alarm' AND tc.id IS NULL
+                ORDER BY th.timestamp DESC LIMIT 1
+            ''', (region,))
+            row = cursor.fetchone()
+            
+        # Fallback 2: Find the most recent active Telegram/AI threat for this region
+        if not row:
             cursor.execute('''
                 SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
                 FROM threat_history th
@@ -518,8 +532,7 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                 WHERE th.region = ? AND pe.lifecycle_status = 'active'
                 ORDER BY th.timestamp DESC LIMIT 1
             ''', (region,))
-        
-        row = cursor.fetchone()
+            row = cursor.fetchone()
         if not row:
             # No active threat to clear (e.g. already cleared manually by telegram_monitor.py)
             conn.close()
