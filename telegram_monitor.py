@@ -6,57 +6,16 @@ from typing import Optional
 from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
-from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES, UKRAINE_TOPOLOGY, SHAHED_ROUTES
+
+from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES
+from topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
+from regions import get_genitive_region, get_ukrainian_threat_type
 from gemini_analyzer import GeminiThreatAnalyzer
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
 except Exception:
     pass
-
-def get_genitive_region(region: str) -> str:
-    mapping = {
-        "Вінницька область": "Вінницької області",
-        "Волинська область": "Волинської області",
-        "Дніпропетровська область": "Дніпропетровської області",
-        "Донецька область": "Донецької області",
-        "Житомирська область": "Житомирської області",
-        "Закарпатська область": "Закарпатської області",
-        "Запорізька область": "Запорізької області",
-        "Івано-Франківська область": "Івано-Франківської області",
-        "Київська область": "Київської області",
-        "м. Київ": "Києва",
-        "Кіровоградська область": "Кіровоградської області",
-        "Луганська область": "Луганської області",
-        "Львівська область": "Львівської області",
-        "Миколаївська область": "Миколаївської області",
-        "Одеська область": "Одеської області",
-        "Полтавська область": "Полтавської області",
-        "Рівненська область": "Рівненської області",
-        "Сумська область": "Сумської області",
-        "Тернопільська область": "Тернопільської області",
-        "Харківська область": "Харківської області",
-        "Херсонська область": "Херсонської області",
-        "Хмельницька область": "Хмельницької області",
-        "Черкаська область": "Черкаської області",
-        "Чернівецька область": "Чернівецької області",
-        "Чернігівська область": "Чернігівської області",
-        "АР Крим": "Криму",
-    }
-    return mapping.get(region, region)
-
-def get_ukrainian_threat_type(threat_type: str) -> str:
-    mapping = {
-        "shahed": "БпЛА",
-        "cruise_missile": "крилата ракета",
-        "ballistic": "балістика",
-        "mig31k": "МіГ-31К",
-        "kab": "КАБ",
-        "tu95": "Ту-95МС",
-        "iskander": "Іскандер-М",
-        "artillery": "обстріл",
-    }
-    return mapping.get(threat_type, threat_type)
 
 def clean_user_facing_threat_detail(text: str) -> str:
     if not text:
@@ -147,49 +106,6 @@ CLEAR_KEYWORDS = [
     r"чисто", 
     r"дорозвідка"
 ]
-
-CITY_COORDINATES = {
-    "київ": (50.4501, 30.5234),
-    "харків": (50.0000, 36.2300),
-    "одеса": (46.4825, 30.7233),
-    "дніпро": (48.4647, 35.0462),
-    "львів": (49.8397, 24.0297),
-    "запоріжжя": (47.8388, 35.1396),
-    "кривий ріг": (47.9105, 33.3918),
-    "миколаїв": (46.9750, 31.9946),
-    "маріуполь": (47.0971, 37.5434),
-    "луганськ": (48.5740, 39.3078),
-    "вінниця": (49.2331, 28.4682),
-    "херсон": (46.6354, 32.6169),
-    "полтава": (49.5883, 34.5514),
-    "чернігів": (51.4982, 31.2893),
-    "черкаси": (49.4444, 32.0598),
-    "суми": (50.9077, 34.7981),
-    "житомир": (50.2547, 28.6587),
-    "хмельницький": (49.4230, 26.9871),
-    "рівне": (50.6199, 26.2516),
-    "кропивницький": (48.5079, 32.2623),
-    "кам'янське": (48.5140, 34.6148),
-    "чернівці": (48.2908, 25.9345),
-    "кременчук": (49.0630, 33.4038),
-    "івано-франківськ": (48.9215, 24.7097),
-    "тернопіль": (49.5535, 25.5948),
-    "луцьк": (50.7472, 25.3254),
-    "біла церква": (49.8020, 30.1154),
-    "краматорськ": (48.7390, 37.5838),
-    "ужгород": (48.6208, 22.2879),
-    "бровари": (50.5112, 30.7900),
-    "конотоп": (51.2407, 33.2040),
-    "умань": (48.7484, 30.2223),
-    "шостка": (51.8622, 33.4842),
-    "старокостянтинів": (49.7547, 27.2206),
-    "миргород": (49.9678, 33.6119),
-    "шепетівка": (50.1808, 27.0658),
-    "стрий": (49.2570, 23.8560),
-    "коростень": (50.9542, 28.6367),
-    "ковель": (51.2163, 24.6936),
-    "коломия": (48.5284, 25.0396),
-}
 
 # API credentials
 TELEGRAM_API_ID = 20294647
@@ -511,6 +427,9 @@ class TelegramThreatMonitor:
             text = item.get("text", "")
             confidence = item.get("confidence_score")
             telemetry = item.get("telemetry")  # Extract telemetry block
+            group_id = None
+            if telemetry and isinstance(telemetry, dict):
+                group_id = telemetry.get("group_id")
             rules_applied = item.get("rules_applied", [])
             
             # Validate confidence as int
@@ -567,10 +486,9 @@ class TelegramThreatMonitor:
                             was_predictive=was_pred
                         )
                         
-                        self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type)
-                        if region in self._clear_tasks:
-                            self._clear_tasks[region].cancel()
-                            del self._clear_tasks[region]
+                        clearing_gid = clearing_telemetry.get("linked_group_id") if clearing_telemetry else None
+                        self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type, group_id=clearing_gid)
+                        self._cancel_clear_tasks(region, threat_type=threat_type, group_id=clearing_gid)
                         
                         # Enhanced clearing log
                         res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
@@ -749,7 +667,7 @@ class TelegramThreatMonitor:
                                                confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
                                                is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
                                                eta_seconds=eta_seconds)
-                self._schedule_auto_clear(region, delay)
+                self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
                 
                 # Enhanced logging with telemetry info
                 conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
@@ -775,48 +693,8 @@ class TelegramThreatMonitor:
 
 
     # --- Predictive Propagation Engine ---
-    # Coordinate centroids for heading-based prediction (approximate lat/lon centers)
-    REGION_CENTROIDS = {
-        "Вінницька область": (49.23, 28.47),
-        "Волинська область": (51.0, 25.0),
-        "Дніпропетровська область": (48.46, 35.05),
-        "Донецька область": (48.0, 37.8),
-        "Житомирська область": (50.45, 28.66),
-        "Закарпатська область": (48.62, 22.3),
-        "Запорізька область": (47.85, 35.15),
-        "Івано-Франківська область": (48.92, 24.72),
-        "Київська область": (50.45, 30.52),
-        "м. Київ": (50.45, 30.52),
-        "Кіровоградська область": (48.5, 32.27),
-        "Луганська область": (48.57, 39.32),
-        "Львівська область": (49.84, 24.03),
-        "Миколаївська область": (47.0, 32.0),
-        "Одеська область": (46.48, 30.73),
-        "Полтавська область": (49.59, 34.55),
-        "Рівненська область": (50.62, 26.25),
-        "Сумська область": (50.91, 34.8),
-        "Тернопільська область": (49.55, 25.6),
-        "Харківська область": (49.99, 36.23),
-        "Херсонська область": (46.64, 32.62),
-        "Хмельницька область": (49.42, 27.0),
-        "Черкаська область": (49.44, 32.06),
-        "Чернівецька область": (48.3, 25.94),
-        "Чернігівська область": (51.49, 31.29),
-        "АР Крим": (45.3, 34.1),
-    }
-
-    # Direction vectors for attack_vector → approximate bearing
-    VECTOR_BEARINGS = {
-        "south_to_north": 0,
-        "north_to_south": 180,
-        "east_to_west": 270,
-        "west_to_east": 90,
-        "southeast_to_northwest": 315,
-        "northeast_to_southwest": 225,
-        "crimea_inland": 0,       # Generally north from Crimea
-        "sea_to_coast": 0,        # Generally north (Black Sea)
-        "border_shelling": None,  # No directional prediction
-    }
+    REGION_CENTROIDS = REGION_CENTROIDS
+    VECTOR_BEARINGS = VECTOR_BEARINGS
 
     def _get_city_coordinates(self, city_name: str, telemetry: dict = None) -> Optional[tuple[float, float]]:
         if not city_name:
@@ -1141,7 +1019,7 @@ class TelegramThreatMonitor:
                 telemetry=None,  # No direct telemetry for predictions
                 eta_seconds=pred.get("eta_seconds")
             )
-            self._schedule_auto_clear(region, auto_clear_delay)
+            self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"])
             predictions_applied += 1
             
             score_detail = f"score={pred['score']:.2f} (dir={pred['direction_score']:.2f}, route=+{pred['route_boost']:.2f}, db=+{pred['db_boost']:.2f})"
@@ -1254,9 +1132,7 @@ class TelegramThreatMonitor:
                 if seg_regions:
                     for region in seg_regions:
                         self.threat_manager.clear_threat(region)
-                        if region in self._clear_tasks:
-                            self._clear_tasks[region].cancel()
-                            del self._clear_tasks[region]
+                        self._cancel_clear_tasks(region)
                         cleared_regions.add(region)
                 else:
                     # If it says 'clear' but names no regions, it might be a general clear.
@@ -1508,53 +1384,76 @@ class TelegramThreatMonitor:
                 
         return list(found)
 
-    def _schedule_auto_clear(self, region: str, delay_seconds: float = 3600):
-        if region in self._clear_tasks:
-            self._clear_tasks[region].cancel()
+    def _cancel_clear_tasks(self, region: str, threat_type: str = None, group_id: str = None):
+        to_delete = []
+        for key, task in self._clear_tasks.items():
+            k_region, k_type, k_gid = key
+            if k_region == region:
+                match = True
+                if threat_type and k_type != threat_type:
+                    match = False
+                if group_id and k_gid != group_id:
+                    match = False
+                if match:
+                    task.cancel()
+                    to_delete.append(key)
+        for key in to_delete:
+            del self._clear_tasks[key]
+
+    def _schedule_auto_clear(self, region: str, delay_seconds: float = 3600, threat_type: str = None, group_id: str = None):
+        key = (region, threat_type, group_id)
+        if key in self._clear_tasks:
+            self._clear_tasks[key].cancel()
         
         async def auto_clear():
             await asyncio.sleep(delay_seconds)
-            self.threat_manager.clear_threat(region)
-            print(f"⏳ Автоматичне зняття загрози для {region} (таймаут {int(delay_seconds)} сек)")
+            self.threat_manager.clear_threat(region, threat_type=threat_type, group_id=group_id)
+            print(f"⏳ Автоматичне зняття загрози для {region} (тип: {threat_type or 'all'}, група: {group_id or 'all'}, таймаут {int(delay_seconds)} сек)")
+            self._clear_tasks.pop(key, None)
             
-        self._clear_tasks[region] = asyncio.create_task(auto_clear())
+        self._clear_tasks[key] = asyncio.create_task(auto_clear())
 
     def _schedule_initial_auto_clears(self):
         from datetime import datetime, timezone
         for region, state in self.threat_manager.threats.items():
-            if state.level != "none" and state.since:
-                # Determine delay based on threat type
-                t_type = state.threat_type
-                delay = 3600
-                if t_type == "mig31k":
-                    delay = 1800
-                elif t_type == "ballistic":
-                    delay = 600
-                elif t_type == "kab":
-                    delay = 1200
-                elif t_type == "shahed":
-                    delay = 10800
-                elif t_type == "cruise_missile":
-                    delay = 2700
-                elif t_type == "tu95":
-                    delay = 5400
-                elif t_type == "iskander":
-                    delay = 1200
-                elif t_type == "artillery":
-                    delay = 1800
-                try:
-                    since_str = state.since.replace("Z", "+00:00")
-                    since_dt = datetime.fromisoformat(since_str)
-                    elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
-                    remaining = delay - elapsed
-                    if remaining <= 0:
-                        self.threat_manager.clear_threat(region)
-                        print(f"⏳ Загроза для {region} ({t_type}) застаріла під час офлайну. Очищено.")
-                    else:
-                        self._schedule_auto_clear(region, remaining)
-                        print(f"⏳ Заплановано автозняття загрози для {region} ({t_type}) через {int(remaining)} сек.")
-                except Exception as e:
-                    self._schedule_auto_clear(region, delay)
+            if state.level != "none" and state.active_threats:
+                for threat in state.active_threats:
+                    t_type = threat.threat_type
+                    t_gid = threat.group_id
+                    since_str = threat.since
+                    if not since_str:
+                        continue
+                    # Determine delay based on threat type
+                    delay = 3600
+                    if t_type == "mig31k":
+                        delay = 1800
+                    elif t_type == "ballistic":
+                        delay = 600
+                    elif t_type == "kab":
+                        delay = 1200
+                    elif t_type == "shahed":
+                        delay = 10800
+                    elif t_type == "cruise_missile":
+                        delay = 2700
+                    elif t_type == "tu95":
+                        delay = 5400
+                    elif t_type == "iskander":
+                        delay = 1200
+                    elif t_type == "artillery":
+                        delay = 1800
+                    try:
+                        since_str_normalized = since_str.replace("Z", "+00:00")
+                        since_dt = datetime.fromisoformat(since_str_normalized)
+                        elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
+                        remaining = delay - elapsed
+                        if remaining <= 0:
+                            self.threat_manager.clear_threat(region, threat_type=t_type, group_id=t_gid)
+                            print(f"⏳ Загроза для {region} (тип: {t_type}, група: {t_gid}) застаріла під час офлайну. Очищено.")
+                        else:
+                            self._schedule_auto_clear(region, remaining, threat_type=t_type, group_id=t_gid)
+                            print(f"⏳ Заплановано автозняття загрози для {region} (тип: {t_type}, група: {t_gid}) через {int(remaining)} сек.")
+                    except Exception as e:
+                        self._schedule_auto_clear(region, delay, threat_type=t_type, group_id=t_gid)
 
     def _get_time_of_day_modifier(self, threat_type: str) -> int:
         """Returns a confidence modifier based on current time of day and threat type.
