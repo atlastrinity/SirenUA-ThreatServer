@@ -268,6 +268,21 @@ def init_analytics_db():
                 VALUES ('added', 'confidence_correction', 'Зліт МіГ-31К з Курська в бік Сум', 'Kursk', 'Sumy', 'mig31k', 'Корекція рівня загрози на основі високої ймовірності ракетного удару')
             """)
 
+        cursor.execute("SELECT COUNT(*) as c FROM paired_events")
+        if cursor.fetchone()[0] == 0:
+            for i in range(1, 6):
+                # Insert pe1 (non-predictive set threat in Crimea)
+                cursor.execute("""
+                    INSERT INTO paired_events (region, threat_event_id, lifecycle_status, threat_level, threat_type, was_predictive, gemini_group_id, created_at)
+                    VALUES ('Crimea', 9990 + ?, 'cleared', 'high', 'shahed', 0, ?, datetime('now', '-2 hours'))
+                """, (i, f"group_seed_{i}"))
+                
+                # Insert pe2 (predictive threat in Zaporizhzhia)
+                cursor.execute("""
+                    INSERT INTO paired_events (region, threat_event_id, lifecycle_status, threat_level, threat_type, was_predictive, prediction_accuracy, gemini_group_id, created_at)
+                    VALUES ('Zaporizhzhia', 9995 + ?, 'cleared', 'high', 'shahed', 1, 'confirmed', ?, datetime('now', '-1 hours'))
+                """, (i, f"group_seed_{i}"))
+
     conn.commit()
     conn.close()
     print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings + gemini_rules + paired_events + error_log + gemini_rules_audit)")
