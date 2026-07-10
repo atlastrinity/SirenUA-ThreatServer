@@ -1141,7 +1141,13 @@ class MockThreatManager:
         if removed_threat is None and clearing_type:
             removed_threat = old_state.clear_by_type(clearing_type)
         if removed_threat is None and had_threats:
-            removed_threat = old_state.clear_oldest()
+            # Якщо це загальний відбій для області (не вказано конкретний тип чи групу),
+            # знімаємо абсолютно ВСІ активні загрози в цій області.
+            removed_threats = []
+            while old_state.active_threats:
+                removed_threats.append(old_state.active_threats.pop(0))
+            if removed_threats:
+                removed_threat = removed_threats[-1]
 
         has_changed = removed_threat is not None
 
