@@ -1051,8 +1051,12 @@ class TelegramThreatMonitor:
                     elif eta_seconds < 3600:
                         eta_str = f"~{eta_seconds // 60} хв"
                     else:
-                        hours = eta_seconds / 3600
-                        eta_str = f"~{hours:.1f} год"
+                        h = eta_seconds // 3600
+                        m = (eta_seconds % 3600) // 60
+                        if m > 0:
+                            eta_str = f"~{h} год {m} хв"
+                        else:
+                            eta_str = f"~{h} год"
                 
                 # Keep the best prediction for each region
                 if adj_region not in predictions or predictions[adj_region]["score"] < total_score:

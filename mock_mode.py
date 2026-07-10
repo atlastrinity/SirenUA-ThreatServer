@@ -201,24 +201,15 @@ class ThreatState:
         """Шукає дублікат загрози серед активних.
         Дублікатом вважається загроза з:
         1) Тим самим group_id, АБО
-        2) Тим самим threat_type в межах DEDUP_WINDOW_SECONDS
+        2) Тим самим threat_type (якщо тип загрози не None)
         """
-        now = datetime.now(timezone.utc)
         for t in self.active_threats:
             # Точний збіг за group_id
             if group_id and t.group_id and t.group_id == group_id:
                 return t
-            # Збіг за типом у вікні часу
+            # Збіг за типом загрози
             if t.threat_type == threat_type and threat_type is not None:
-                try:
-                    t_since = datetime.fromisoformat(t.since)
-                    if t_since.tzinfo is None:
-                        t_since = t_since.replace(tzinfo=timezone.utc)
-                    diff = abs((now - t_since).total_seconds())
-                    if diff < self.DEDUP_WINDOW_SECONDS:
-                        return t
-                except (ValueError, TypeError):
-                    pass
+                return t
         return None
 
     def set_threat(self, level: str, threat_type: Optional[str] = None,
@@ -234,6 +225,11 @@ class ThreatState:
         if existing:
             # Оновлюємо існуючу загрозу (уточнення)
             changed = False
+            
+            # Оновлюємо час загрози на поточний
+            existing.since = datetime.now(timezone.utc).isoformat()
+            changed = True
+            
             if confidence is not None and (existing.confidence is None or confidence > existing.confidence):
                 existing.confidence = confidence
                 changed = True
@@ -245,6 +241,16 @@ class ThreatState:
                 changed = True
             if eta_seconds and eta_seconds != existing.eta_seconds:
                 existing.eta_seconds = eta_seconds
+                changed = True
+            # Якщо загроза перестала бути предиктивною (стала реальною)
+            if existing.is_predictive and not is_predictive:
+                existing.is_predictive = False
+                changed = True
+            if group_id and group_id != existing.group_id:
+                existing.group_id = group_id
+                changed = True
+            if is_test and not existing.is_test:
+                existing.is_test = True
                 changed = True
             # Підвищуємо рівень, але ніколи не знижуємо
             if SingleThreat.LEVEL_PRIORITY.get(level, 0) > SingleThreat.LEVEL_PRIORITY.get(existing.level, 0):
