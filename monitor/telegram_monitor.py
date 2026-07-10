@@ -335,7 +335,7 @@ class TelegramThreatMonitor:
                         # One atomic Firestore save for the entire batch
                         self.threat_manager._execute_save_to_db()
                         # Flush buffered Firestore history writes in one batch
-                        from server import flush_history_batch
+                        from database.analytics_db import flush_history_batch
                         flush_history_batch()
                         # Flush buffered FCM notifications (sound only on first)
                         self.threat_manager.flush_fcm_batch()
