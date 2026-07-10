@@ -1305,6 +1305,10 @@ class MockThreatManager:
         if old_active != is_active:
             self.threats[region].is_active = is_active
             
+            # If official alarm is cleared (off), clear all active threats in this region
+            if not is_active:
+                self.threats[region].active_threats = []
+            
             import time
             now = time.time()
             play_sound = True
