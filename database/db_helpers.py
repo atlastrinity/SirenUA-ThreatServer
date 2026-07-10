@@ -11,7 +11,7 @@ import base64
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional
-from core.config import DB_PATH
+from core.config import DB_PATH, logger
 
 try:
     import firebase_admin
@@ -52,13 +52,21 @@ TOPIC_MAPPING = {
 fcm_queue = None
 fcm_worker_task = None
 
+def _log_error(source: str, message: str, endpoint: str = None, context: str = None, error_type: str = None):
+    try:
+        from database.analytics_db import log_error_to_db
+        log_error_to_db(source, message, endpoint, context, error_type)
+    except Exception as err:
+        logger.error(f"Internal error logger failure: {err}")
+
 def get_db():
     if not HAS_FIREBASE or not firebase_admin._apps:
         return None
     try:
         return firestore.client()
     except Exception as e:
-        print(f"⚠️ Помилка отримання Firestore клієнта: {e}")
+        logger.error(f"Помилка отримання Firestore клієнта: {e}")
+        _log_error("database_helpers", f"Помилка отримання Firestore клієнта: {e}", "get_db", error_type="firebase_error")
         return None
 
 def backup_sqlite_to_firestore():
@@ -108,7 +116,8 @@ def backup_sqlite_to_firestore():
         print(f"💾 [Backup] SQLite успішно збережено у Firestore (розмір: {len(encoded) / 1024:.2f} KB)")
         return True
     except Exception as e:
-        print(f"⚠️ [Backup] Помилка резервного копіювання SQLite у Firestore: {e}")
+        logger.error(f"Помилка резервного копіювання SQLite у Firestore: {e}")
+        _log_error("database_helpers", f"Помилка резервного копіювання SQLite: {e}", "backup_sqlite_to_firestore", error_type="database_error")
         return False
 
 def restore_sqlite_from_firestore(force: bool = False):
@@ -198,7 +207,8 @@ def restore_sqlite_from_firestore(force: bool = False):
         print("💾 [Restore] SQLite успішно відновлено з бекапу Firestore!")
         return True
     except Exception as e:
-        print(f"⚠️ [Restore] Помилка відновлення SQLite з Firestore: {e}")
+        logger.error(f"Помилка відновлення SQLite з Firestore: {e}")
+        _log_error("database_helpers", f"Помилка відновлення SQLite: {e}", "restore_sqlite_from_firestore", error_type="database_error")
         return False
 
 def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> bool:
@@ -226,7 +236,8 @@ def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> b
             if abs(diff) < 20:
                 return True
     except Exception as e:
-        print(f"⚠️ Error checking duplicate history in Firestore: {e}")
+        logger.error(f"Error checking duplicate history in Firestore: {e}")
+        _log_error("database_helpers", f"Error checking duplicate history: {e}", "is_duplicate_event", error_type="firebase_error")
     return False
 
 def delete_test_history_from_firestore():
@@ -241,7 +252,8 @@ def delete_test_history_from_firestore():
             deleted_count += 1
         print(f"🧹 Видалено {deleted_count} тестових записів з історії Firestore")
     except Exception as e:
-        print(f"⚠️ Помилка видалення тестової історії з Firestore: {e}")
+        logger.error(f"Помилка видалення тестової історії з Firestore: {e}")
+        _log_error("database_helpers", f"Помилка видалення тестової історії: {e}", "delete_test_history_from_firestore", error_type="firebase_error")
 
 def delete_test_history_from_sqlite():
     try:
@@ -270,7 +282,8 @@ def delete_test_history_from_sqlite():
         conn.close()
         print(f"🧹 Видалено тестові записи з SQLite: {threats_deleted} загроз, {clearings_deleted} відбоїв, {paired_deleted} зв'язаних подій")
     except Exception as e:
-        print(f"⚠️ Помилка видалення тестової історії з SQLite: {e}")
+        logger.error(f"Помилка видалення тестової історії з SQLite: {e}")
+        _log_error("database_helpers", f"Помилка видалення тестової історії з SQLite: {e}", "delete_test_history_from_sqlite", error_type="database_error")
 
 async def fcm_queue_worker():
     global fcm_queue
@@ -297,7 +310,8 @@ async def fcm_queue_worker():
         except asyncio.CancelledError:
             break
         except Exception as e:
-            print(f"⚠️ Помилка у воркері черги FCM: {e}")
+            logger.error(f"Помилка у воркері черги FCM: {e}")
+            _log_error("database_helpers", f"Помилка у воркері черги FCM: {e}", "fcm_queue_worker", error_type="firebase_error")
             await asyncio.sleep(1.0)
 
 async def start_fcm_worker():
@@ -412,4 +426,5 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         response = messaging.send(message)
         print(f"🔔 FCM Push надіслано в топік {topic} (відповідь: {response})")
     except Exception as e:
-        print(f"⚠️ Помилка відправки FCM Push для {region}: {e}")
+        logger.error(f"Помилка відправки FCM Push для {region}: {e}")
+        _log_error("database_helpers", f"Помилка відправки FCM Push для {region}: {e}", "send_fcm_notification", context=f"region={region}, topic={topic}", error_type="firebase_error")

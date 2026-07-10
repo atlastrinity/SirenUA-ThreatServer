@@ -284,7 +284,15 @@ async def _fetch_firestore_shelters() -> List[Shelter]:
         return shelters
     except Exception as e:
         logger.error(f"⚠️ Помилка завантаження з Firestore: {e}")
+        _log_error("shelter_manager", f"Помилка завантаження з Firestore: {e}", "load_from_firestore", error_type="firebase_error")
         return []
+
+def _log_error(source: str, message: str, endpoint: str = None, context: str = None, error_type: str = None):
+    try:
+        from database.analytics_db import log_error_to_db
+        log_error_to_db(source, message, endpoint, context, error_type)
+    except Exception as err:
+        logger.error(f"Internal error logger failure: {err}")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -398,6 +406,7 @@ class ShelterManager:
                                         total_synced += await self._upload_to_firestore(records)
                         except Exception as e:
                             logger.error(f"Помилка завантаження датасету з {url}: {e}")
+                            _log_error("shelter_manager", f"Помилка завантаження датасету: {e}", "sync_gov_datasets", context=f"url={url}", error_type="network_error")
                             
                 logger.info(f"✅ Синхронізація завершена. Оновлено {total_synced} укриттів.")
                 
@@ -411,6 +420,7 @@ class ShelterManager:
                 break
             except Exception as e:
                 logger.error(f"⚠️ Помилка синхронізації офіційних укриттів: {e}")
+                _log_error("shelter_manager", f"Помилка синхронізації офіційних укриттів: {e}", "sync_gov_datasets", error_type="systemic")
                 # При помилці чекаємо 1 годину і повторюємо
                 await asyncio.sleep(3600)
 
@@ -459,6 +469,7 @@ class ShelterManager:
             return await loop.run_in_executor(None, _upload)
         except Exception as e:
             logger.error(f"Firestore upload error: {e}")
+            _log_error("shelter_manager", f"Firestore upload error: {e}", "upload_to_firestore", error_type="firebase_error")
             return 0
 
     async def _refresh_loop(self):
@@ -472,6 +483,7 @@ class ShelterManager:
                 break
             except Exception as e:
                 logger.error(f"Помилка оновлення укриттів: {e}")
+                _log_error("shelter_manager", f"Помилка оновлення укриттів: {e}", "refresh_loop", error_type="systemic")
                 await asyncio.sleep(300)  # retry in 5 min
 
     async def stop(self):
