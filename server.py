@@ -574,6 +574,21 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
             closed_count = cursor.rowcount
             if closed_count > 0:
                 print(f"🔗 [Paired] Закрито {closed_count} paired_event(s) для {region} (accuracy: {prediction_accuracy})")
+            
+            # Додатково закриваємо всі інші завислі активні події для цього регіону (якщо це загальний відбій)
+            if not clearing_telemetry.get("linked_group_id"):
+                cursor.execute('''
+                    UPDATE paired_events SET
+                        clearing_event_id = ?,
+                        lifecycle_status = 'cleared',
+                        confidence_at_clear = ?,
+                        prediction_accuracy = ?,
+                        duration_seconds = CAST((strftime('%s', 'now') - strftime('%s', created_at)) AS INTEGER)
+                    WHERE region = ? AND lifecycle_status = 'active'
+                ''', (clearing_id, clearing_confidence, prediction_accuracy, region))
+                other_closed = cursor.rowcount
+                if other_closed > 0:
+                    print(f"🔗 [Paired] Додатково закрито {other_closed} завислих подій для {region}")
         
         conn.commit()
         conn.close()
