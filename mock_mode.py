@@ -86,59 +86,260 @@ SHAHED_ROUTES = {
 }
 
 
-class ThreatState:
-    """Стан загрози для однієї області."""
+import uuid
 
-    def __init__(self):
-        self.level: str = "none"  # none, low, medium, high, critical
-        self.threat_type: Optional[str] = None
-        self.detail: Optional[str] = None
-        self.since: Optional[str] = None
-        self.eta: Optional[str] = None
-        self.confidence: Optional[int] = None  # 0-100% AI confidence
-        self.is_predictive: bool = False
-        self.is_active: bool = False
-        self.is_test: bool = False
 
-    def set_threat(self, level: str, threat_type: Optional[str] = None,
-                   detail: Optional[str] = None, confidence: Optional[int] = None,
-                   eta: Optional[str] = None, is_predictive: bool = False,
-                   is_test: bool = False):
-        self.level = level
-        self.threat_type = threat_type
-        self.detail = detail
-        self.confidence = confidence
-        self.eta = eta
-        self.is_predictive = is_predictive
-        self.is_test = is_test
-        if level != "none":
-            self.since = datetime.now(timezone.utc).isoformat()
-        else:
-            self.since = None
+class SingleThreat:
+    """Одна конкретна загроза з унікальним ідентифікатором."""
+
+    LEVEL_PRIORITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "none": 0}
+
+    def __init__(self, level: str, threat_type: Optional[str] = None,
+                 detail: Optional[str] = None, confidence: Optional[int] = None,
+                 eta: Optional[str] = None, is_predictive: bool = False,
+                 is_test: bool = False, group_id: Optional[str] = None,
+                 paired_event_id: Optional[int] = None,
+                 eta_seconds: Optional[int] = None):
+        self.threat_id: str = group_id or f"t_{uuid.uuid4().hex[:12]}"
+        self.level: str = level
+        self.threat_type: Optional[str] = threat_type
+        self.detail: Optional[str] = detail
+        self.since: str = datetime.now(timezone.utc).isoformat()
+        self.eta: Optional[str] = eta
+        self.eta_seconds: Optional[int] = eta_seconds  # ETA в секундах для точного розрахунку
+        self.confidence: Optional[int] = confidence
+        self.is_predictive: bool = is_predictive
+        self.is_test: bool = is_test
+        self.group_id: Optional[str] = group_id
+        self.paired_event_id: Optional[int] = paired_event_id
 
     def to_dict(self) -> dict:
         return {
+            "threat_id": self.threat_id,
             "level": self.level,
             "type": self.threat_type,
             "detail": self.detail,
             "since": self.since,
             "confidence": self.confidence,
             "eta": self.eta,
+            "eta_seconds": self.eta_seconds,
             "is_predictive": self.is_predictive,
-            "is_active": self.is_active,
             "is_test": self.is_test,
+            "group_id": self.group_id,
+            "paired_event_id": self.paired_event_id,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "SingleThreat":
+        """Відновлення з словника (для load_from_db/file)."""
+        t = cls(
+            level=data.get("level", "low"),
+            threat_type=data.get("type"),
+            detail=data.get("detail"),
+            confidence=data.get("confidence"),
+            eta=data.get("eta"),
+            is_predictive=data.get("is_predictive", False),
+            is_test=data.get("is_test", False),
+            group_id=data.get("group_id"),
+            paired_event_id=data.get("paired_event_id"),
+            eta_seconds=data.get("eta_seconds"),
+        )
+        t.threat_id = data.get("threat_id", t.threat_id)
+        t.since = data.get("since", t.since)
+        return t
+
+
+class ThreatState:
+    """Стан загроз для однієї області (підтримка множинних загроз)."""
+
+    # Вікно дедуплікації: загрози одного типу в межах 5 хвилин вважаються дублікатами
+    DEDUP_WINDOW_SECONDS = 300
+
+    def __init__(self):
+        self.active_threats: list[SingleThreat] = []
+        self.is_active: bool = False  # Офіційна тривога (alerts.in.ua)
+        self.is_test: bool = False
+
+    @property
+    def level(self) -> str:
+        """Найвищий рівень серед усіх активних загроз."""
+        if not self.active_threats:
+            return "none"
+        return max(self.active_threats,
+                   key=lambda t: SingleThreat.LEVEL_PRIORITY.get(t.level, 0)).level
+
+    @property
+    def threat_type(self) -> Optional[str]:
+        """Тип primary (найновішої) загрози."""
+        return self.active_threats[-1].threat_type if self.active_threats else None
+
+    @property
+    def detail(self) -> Optional[str]:
+        """Detail primary загрози."""
+        return self.active_threats[-1].detail if self.active_threats else None
+
+    @property
+    def since(self) -> Optional[str]:
+        """Час найновішої загрози."""
+        return self.active_threats[-1].since if self.active_threats else None
+
+    @property
+    def confidence(self) -> Optional[int]:
+        """Confidence primary загрози."""
+        return self.active_threats[-1].confidence if self.active_threats else None
+
+    @property
+    def eta(self) -> Optional[str]:
+        """ETA primary загрози."""
+        return self.active_threats[-1].eta if self.active_threats else None
+
+    @property
+    def is_predictive(self) -> bool:
+        return self.active_threats[-1].is_predictive if self.active_threats else False
+
+    def _find_duplicate(self, threat_type: Optional[str], group_id: Optional[str]) -> Optional[SingleThreat]:
+        """Шукає дублікат загрози серед активних.
+        Дублікатом вважається загроза з:
+        1) Тим самим group_id, АБО
+        2) Тим самим threat_type в межах DEDUP_WINDOW_SECONDS
+        """
+        now = datetime.now(timezone.utc)
+        for t in self.active_threats:
+            # Точний збіг за group_id
+            if group_id and t.group_id and t.group_id == group_id:
+                return t
+            # Збіг за типом у вікні часу
+            if t.threat_type == threat_type and threat_type is not None:
+                try:
+                    t_since = datetime.fromisoformat(t.since)
+                    if t_since.tzinfo is None:
+                        t_since = t_since.replace(tzinfo=timezone.utc)
+                    diff = abs((now - t_since).total_seconds())
+                    if diff < self.DEDUP_WINDOW_SECONDS:
+                        return t
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    def set_threat(self, level: str, threat_type: Optional[str] = None,
+                   detail: Optional[str] = None, confidence: Optional[int] = None,
+                   eta: Optional[str] = None, is_predictive: bool = False,
+                   is_test: bool = False, group_id: Optional[str] = None,
+                   eta_seconds: Optional[int] = None) -> bool:
+        """Додає або оновлює загрозу. Повертає True якщо щось змінилось."""
+        if level == "none":
+            return False
+
+        existing = self._find_duplicate(threat_type, group_id)
+        if existing:
+            # Оновлюємо існуючу загрозу (уточнення)
+            changed = False
+            if confidence is not None and (existing.confidence is None or confidence > existing.confidence):
+                existing.confidence = confidence
+                changed = True
+            if detail and detail != existing.detail:
+                existing.detail = detail
+                changed = True
+            if eta and eta != existing.eta:
+                existing.eta = eta
+                changed = True
+            if eta_seconds and eta_seconds != existing.eta_seconds:
+                existing.eta_seconds = eta_seconds
+                changed = True
+            # Підвищуємо рівень, але ніколи не знижуємо
+            if SingleThreat.LEVEL_PRIORITY.get(level, 0) > SingleThreat.LEVEL_PRIORITY.get(existing.level, 0):
+                existing.level = level
+                changed = True
+            return changed
+
+        # Нова загроза
+        new_threat = SingleThreat(
+            level=level,
+            threat_type=threat_type,
+            detail=detail,
+            confidence=confidence,
+            eta=eta,
+            is_predictive=is_predictive,
+            is_test=is_test,
+            group_id=group_id,
+            eta_seconds=eta_seconds,
+        )
+        self.active_threats.append(new_threat)
+        self.is_test = is_test
+        return True
+
+    def clear_by_group_id(self, group_id: str) -> Optional[SingleThreat]:
+        """Знімає конкретну загрозу за group_id. Повертає зняту загрозу або None."""
+        for i, t in enumerate(self.active_threats):
+            if t.group_id and t.group_id == group_id:
+                return self.active_threats.pop(i)
+        return None
+
+    def clear_by_type(self, threat_type: str) -> Optional[SingleThreat]:
+        """Знімає найстарішу загрозу вказаного типу. Повертає зняту загрозу або None."""
+        for i, t in enumerate(self.active_threats):
+            if t.threat_type == threat_type:
+                return self.active_threats.pop(i)
+        return None
+
+    def clear_oldest(self) -> Optional[SingleThreat]:
+        """Знімає найстарішу загрозу. Повертає зняту загрозу або None."""
+        if self.active_threats:
+            return self.active_threats.pop(0)
+        return None
+
+    def clear_all_threats(self):
+        """Знімає всі загрози."""
+        self.active_threats.clear()
+        self.is_test = False
+
     def clear(self):
-        self.level = "none"
-        self.threat_type = None
-        self.detail = None
-        self.since = None
-        self.confidence = None
-        self.eta = None
-        self.is_predictive = False
+        """Повне очищення (legacy-сумісність)."""
+        self.active_threats.clear()
         self.is_active = False
         self.is_test = False
+
+    def to_dict(self) -> dict:
+        """Серіалізація — зворотно-сумісний формат + масив active_threats."""
+        primary = self.active_threats[-1] if self.active_threats else None
+        return {
+            # Зворотна сумісність — flat fields від primary загрози
+            "level": self.level,
+            "type": primary.threat_type if primary else None,
+            "detail": primary.detail if primary else None,
+            "since": primary.since if primary else None,
+            "confidence": primary.confidence if primary else None,
+            "eta": primary.eta if primary else None,
+            "is_predictive": primary.is_predictive if primary else False,
+            "is_active": self.is_active,
+            "is_test": self.is_test,
+            # Новий масив усіх загроз
+            "active_threats": [t.to_dict() for t in self.active_threats],
+        }
+
+    def load_from_dict(self, data: dict):
+        """Відновлення стану з словника (для load_from_db/file)."""
+        self.is_active = data.get("is_active", False)
+        self.is_test = data.get("is_test", False)
+        # Якщо є масив active_threats — завантажити з нього
+        at_list = data.get("active_threats")
+        if at_list and isinstance(at_list, list) and len(at_list) > 0:
+            self.active_threats = [SingleThreat.from_dict(td) for td in at_list]
+        else:
+            # Legacy: одна загроза у flat-форматі
+            self.active_threats.clear()
+            level = data.get("level", "none")
+            if level != "none":
+                self.active_threats.append(SingleThreat(
+                    level=level,
+                    threat_type=data.get("type"),
+                    detail=data.get("detail"),
+                    confidence=data.get("confidence"),
+                    eta=data.get("eta"),
+                    is_predictive=data.get("is_predictive", False),
+                    is_test=data.get("is_test", False),
+                    group_id=data.get("group_id"),
+                ))
 
 try:
     import firebase_admin
@@ -594,16 +795,7 @@ class MockThreatManager:
                     state_data = doc.to_dict()
                     for region, data in state_data.items():
                         if region in self.threats:
-                            state = self.threats[region]
-                            state.level = data.get("level", "none")
-                            state.threat_type = data.get("type")
-                            state.detail = data.get("detail")
-                            state.since = data.get("since")
-                            state.confidence = data.get("confidence")
-                            state.eta = data.get("eta")
-                            state.is_predictive = data.get("is_predictive", False)
-                            state.is_active = data.get("is_active", False)
-                            state.is_test = data.get("is_test", False)
+                            self.threats[region].load_from_dict(data)
                     print("💾 Завантажено збережений стан загроз з Firebase Firestore")
                 else:
                     print("⚠️ Документ загроз у Firebase не знайдено.")
@@ -709,16 +901,7 @@ class MockThreatManager:
                     state_data = json.load(f)
                 for region, data in state_data.items():
                     if region in self.threats:
-                        state = self.threats[region]
-                        state.level = data.get("level", "none")
-                        state.threat_type = data.get("type")
-                        state.detail = data.get("detail")
-                        state.since = data.get("since")
-                        state.confidence = data.get("confidence")
-                        state.eta = data.get("eta")
-                        state.is_predictive = data.get("is_predictive", False)
-                        state.is_active = data.get("is_active", False)
-                        state.is_test = data.get("is_test", False)
+                        self.threats[region].load_from_dict(data)
                 print(f"💾 Завантажено збережений стан загроз з {filepath}")
             except Exception as e:
                 print(f"⚠️ Помилка завантаження стану загроз: {e}")
@@ -840,24 +1023,15 @@ class MockThreatManager:
             return False
 
         old_state = self.threats[region]
-        has_changed = (old_state.level != level or 
-                       old_state.threat_type != threat_type or 
-                       old_state.detail != detail or
-                       old_state.confidence != confidence or
-                       old_state.is_test != is_test)
+        old_level = old_state.level
+
+        # Витягуємо group_id з телеметрії для дедуплікації
+        group_id = None
+        if telemetry and isinstance(telemetry, dict):
+            group_id = telemetry.get("group_id")
 
         if not is_test:
-            self.real_threats_backup[region] = {
-                "level": level,
-                "type": threat_type,
-                "detail": detail,
-                "since": old_state.since if old_state.level == level else None,
-                "confidence": confidence,
-                "eta": eta,
-                "is_predictive": is_predictive,
-                "is_active": old_state.is_active,
-                "is_test": False
-            }
+            self.real_threats_backup[region] = old_state.to_dict()
             self.save_real_threats_to_db()
         else:
             # Якщо це перша тестова загроза у сесії, робимо бекап SQLite у Firestore
@@ -872,7 +1046,10 @@ class MockThreatManager:
                 self.real_threats_backup[region] = old_state.to_dict()
                 self.save_real_threats_to_db()
 
-        self.threats[region].set_threat(level, threat_type, detail, confidence, eta, is_predictive, is_test)
+        has_changed = self.threats[region].set_threat(
+            level, threat_type, detail, confidence, eta,
+            is_predictive, is_test, group_id=group_id
+        )
         
         if has_changed:
             import time
@@ -925,28 +1102,44 @@ class MockThreatManager:
             )
         print(f"🚀 FCM batch flush: {len(items)} сповіщень (звук тільки у першому)")
 
-    def clear_threat(self, region: str, clearing_telemetry: dict = None) -> bool:
+    def clear_threat(self, region: str, clearing_telemetry: dict = None,
+                     group_id: str = None, threat_type: str = None) -> bool:
+        """Знімає конкретну загрозу з області.
+        Логіка пошуку загрози для зняття:
+        1) За group_id (якщо вказано або є в clearing_telemetry.linked_group_id)
+        2) За threat_type (якщо вказано)
+        3) Найстаріша загроза (fallback)
+        """
         if region not in self.threats:
             return False
         old_state = self.threats[region]
-        has_changed = (old_state.level != "none")
+        had_threats = len(old_state.active_threats) > 0
 
-        if not old_state.is_test:
-            if region in self.real_threats_backup:
-                self.real_threats_backup[region]["level"] = "none"
-                self.real_threats_backup[region]["type"] = None
-                self.real_threats_backup[region]["detail"] = None
-                self.real_threats_backup[region]["since"] = None
-                self.real_threats_backup[region]["confidence"] = None
-                self.real_threats_backup[region]["eta"] = None
-                self.real_threats_backup[region]["is_predictive"] = False
-                self.save_real_threats_to_db()
+        # Визначаємо group_id та threat_type для пошуку
+        linked_gid = group_id
+        if not linked_gid and clearing_telemetry and isinstance(clearing_telemetry, dict):
+            linked_gid = clearing_telemetry.get("linked_group_id")
+        clearing_type = threat_type
+        if not clearing_type and clearing_telemetry and isinstance(clearing_telemetry, dict):
+            clearing_type = clearing_telemetry.get("threat_type_cleared")
 
-        keep_active = old_state.is_active if not old_state.is_test else False
-        self.threats[region].clear()
-        if keep_active:
-            self.threats[region].is_active = True
+        # Адресне зняття загрози
+        removed_threat = None
+        if linked_gid:
+            removed_threat = old_state.clear_by_group_id(linked_gid)
+        if removed_threat is None and clearing_type:
+            removed_threat = old_state.clear_by_type(clearing_type)
+        if removed_threat is None and had_threats:
+            removed_threat = old_state.clear_oldest()
 
+        has_changed = removed_threat is not None
+
+        # Оновлюємо бекап реальних загроз
+        if has_changed and (removed_threat is None or not removed_threat.is_test):
+            self.real_threats_backup[region] = old_state.to_dict()
+            self.save_real_threats_to_db()
+
+        # Якщо більше немає активних загроз — відправляємо FCM "none"
         if has_changed:
             import time
             now = time.time()
@@ -955,8 +1148,15 @@ class MockThreatManager:
                 play_sound = False
             else:
                 self.last_sound_time = now
-                
-            send_fcm_notification(region, "none", play_sound=play_sound, is_official_alarm=keep_active, is_test=old_state.is_test)
+
+            current_level = old_state.level  # "none" якщо порожній, або найвищий рівень залишених
+            if current_level == "none":
+                # Усі загрози зняті — відправляємо FCM про зняття
+                send_fcm_notification(region, "none", play_sound=play_sound,
+                                      is_official_alarm=old_state.is_active,
+                                      is_test=removed_threat.is_test if removed_threat else False)
+            # Якщо залишились інші загрози — не відправляємо FCM "none"
+
             if not self._batch_mode:
                 self.save_to_db()
             if hasattr(self, 'on_change'):
@@ -1004,14 +1204,7 @@ class MockThreatManager:
                         )
                         
                         if restored_has_changed:
-                            state.level = data.get("level", "none")
-                            state.threat_type = data.get("type")
-                            state.detail = data.get("detail")
-                            state.since = data.get("since")
-                            state.confidence = data.get("confidence")
-                            state.eta = data.get("eta")
-                            state.is_predictive = data.get("is_predictive", False)
-                            state.is_active = data.get("is_active", False)
+                            state.load_from_dict(data)
                             state.is_test = False
                             
                             any_changed = True

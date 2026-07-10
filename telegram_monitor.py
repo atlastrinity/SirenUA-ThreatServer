@@ -561,7 +561,7 @@ class TelegramThreatMonitor:
                             was_predictive=was_pred
                         )
                         
-                        self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry)
+                        self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type)
                         if region in self._clear_tasks:
                             self._clear_tasks[region].cancel()
                             del self._clear_tasks[region]
