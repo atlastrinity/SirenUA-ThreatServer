@@ -470,35 +470,41 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                 SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
                 FROM threat_history th
                 JOIN telemetry_data td ON th.id = td.threat_event_id
-                WHERE th.region = ? AND td.group_id = ?
+                JOIN paired_events pe ON th.id = pe.threat_event_id
+                WHERE th.region = ? AND td.group_id = ? AND pe.lifecycle_status = 'active'
                 ORDER BY th.timestamp DESC LIMIT 1
             ''', (region, linked_gid))
         else:
-            # Fallback: find the most recent non-none threat for this region
+            # Fallback: find the most recent non-none active threat for this region
             cursor.execute('''
-                SELECT id, timestamp, threat_level, threat_type, confidence
-                FROM threat_history
-                WHERE region = ? AND threat_level != 'none'
-                ORDER BY timestamp DESC LIMIT 1
+                SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
+                FROM threat_history th
+                JOIN paired_events pe ON th.id = pe.threat_event_id
+                WHERE th.region = ? AND pe.lifecycle_status = 'active'
+                ORDER BY th.timestamp DESC LIMIT 1
             ''', (region,))
         
         row = cursor.fetchone()
-        if row:
-            original_event_id = row["id"]
-            original_level = row["threat_level"]
-            original_type = row["threat_type"]
-            original_confidence = row["confidence"]
-            threat_set_ts = row["timestamp"]
-            # Calculate duration in seconds
-            try:
-                from datetime import datetime, timezone
-                set_time = datetime.fromisoformat(threat_set_ts.replace('Z', '+00:00') if threat_set_ts else "")
-                now = datetime.now(timezone.utc)
-                threat_duration_sec = int((now - set_time.replace(tzinfo=timezone.utc)).total_seconds())
-                if threat_duration_sec < 0:
-                    threat_duration_sec = None
-            except Exception:
+        if not row:
+            # No active threat to clear (e.g. already cleared manually by telegram_monitor.py)
+            conn.close()
+            return None
+            
+        original_event_id = row["id"]
+        original_level = row["threat_level"]
+        original_type = row["threat_type"]
+        original_confidence = row["confidence"]
+        threat_set_ts = row["timestamp"]
+        # Calculate duration in seconds
+        try:
+            from datetime import datetime, timezone
+            set_time = datetime.fromisoformat(threat_set_ts.replace('Z', '+00:00') if threat_set_ts else "")
+            now = datetime.now(timezone.utc)
+            threat_duration_sec = int((now - set_time.replace(tzinfo=timezone.utc)).total_seconds())
+            if threat_duration_sec < 0:
                 threat_duration_sec = None
+        except Exception:
+            threat_duration_sec = None
         
         tags_json = json.dumps(clearing_telemetry.get("clearing_context_tags", []), ensure_ascii=False)
         
@@ -619,7 +625,8 @@ telegram_monitor = None
 is_live_mode = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
 
 # Track last logged threat states to avoid duplicate logging and properly detect changes
-last_logged_states = {}  # region -> (level, is_active, threat_type)
+# region -> {"active_threats": {threat_id: {...}}, "is_active": bool, "level": str}
+last_logged_states = {}
 
 # Firestore history batch buffer — collects writes during _batch_mode for one flush
 _history_batch_buffer = []
@@ -708,7 +715,39 @@ def safe_run_task(coro):
 
 def on_threat_changed(region, state, telemetry=None, rules_applied=None):
     global last_logged_states, _history_batch_buffer
-    prev_level, prev_active, prev_type = last_logged_states.get(region, ("none", False, None))
+    
+    # Retrieve previous state structure
+    prev_state_dict = last_logged_states.get(region)
+    if not isinstance(prev_state_dict, dict) or "active_threats" not in prev_state_dict:
+        # Migrate from old format (tuple) or initialize
+        old_val = last_logged_states.get(region)
+        if isinstance(old_val, tuple) and len(old_val) == 3:
+            p_level, p_active, p_type = old_val
+            dummy_threats = {}
+            if p_level != "none" and p_type and p_type != "official_alarm":
+                dummy_threats["dummy_id"] = {
+                    "level": p_level,
+                    "threat_type": p_type,
+                    "detail": "Попередньо виявлена загроза",
+                    "confidence": 75,
+                    "is_predictive": False,
+                    "is_test": False
+                }
+            prev_state_dict = {
+                "active_threats": dummy_threats,
+                "is_active": p_active,
+                "level": p_level
+            }
+        else:
+            prev_state_dict = {
+                "active_threats": {},
+                "is_active": False,
+                "level": "none"
+            }
+            
+    prev_active = prev_state_dict["is_active"]
+    prev_level = prev_state_dict["level"]
+    prev_active_threats = prev_state_dict["active_threats"]
     
     is_batch = getattr(threat_manager, '_batch_mode', False)
     
@@ -752,75 +791,130 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
             })
         else:
             safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail, is_test=state.is_test))
-        
-    # 2. AI/Telegram threat level change logging
-    if prev_level != state.level:
-        current_type = state.threat_type
-        if (current_type and current_type != "official_alarm") or (prev_type and prev_type != "official_alarm" and state.level == "none"):
-            if state.level != "none":
-                safe_run_task(asyncio.to_thread(log_threat_to_db, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, rules_applied=rules_applied, is_predictive=getattr(state, 'is_predictive', False)))
-                if is_batch:
-                    from datetime import datetime, timezone
-                    import time
-                    doc_data = {
-                        "id": int(time.time() * 1000),
-                        "region": region,
-                        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                        "threat_level": state.level,
-                        "threat_type": current_type,
-                        "detail": state.detail,
-                        "confidence": state.confidence,
-                        "is_test": state.is_test
-                    }
-                    if telemetry:
-                        doc_data["telemetry"] = telemetry
-                    _history_batch_buffer.append(doc_data)
-                else:
-                    safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, state.level, current_type, state.detail, state.confidence, telemetry=telemetry, is_test=state.is_test))
-            elif prev_level != "none":
-                # Threat has cleared
-                safe_run_task(asyncio.to_thread(log_threat_to_db, region, "none", prev_type, "Відбій загрози"))
-                
-                # Automatically close the active paired event in SQLite
-                resolution_type = "expired"
-                prediction_accuracy = "overestimated"
-                if state.is_active:
-                    prediction_accuracy = "confirmed"
-                    resolution_type = "impact"
-                
-                clearing_telemetry = {
-                    "resolution_type": resolution_type,
-                    "prediction_accuracy_hint": prediction_accuracy,
-                    "damage_assessment": "unknown",
-                    "impact_confirmed": state.is_active
-                }
-                
-                safe_run_task(asyncio.to_thread(
-                    log_clearing_to_db,
-                    region=region,
-                    clearing_telemetry=clearing_telemetry,
-                    source_channel="auto_clear" if not state.is_active else "official_alarm",
-                    message_text="Автоматичне зняття загрози або відбій тривоги",
-                    is_test=state.is_test
-                ))
-                
-                if is_batch:
-                    from datetime import datetime, timezone
-                    import time
-                    _history_batch_buffer.append({
-                        "id": int(time.time() * 1000),
-                        "region": region,
-                        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                        "threat_level": "none",
-                        "threat_type": prev_type,
-                        "detail": "Відбій загрози",
-                        "confidence": None,
-                        "is_test": state.is_test
-                    })
-                else:
-                    safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, "none", prev_type, "Відбій загрози", is_test=state.is_test))
             
-    last_logged_states[region] = (state.level, state.is_active, state.threat_type)
+    # 2. AI/Telegram threat level/type changes tracking
+    # Build dictionary of current active threats
+    curr_active_threats = {
+        t.threat_id: {
+            "level": t.level,
+            "threat_type": t.threat_type,
+            "detail": t.detail,
+            "confidence": t.confidence,
+            "is_predictive": getattr(t, "is_predictive", False),
+            "is_test": t.is_test
+        }
+        for t in state.active_threats
+        if t.threat_type and t.threat_type != "official_alarm"
+    }
+    
+    # Detect added threats
+    added_ids = set(curr_active_threats.keys()) - set(prev_active_threats.keys())
+    for tid in added_ids:
+        t_data = curr_active_threats[tid]
+        safe_run_task(asyncio.to_thread(
+            log_threat_to_db,
+            region=region,
+            level=t_data["level"],
+            threat_type=t_data["threat_type"],
+            detail=t_data["detail"],
+            confidence=t_data["confidence"],
+            telemetry=telemetry,
+            rules_applied=rules_applied,
+            is_predictive=t_data["is_predictive"]
+        ))
+        
+        if is_batch:
+            from datetime import datetime, timezone
+            import time
+            doc_data = {
+                "id": int(time.time() * 1000),
+                "region": region,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                "threat_level": t_data["level"],
+                "threat_type": t_data["threat_type"],
+                "detail": t_data["detail"],
+                "confidence": t_data["confidence"],
+                "is_test": t_data["is_test"]
+            }
+            if telemetry:
+                doc_data["telemetry"] = telemetry
+            _history_batch_buffer.append(doc_data)
+        else:
+            safe_run_task(asyncio.to_thread(
+                log_threat_to_firestore,
+                region=region,
+                level=t_data["level"],
+                threat_type=t_data["threat_type"],
+                detail=t_data["detail"],
+                confidence=t_data["confidence"],
+                telemetry=telemetry,
+                is_test=t_data["is_test"]
+            ))
+            
+    # Detect cleared threats
+    cleared_ids = set(prev_active_threats.keys()) - set(curr_active_threats.keys())
+    for tid in cleared_ids:
+        t_data = prev_active_threats[tid]
+        safe_run_task(asyncio.to_thread(
+            log_threat_to_db,
+            region,
+            "none",
+            t_data["threat_type"],
+            "Відбій загрози"
+        ))
+        
+        # Determine prediction accuracy and resolution type
+        resolution_type = "expired"
+        prediction_accuracy = "overestimated"
+        if state.is_active:
+            prediction_accuracy = "confirmed"
+            resolution_type = "impact"
+            
+        c_telemetry = telemetry if telemetry else {
+            "resolution_type": resolution_type,
+            "prediction_accuracy_hint": prediction_accuracy,
+            "damage_assessment": "unknown",
+            "impact_confirmed": state.is_active
+        }
+        
+        safe_run_task(asyncio.to_thread(
+            log_clearing_to_db,
+            region=region,
+            clearing_telemetry=c_telemetry,
+            source_channel="auto_clear" if not state.is_active else "official_alarm",
+            message_text="Автоматичне зняття загрози або відбій тривоги",
+            is_test=t_data["is_test"]
+        ))
+        
+        if is_batch:
+            from datetime import datetime, timezone
+            import time
+            _history_batch_buffer.append({
+                "id": int(time.time() * 1000),
+                "region": region,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                "threat_level": "none",
+                "threat_type": t_data["threat_type"],
+                "detail": "Відбій загрози",
+                "confidence": None,
+                "is_test": t_data["is_test"]
+            })
+        else:
+            safe_run_task(asyncio.to_thread(
+                log_threat_to_firestore,
+                region,
+                "none",
+                t_data["threat_type"],
+                "Відбій загрози",
+                is_test=t_data["is_test"]
+            ))
+            
+    # Save structured state to last_logged_states
+    last_logged_states[region] = {
+        "active_threats": curr_active_threats,
+        "is_active": state.is_active,
+        "level": state.level
+    }
 
 threat_manager.on_change = on_threat_changed
 
@@ -964,7 +1058,22 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(threat_manager.load_from_db)
         # Ініціалізація відслідковуваного стану після завантаження
         for r, s in threat_manager.threats.items():
-            last_logged_states[r] = (s.level, s.is_active, s.threat_type)
+            last_logged_states[r] = {
+                "active_threats": {
+                    t.threat_id: {
+                        "level": t.level,
+                        "threat_type": t.threat_type,
+                        "detail": t.detail,
+                        "confidence": t.confidence,
+                        "is_predictive": getattr(t, "is_predictive", False),
+                        "is_test": t.is_test
+                    }
+                    for t in s.active_threats
+                    if t.threat_type and t.threat_type != "official_alarm"
+                },
+                "is_active": s.is_active,
+                "level": s.level
+            }
     except Exception as e:
         print(f"⚠️ Помилка асинхронного завантаження стану загроз: {e}")
 
