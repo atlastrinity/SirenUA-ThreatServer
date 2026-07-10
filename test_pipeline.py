@@ -6,8 +6,9 @@ import re
 # Add threat_server path to sys.path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from mock_mode import MockThreatManager, ALL_REGIONS
-from telegram_monitor import TelegramThreatMonitor
+from core.threat_state import MockThreatManager
+from core.regions import ALL_REGIONS
+from monitor.telegram_monitor import TelegramThreatMonitor
 
 class TestThreatManager(MockThreatManager):
     def __init__(self):

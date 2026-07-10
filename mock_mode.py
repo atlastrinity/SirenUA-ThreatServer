@@ -1,10 +1,10 @@
 """
-Mock Mode — генератор імітованих загроз для тестування.
-Зберігає стан загроз в пам'яті (без бази даних).
+Mock Mode compatibility wrapper.
+Re-exports components from core and database packages to keep legacy test files and imports working.
 """
 
-from regions import ALL_REGIONS, get_genitive_region, get_ukrainian_threat_type
-from database_helpers import (
+from core.regions import ALL_REGIONS, get_genitive_region, get_ukrainian_threat_type
+from database.db_helpers import (
     get_db,
     backup_sqlite_to_firestore,
     restore_sqlite_from_firestore,
@@ -15,7 +15,7 @@ from database_helpers import (
     TOPIC_MAPPING,
     start_fcm_worker,
 )
-from threat_state import (
+from core.threat_state import (
     THREAT_TYPES,
     SingleThreat,
     ThreatState,

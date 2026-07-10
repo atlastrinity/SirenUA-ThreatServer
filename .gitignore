@@ -1,15 +1,12 @@
-# Cache
 __pycache__/
 *.pyc
-
-# Local Databases
-threat_analytics.db
-threat_analytics.db-journal
-
-# Secrets & Sessions
-firebase-credentials.json
+*.pyo
+*.pyd
+.env
 *.session
 *.session-journal
-
-# State Files
-*threats_state.json
+*.log
+firebase-credentials.json
+*.db
+threats_state.json
+real_threats_state.json

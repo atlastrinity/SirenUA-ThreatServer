@@ -7,10 +7,21 @@ from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
 
-from mock_mode import ThreatState, ALL_REGIONS, THREAT_TYPES
-from topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
-from regions import get_genitive_region, get_ukrainian_threat_type
-from gemini_analyzer import GeminiThreatAnalyzer
+from core.threat_state import ThreatState
+from core.regions import ALL_REGIONS, get_genitive_region, get_ukrainian_threat_type
+from core.threat_state import THREAT_TYPES
+from core.topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
+from analyzer.gemini_analyzer import GeminiThreatAnalyzer
+from core.config import (
+    TELEGRAM_API_ID,
+    TELEGRAM_API_HASH,
+    TARGET_CHANNELS,
+    CRITICAL_KEYWORDS,
+    HIGH_KEYWORDS,
+    MEDIUM_KEYWORDS,
+    LOW_KEYWORDS,
+    CLEAR_KEYWORDS,
+)
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -33,84 +44,6 @@ def clean_user_facing_threat_detail(text: str) -> str:
     text = re.sub(r' +', ' ', text).strip()
     return text
 
-
-# Target Telegram channels to monitor
-TARGET_CHANNELS = [
-    "kpszsu",            # Повітряні Сили ЗСУ
-    "monitorwarr",       # Найшвидша аналітика радарів
-    "vanek_nikolaev",    # Николаевский Ванек
-    "eRadarrua",         # eРадар (ОСІНТ радари)
-    "operativnoZSU"      # Оперативно ЗСУ
-]
-
-# Threat Keywords (Refined for >90% Siren Correlation)
-CRITICAL_KEYWORDS = [
-    r"масований\s*(ракетний\s*)?удар", 
-    r"масований\s*обстріл", 
-    r"комбінований\s*удар",
-    r"крилаті\s*ракети\s*в\s*повітряному\s*просторі"
-]
-
-HIGH_KEYWORDS = [
-    r"МіГ[-\s]?31", 
-    r"Кинджал", 
-    r"Ту[-\s]?95", 
-    r"Ту[-\s]?22", 
-    r"Ту[-\s]?160",
-    r"стратегічн\w+\s*авіаці", 
-    r"крилат\w+\s*ракет", 
-    r"[ХX][-\s]?101",
-    r"[ХX][-\s]?555", 
-    r"Калібр", 
-    r"Іскандер", 
-    r"балісти",            # Matches "балістика", "балістичний", "балістики" (99% chance of siren)
-    r"пуски?\s*ракет",
-    r"ракет[аи]\s*(в\s*напрямку|на)",  # Missile heading directly towards a region
-    r"керована\s*авіаційна\s*ракета",
-    r"[ХX][-\s]?59",
-    r"[ХX][-\s]?69",
-    r"\bукритт[яі]\b",
-    r"\bтривог[аи]\b"
-]
-
-MEDIUM_KEYWORDS = [
-    r"[ШШ]ахед", 
-    r"Shahed", 
-    r"БПЛА", 
-    r"безпілотни", 
-    r"дрон", 
-    r"БпЛА", 
-    r"мопед",
-    r"ударн\w+\s*бпла"
-]
-
-LOW_KEYWORDS = [
-    r"зліт\s*(тактичної|су|міг-29)", 
-    r"підйом\s*авіаці", 
-    r"активність\s*авіаці", 
-    r"загроза\s*застосування\s*каб",
-    r"пусти\s*каб",
-    r"каб\s*в\s*напрямку",
-    r"\bкаб(и|ів)?\b",
-    r"пуск\w*\s*каб[и]?",
-    r"керован\w*\s*авіаційн\w*\s*бомб\w*"
-]
-
-CLEAR_KEYWORDS = [
-    r"відбій", 
-    r"загроз\w*\s*нема", 
-    r"загроз\w*\s*відсутн", 
-    r"збит[оіа]", 
-    r"знищен[оіа]", 
-    r"посадка", 
-    r"чисто", 
-    r"дорозвідка"
-]
-
-# API credentials
-TELEGRAM_API_ID = 20294647
-TELEGRAM_API_HASH = "454a9c055308a8d118608bb6b032bc30"
-
 class TelegramThreatMonitor:
     def __init__(self, threat_manager):
         self.threat_manager = threat_manager
@@ -119,7 +52,7 @@ class TelegramThreatMonitor:
         self.client: Optional[TelegramClient] = None
         self._clear_tasks = {}
         
-        from server import log_error_to_db, log_rule_audit_to_db
+        from database.analytics_db import log_error_to_db, log_rule_audit_to_db
         self.log_error = log_error_to_db
         self.analyzer = GeminiThreatAnalyzer(error_callback=log_error_to_db, rule_audit_callback=log_rule_audit_to_db)
         self.message_queue = asyncio.Queue()

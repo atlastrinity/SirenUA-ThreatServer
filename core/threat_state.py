@@ -11,8 +11,8 @@ import time
 import threading
 from typing import Optional, List, Dict
 
-from regions import ALL_REGIONS
-from database_helpers import (
+from core.regions import ALL_REGIONS
+from database.db_helpers import (
     get_db,
     backup_sqlite_to_firestore,
     restore_sqlite_from_firestore,

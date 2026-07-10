@@ -11,6 +11,7 @@ import base64
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional
+from core.config import DB_PATH
 
 try:
     import firebase_admin
@@ -62,9 +63,6 @@ def get_db():
 
 def backup_sqlite_to_firestore():
     """Стискає всю локальну базу даних SQLite та робить резервну копію у Firestore."""
-    DB_PATH = "threat_analytics.db"
-    if os.path.exists("threat_server"):
-        DB_PATH = "threat_server/threat_analytics.db"
         
     db = get_db()
     if not db:
@@ -115,9 +113,6 @@ def backup_sqlite_to_firestore():
 
 def restore_sqlite_from_firestore(force: bool = False):
     """Відновлює локальну базу даних SQLite зі стиснутого бекапу в Firestore."""
-    DB_PATH = "threat_analytics.db"
-    if os.path.exists("threat_server"):
-        DB_PATH = "threat_server/threat_analytics.db"
         
     db = get_db()
     if not db:
@@ -249,9 +244,6 @@ def delete_test_history_from_firestore():
         print(f"⚠️ Помилка видалення тестової історії з Firestore: {e}")
 
 def delete_test_history_from_sqlite():
-    DB_PATH = "threat_analytics.db"
-    if os.path.exists("threat_server"):
-        DB_PATH = "threat_server/threat_analytics.db"
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
