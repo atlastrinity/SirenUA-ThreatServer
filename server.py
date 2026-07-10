@@ -416,6 +416,19 @@ def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: s
                 return
     print(f"❌ Firestore history write failed after {max_retries} retries for {region}")
 
+def detect_mitigation_from_text(text: str) -> bool:
+    if not text:
+        return False
+    text_lower = text.lower()
+    keywords = [
+        "збит", "збило", "збили", "знищен", "ліквід", 
+        "локаційно втрат", "локаційна втрат", 
+        "втрачено радіолокац", "втрачено з радар",
+        "робота ппо", "працює ппо", "працювала ппо", "роботу ппо",
+        "реб", "електронної боротьб", "приглуш"
+    ]
+    return any(kw in text_lower for kw in keywords)
+
 def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                        source_channel: str = None, message_text: str = None,
                        clearing_confidence: int = None, was_predictive: bool = False,
@@ -535,6 +548,10 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
             
             if current_accuracy == 'confirmed' and prediction_accuracy != 'confirmed':
                 prediction_accuracy = 'confirmed'
+            elif prediction_accuracy in ["overestimated", "unknown", "not_applicable", "n/a"]:
+                res_type = clearing_telemetry.get("resolution_type", "unknown")
+                if res_type in ["intercepted", "lost_contact"] or detect_mitigation_from_text(message_text):
+                    prediction_accuracy = 'mitigated'
                 
             cursor.execute('''
                 UPDATE paired_events SET

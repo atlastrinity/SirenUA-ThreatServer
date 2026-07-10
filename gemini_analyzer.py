@@ -323,6 +323,7 @@ MANDATORY fields:
                     pe1.threat_type,
                     COUNT(*) as occurrence_count,
                     AVG(CASE WHEN pe2.prediction_accuracy = 'confirmed' THEN 1.0 
+                             WHEN pe2.prediction_accuracy = 'mitigated' THEN 0.8
                              WHEN pe2.prediction_accuracy = 'partially_confirmed' THEN 0.7
                              WHEN pe2.prediction_accuracy = 'overestimated' THEN 0.2
                              ELSE 0.5 END) as accuracy
@@ -330,17 +331,18 @@ MANDATORY fields:
                 JOIN paired_events pe2 ON pe1.gemini_group_id = pe2.gemini_group_id
                     AND pe1.region != pe2.region
                     AND pe2.was_predictive = 1
+                    AND ABS(strftime('%s', pe1.created_at) - strftime('%s', pe2.created_at)) <= 10800
                 WHERE pe1.lifecycle_status = 'cleared'
                     AND pe1.was_predictive = 0
                     AND pe1.created_at >= datetime('now', '-30 days')
                 GROUP BY pe1.region, pe2.region, pe1.threat_type
-                HAVING occurrence_count >= 2
+                HAVING occurrence_count >= 5
             ''')
             
             for row in cursor.fetchall():
                 rule_text = (f"Загрози типу {row['threat_type']} з {row['source_region']} "
-                            f"мають {row['accuracy']*100:.0f}% шанс досягти {row['target_region']} "
-                            f"(підтверджено {row['occurrence_count']} раз)")
+                             f"мають {row['accuracy']*100:.0f}% шанс досягти {row['target_region']} "
+                             f"(підтверджено {row['occurrence_count']} раз)")
                 rule_json = json.dumps({
                     "source": row["source_region"],
                     "target": row["target_region"],
@@ -381,7 +383,7 @@ MANDATORY fields:
                 WHERE was_predictive = 1 AND lifecycle_status = 'cleared'
                     AND created_at >= datetime('now', '-30 days')
                 GROUP BY region, threat_type
-                HAVING total >= 3
+                HAVING total >= 7
             ''')
             
             for row in cursor.fetchall():
@@ -438,22 +440,42 @@ MANDATORY fields:
                 WHERE pe.lifecycle_status = 'cleared'
                     AND pe.prediction_accuracy = 'confirmed'
                     AND pe.created_at >= datetime('now', '-30 days')
-                GROUP BY hour, pe.threat_type, pe.region
-                HAVING count >= 2
-                ORDER BY count DESC
-                LIMIT 20
             ''')
             
-            time_patterns = {}
+            from datetime import datetime
+            try:
+                import zoneinfo
+                kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+            except Exception:
+                from backports import zoneinfo
+                kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+                
+            raw_patterns = {}
             for row in cursor.fetchall():
-                key = (row["hour"], row["threat_type"])
+                created_at_str = row["created_at"]
+                if not created_at_str:
+                    continue
+                try:
+                    dt_utc = datetime.fromisoformat(created_at_str.replace(' ', 'T') + "+00:00")
+                except Exception:
+                    continue
+                dt_kiev = dt_utc.astimezone(kiev_tz)
+                hour = dt_kiev.hour
+                key = (hour, row["threat_type"], row["region"])
+                raw_patterns[key] = raw_patterns.get(key, 0) + 1
+            
+            time_patterns = {}
+            for (hour, threat_type, region), count in raw_patterns.items():
+                if count < 5:
+                    continue
+                key = (hour, threat_type)
                 if key not in time_patterns:
                     time_patterns[key] = {"regions": [], "total": 0}
-                time_patterns[key]["regions"].append({"region": row["region"], "count": row["count"]})
-                time_patterns[key]["total"] += row["count"]
+                time_patterns[key]["regions"].append({"region": region, "count": count})
+                time_patterns[key]["total"] += count
             
             for (hour, threat_type), data in time_patterns.items():
-                if data["total"] < 3:
+                if data["total"] < 7:
                     continue
                 time_cat = "ніч" if hour < 6 or hour >= 22 else ("ранок" if hour < 9 else ("день" if hour < 18 else "вечір"))
                 top_regions = sorted(data["regions"], key=lambda x: x["count"], reverse=True)[:5]
