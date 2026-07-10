@@ -943,16 +943,17 @@ class TelegramThreatMonitor:
             auto_clear_delay = int(auto_clear_delay * 2.0)  # 2x the ETA as buffer
             auto_clear_delay = max(600, min(auto_clear_delay, 7200))  # 10min - 2hrs
             
+            pred_gid = f"pred_{region}_{pred['threat_type']}"
             self.threat_manager.set_threat(
                 region, pred_level, pred["threat_type"], detail,
                 confidence=pred["confidence"],
                 eta=pred["eta_str"],
                 is_predictive=True,
                 is_test=pred.get("is_test", False),
-                telemetry=None,  # No direct telemetry for predictions
+                telemetry={"group_id": pred_gid},  # Pass group_id inside telemetry for precise deduplication
                 eta_seconds=pred.get("eta_seconds")
             )
-            self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"])
+            self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"], group_id=pred_gid)
             predictions_applied += 1
             
             score_detail = f"score={pred['score']:.2f} (dir={pred['direction_score']:.2f}, route=+{pred['route_boost']:.2f}, db=+{pred['db_boost']:.2f})"
