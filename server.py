@@ -2373,29 +2373,29 @@ async def get_admin_chronology(region: str = None, days: int = 7, threat_type: s
         day_filter = f'-{days} days'
         
         query = '''
-            SELECT pe.id, pe.region, pe.threat_level, pe.threat_type,
+            SELECT th.id, th.region, th.threat_level, th.threat_type,
+                   th.timestamp as threat_timestamp,
+                   th.detail as threat_detail,
                    pe.confidence_at_set, pe.confidence_at_clear,
                    pe.was_predictive, pe.prediction_accuracy,
                    pe.lifecycle_status, pe.duration_seconds,
                    pe.gemini_group_id,
-                   th.timestamp as threat_timestamp,
-                   th.detail as threat_detail,
                    tc.timestamp as clearing_timestamp,
                    tc.resolution_type
-            FROM paired_events pe
-            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
-            LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
-            WHERE pe.created_at >= datetime('now', ?)
+            FROM threat_history th
+            LEFT JOIN paired_events pe ON th.id = pe.threat_event_id
+            LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
+            WHERE th.timestamp >= datetime('now', ?)
         '''
         params = [day_filter]
         
         if region:
             from urllib.parse import unquote
-            query += " AND pe.region = ?"
+            query += " AND th.region = ?"
             params.append(unquote(region))
             
         if threat_type:
-            query += " AND pe.threat_type = ?"
+            query += " AND th.threat_type = ?"
             params.append(threat_type)
             
         if was_predictive is not None:
@@ -2410,9 +2410,9 @@ async def get_admin_chronology(region: str = None, days: int = 7, threat_type: s
             elif prediction_accuracy == "mitigated":
                 query += " AND pe.prediction_accuracy = 'mitigated'"
             elif prediction_accuracy == "active":
-                query += " AND pe.lifecycle_status = 'active'"
+                query += " AND (pe.lifecycle_status = 'active' OR (th.threat_type = 'official_alarm' AND tc.id IS NULL))"
             elif prediction_accuracy == "cleared":
-                query += " AND pe.lifecycle_status = 'cleared' AND (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'overestimated', 'mitigated'))"
+                query += " AND (pe.lifecycle_status = 'cleared' OR (th.threat_type = 'official_alarm' AND tc.id IS NOT NULL))"
         
         query += " ORDER BY th.timestamp DESC LIMIT 500"
         cursor.execute(query, params)
@@ -2422,23 +2422,24 @@ async def get_admin_chronology(region: str = None, days: int = 7, threat_type: s
         daily_agg_query = f'''
             SELECT date(datetime(th.timestamp, {tz_modifier})) as day,
                    COUNT(*) as total_events,
-                   SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
-                   SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
+                   SUM(CASE WHEN pe.lifecycle_status = 'cleared' OR (th.threat_type = 'official_alarm' AND tc.id IS NOT NULL) THEN 1 ELSE 0 END) as cleared,
+                   SUM(CASE WHEN pe.lifecycle_status = 'active' OR (th.threat_type = 'official_alarm' AND tc.id IS NULL) THEN 1 ELSE 0 END) as active,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
                    SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
-            FROM paired_events pe
-            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE pe.created_at >= datetime('now', ?)
+            FROM threat_history th
+            LEFT JOIN paired_events pe ON th.id = pe.threat_event_id
+            LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
+            WHERE th.timestamp >= datetime('now', ?)
         '''
         agg_params = [day_filter]
         if region:
-            daily_agg_query += " AND pe.region = ?"
+            daily_agg_query += " AND th.region = ?"
             agg_params.append(unquote(region))
             
         if threat_type:
-            daily_agg_query += " AND pe.threat_type = ?"
+            daily_agg_query += " AND th.threat_type = ?"
             agg_params.append(threat_type)
             
         if was_predictive is not None:
@@ -2453,9 +2454,9 @@ async def get_admin_chronology(region: str = None, days: int = 7, threat_type: s
             elif prediction_accuracy == "mitigated":
                 daily_agg_query += " AND pe.prediction_accuracy = 'mitigated'"
             elif prediction_accuracy == "active":
-                daily_agg_query += " AND pe.lifecycle_status = 'active'"
+                daily_agg_query += " AND (pe.lifecycle_status = 'active' OR (th.threat_type = 'official_alarm' AND tc.id IS NULL))"
             elif prediction_accuracy == "cleared":
-                daily_agg_query += " AND pe.lifecycle_status = 'cleared' AND (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'overestimated', 'mitigated'))"
+                daily_agg_query += " AND (pe.lifecycle_status = 'cleared' OR (th.threat_type = 'official_alarm' AND tc.id IS NOT NULL))"
                 
         daily_agg_query += " GROUP BY day ORDER BY day"
         
@@ -2468,7 +2469,12 @@ async def get_admin_chronology(region: str = None, days: int = 7, threat_type: s
         for row in rows:
             event = dict(row)
             # Determine match_type
-            if event.get("prediction_accuracy") == "confirmed":
+            if event.get("threat_type") == "official_alarm":
+                if event.get("clearing_timestamp"):
+                    event["match_type"] = "cleared"
+                else:
+                    event["match_type"] = "official"
+            elif event.get("prediction_accuracy") == "confirmed":
                 event["match_type"] = "match"
             elif event.get("prediction_accuracy") == "mitigated":
                 event["match_type"] = "mitigated"
