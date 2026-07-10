@@ -1356,24 +1356,28 @@ class TelegramThreatMonitor:
                     since_str = threat.since
                     if not since_str:
                         continue
-                    # Determine delay based on threat type
+                    # Determine delay based on threat type and predictive status
                     delay = 3600
-                    if t_type == "mig31k":
-                        delay = 1800
-                    elif t_type == "ballistic":
-                        delay = 600
-                    elif t_type == "kab":
-                        delay = 1200
-                    elif t_type == "shahed":
-                        delay = 10800
-                    elif t_type == "cruise_missile":
-                        delay = 2700
-                    elif t_type == "tu95":
-                        delay = 5400
-                    elif t_type == "iskander":
-                        delay = 1200
-                    elif t_type == "artillery":
-                        delay = 1800
+                    if getattr(threat, "is_predictive", False):
+                        pred_eta = getattr(threat, "eta_seconds", None) or 1800
+                        delay = max(600, min(int(pred_eta * 2.0), 7200))
+                    else:
+                        if t_type == "mig31k":
+                            delay = 1800
+                        elif t_type == "ballistic":
+                            delay = 600
+                        elif t_type == "kab":
+                            delay = 1200
+                        elif t_type == "shahed":
+                            delay = 10800
+                        elif t_type == "cruise_missile":
+                            delay = 2700
+                        elif t_type == "tu95":
+                            delay = 5400
+                        elif t_type == "iskander":
+                            delay = 1200
+                        elif t_type == "artillery":
+                            delay = 1800
                     try:
                         since_str_normalized = since_str.replace("Z", "+00:00")
                         since_dt = datetime.fromisoformat(since_str_normalized)
