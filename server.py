@@ -385,6 +385,12 @@ def log_threat_to_firestore(region: str, level: str, threat_type: str, detail: s
     db = get_db()
     if not db:
         return
+        
+    from mock_mode import is_duplicate_event
+    if is_duplicate_event(region, level, threat_type):
+        print(f"⚠️ Duplicate history event detected for {region} ({level}, {threat_type}), skipping write to Firestore.")
+        return
+
     import time
     from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

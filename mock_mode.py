@@ -632,6 +632,11 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     if not HAS_FIREBASE:
         return
 
+    mapped_type = threat_type if threat_type else ("official_alarm" if is_official_alarm else None)
+    if is_duplicate_event(region, level, mapped_type):
+        print(f"⚠️ Duplicate FCM Push detected for {region} ({level}, {mapped_type}), skipping.")
+        return
+
     topic = TOPIC_MAPPING.get(region)
     if not topic:
         return
@@ -1324,6 +1329,37 @@ class MockThreatManager:
                 self.on_change(region, self.threats[region], telemetry=None)
             return True
         return False
+
+def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> bool:
+    """Checks Firestore to see if a similar history event was already logged within the last 20 seconds."""
+    db = get_db()
+    if not db:
+        return False
+    try:
+        from datetime import datetime, timezone
+        # Fetch the last 5 records for the region to avoid needing a composite index
+        docs = db.collection("sirenua_history").where("region", "==", region).limit(5).get()
+        if not docs:
+            return False
+            
+        # Sort in memory by timestamp descending
+        events = [doc.to_dict() for doc in docs]
+        events.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        latest = events[0]
+        
+        latest_level = latest.get("threat_level")
+        latest_type = latest.get("threat_type")
+        latest_time_str = latest.get("timestamp")
+        
+        if latest_level == level and latest_type == threat_type and latest_time_str:
+            latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            current_time = datetime.now(timezone.utc)
+            diff = (current_time - latest_time).total_seconds()
+            if abs(diff) < 20:
+                return True
+    except Exception as e:
+        print(f"⚠️ Error checking duplicate history in Firestore: {e}")
+    return False
 
 def delete_test_history_from_firestore():
     db = get_db()
