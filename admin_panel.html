@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SirenUA — Панель Управління</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0e14;--bg2:#0d1117;--card:#131921;--card2:#161d27;
+  --border:#1e2a3a;--border2:#253347;
+  --text:#e2e8f0;--text2:#8b9ab5;--text3:#5a6e87;
+  --accent:#4f9eff;--accent2:#7bb8ff;
+  --red:#ff5c5c;--red-bg:rgba(255,92,92,.12);
+  --green:#4ade80;--green-bg:rgba(74,222,128,.12);
+  --yellow:#fbbf24;--yellow-bg:rgba(251,191,36,.12);
+  --orange:#fb923c;--orange-bg:rgba(251,146,60,.12);
+  --purple:#a78bfa;--purple-bg:rgba(167,139,250,.12);
+  --cyan:#22d3ee;--cyan-bg:rgba(34,211,238,.12);
+  --grad1:linear-gradient(135deg,#4f9eff,#a78bfa);
+  --grad2:linear-gradient(135deg,#4ade80,#22d3ee);
+  --grad3:linear-gradient(135deg,#ff5c5c,#fb923c);
+  --glass:rgba(19,25,33,.75);
+  --glass-border:rgba(78,105,145,.25);
+}
+body{background:var(--bg);color:var(--text);font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.6;min-height:100vh}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ===== HEADER ===== */
+.header{background:var(--card);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.header h1{font-size:18px;font-weight:700;background:var(--grad1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-.3px}
+.header .version{font-size:11px;color:var(--text3);background:var(--card2);padding:2px 8px;border-radius:6px;border:1px solid var(--border)}
+.header .status{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
+.header .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 8px var(--green)}50%{opacity:.5;box-shadow:0 0 4px var(--green)}}
+.header .clock{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text3)}
+
+/* ===== TABS ===== */
+.tabs{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 28px;gap:2px;overflow-x:auto}
+.tab{padding:12px 18px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500;border-bottom:2px solid transparent;transition:all .2s;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.tab:hover{color:var(--text);background:rgba(79,158,255,.04)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);background:rgba(79,158,255,.06)}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:700}
+.badge.red{background:var(--red-bg);color:var(--red)}
+.badge.blue{background:rgba(79,158,255,.15);color:var(--accent)}
+.badge.green{background:var(--green-bg);color:var(--green)}
+.badge.purple{background:var(--purple-bg);color:var(--purple)}
+.badge.yellow{background:var(--yellow-bg);color:var(--yellow)}
+
+/* ===== CONTENT ===== */
+.content{padding:24px 28px;display:none}
+.content.active{display:block}
+
+/* ===== STAT CARDS ===== */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+.stat-card{background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--glass-border);border-radius:14px;padding:18px 20px;transition:transform .15s,border-color .2s}
+.stat-card:hover{transform:translateY(-2px);border-color:var(--accent)}
+.stat-card h3{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;font-weight:600}
+.stat-card .value{font-size:30px;font-weight:800;letter-spacing:-1px;line-height:1.1}
+.stat-card .sub{font-size:11px;color:var(--text3);margin-top:4px}
+
+/* ===== CHARTS ===== */
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
+.charts-row.three{grid-template-columns:1fr 1fr 1fr}
+@media(max-width:900px){.charts-row,.charts-row.three{grid-template-columns:1fr}}
+.chart-box{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;overflow:hidden}
+.chart-box h3{font-size:13px;font-weight:600;margin-bottom:14px;color:var(--text);display:flex;align-items:center;gap:8px}
+.chart-box canvas{max-height:220px}
+
+/* ===== FILTERS ===== */
+.filters{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center;background:var(--card);padding:12px 16px;border-radius:12px;border:1px solid var(--border)}
+.filters select,.filters input[type="date"],.filters input[type="number"]{background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:8px;font-size:12px;outline:none;font-family:inherit;transition:border-color .2s}
+.filters select:focus,.filters input:focus{border-color:var(--accent)}
+.filters label{font-size:12px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.btn{background:var(--accent);color:#fff;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;transition:all .15s;font-family:inherit}
+.btn:hover{background:var(--accent2);transform:translateY(-1px);box-shadow:0 4px 12px rgba(79,158,255,.3)}
+.btn.sm{padding:6px 14px;font-size:11px}
+
+/* ===== TABLE ===== */
+.table-wrapper{max-height:600px;overflow-y:auto;border-radius:12px;border:1px solid var(--border);background:var(--card)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:10px 14px;background:var(--card2);border-bottom:1px solid var(--border);color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;font-size:10px;position:sticky;top:0;z-index:1}
+td{padding:10px 14px;border-bottom:1px solid var(--border)}
+tr:hover td{background:rgba(79,158,255,.03)}
+
+/* ===== BADGES ===== */
+.badge-src{padding:3px 10px;border-radius:6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.badge-src.server{background:rgba(79,158,255,.12);color:var(--accent)}
+.badge-src.firebase{background:var(--orange-bg);color:var(--orange)}
+.badge-src.gemini{background:var(--purple-bg);color:var(--purple)}
+.badge-src.telegram{background:var(--yellow-bg);color:var(--yellow)}
+.badge-type{padding:3px 10px;border-radius:6px;font-size:10px;font-weight:700}
+.badge-type.rate{background:var(--red-bg);color:var(--red)}
+.badge-type.timeout{background:var(--yellow-bg);color:var(--yellow)}
+.badge-type.network{background:var(--orange-bg);color:var(--orange)}
+.badge-type.general{background:rgba(90,110,135,.2);color:var(--text3)}
+.badge-type.systemic{background:var(--red-bg);color:var(--red)}
+
+/* ===== CORRELATION EVENT CARD ===== */
+.event-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:10px;transition:border-color .2s}
+.event-card:hover{border-color:var(--border2)}
+.event-card.confirmed{border-left:3px solid var(--green)}
+.event-card.mitigated{border-left:3px solid var(--purple)}
+.event-card.overestimated{border-left:3px solid var(--red)}
+.event-card.active{border-left:3px solid var(--yellow)}
+.event-card.cleared{border-left:3px solid var(--text3)}
+.event-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px}
+.event-title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}
+.event-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;font-size:12px;color:var(--text2)}
+.event-meta .item{display:flex;align-items:center;gap:6px}
+.event-meta .item .label{color:var(--text3);font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:.3px}
+.match-reason{font-size:12px;padding:6px 12px;border-radius:8px;margin-top:8px;font-weight:500}
+.match-reason.confirmed{background:var(--green-bg);color:var(--green)}
+.match-reason.mitigated{background:var(--purple-bg);color:var(--purple)}
+.match-reason.overestimated{background:var(--red-bg);color:var(--red)}
+.match-reason.active{background:var(--yellow-bg);color:var(--yellow)}
+.match-reason.cleared{background:rgba(90,110,135,.15);color:var(--text3)}
+.telemetry-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.telemetry-tag{font-size:10px;padding:3px 8px;border-radius:6px;background:var(--cyan-bg);color:var(--cyan);font-weight:600}
+
+/* ===== TIMELINE DAY ===== */
+.timeline-day{margin-bottom:20px}
+.timeline-day h4{font-size:14px;font-weight:700;color:var(--accent);padding:10px 0;border-bottom:1px solid var(--border);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.timeline-day h4 .count{font-size:11px;color:var(--text3);font-weight:500}
+
+/* ===== RULE CARDS ===== */
+.rule-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px}
+.rule-card.added{border-left:3px solid var(--green)}
+.rule-card.removed,.rule-card.deactivated{border-left:3px solid var(--red)}
+.rule-card.decayed{border-left:3px solid var(--yellow)}
+.rule-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.rule-action{padding:3px 10px;border-radius:6px;font-size:10px;font-weight:700;text-transform:uppercase}
+.rule-action.added{background:var(--green-bg);color:var(--green)}
+.rule-action.removed,.rule-action.deactivated{background:var(--red-bg);color:var(--red)}
+
+/* ===== MISC ===== */
+.empty{text-align:center;padding:48px;color:var(--text3);font-size:13px}
+.refresh-info{font-size:10px;color:var(--text3);text-align:right;padding:6px 0;letter-spacing:.3px}
+.section-title{font-size:15px;font-weight:700;margin:20px 0 10px;display:flex;align-items:center;gap:8px}
+.divider{border:0;border-top:1px solid var(--border);margin:20px 0}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <h1>🚨 SirenUA</h1>
+  <span class="version">v1.2</span>
+  <div class="status">
+    <span class="dot"></span>
+    <span>Live Monitoring</span>
+    <span class="clock" id="clock"></span>
+  </div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <div class="tab active" data-tab="dashboard">📊 Дашборд</div>
+  <div class="tab" data-tab="correlation">🔬 Кореляція AI <span class="badge purple" id="cor-badge">0</span></div>
+  <div class="tab" data-tab="chronology">📅 Хронологія <span class="badge blue" id="chr-badge">0</span></div>
+  <div class="tab" data-tab="errors">🔴 Помилки <span class="badge red" id="err-badge">0</span></div>
+  <div class="tab" data-tab="rules">🧠 Правила Gemini <span class="badge green" id="rul-badge">0</span></div>
+</div>
+
+<!-- ==================== TAB 1: DASHBOARD ==================== -->
+<div class="content active" id="tab-dashboard">
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+    <div class="stat-card"><h3>📈 Подій (7д)</h3><div class="value" style="color:var(--accent)" id="dash-total">—</div></div>
+    <div class="stat-card"><h3>🎯 Точність AI</h3><div class="value" style="color:var(--green)" id="dash-accuracy">—</div><div class="sub" id="dash-accuracy-sub"></div></div>
+    <div class="stat-card"><h3>⚡ Активних зараз</h3><div class="value" style="color:var(--yellow)" id="dash-active">—</div></div>
+    <div class="stat-card"><h3>⏱️ Випередження AI</h3><div class="value" style="color:var(--cyan)" id="dash-early">—</div><div class="sub">середнє до тривоги</div></div>
+    <div class="stat-card"><h3>✅ Підтверджено</h3><div class="value" style="color:var(--green)" id="dash-confirmed">—</div></div>
+    <div class="stat-card"><h3>🛡️ Збито</h3><div class="value" style="color:var(--purple)" id="dash-mitigated">—</div></div>
+    <div class="stat-card"><h3>❌ Помилкові</h3><div class="value" style="color:var(--red)" id="dash-false">—</div></div>
+    <div class="stat-card"><h3>🔴 Помилки (24г)</h3><div class="value" style="color:var(--orange)" id="dash-errors">—</div></div>
+  </div>
+
+  <div class="charts-row">
+    <div class="chart-box"><h3>🎯 Результати AI-аналізу</h3><canvas id="dash-chart-accuracy"></canvas></div>
+    <div class="chart-box"><h3>🚀 Загрози за типами</h3><canvas id="dash-chart-types"></canvas></div>
+  </div>
+  <div class="charts-row">
+    <div class="chart-box"><h3>🗺️ Топ регіонів (7д)</h3><canvas id="dash-chart-regions"></canvas></div>
+    <div class="chart-box"><h3>🕐 Розподіл по годинах доби</h3><canvas id="dash-chart-hourly"></canvas></div>
+  </div>
+</div>
+
+<!-- ==================== TAB 2: AI CORRELATION ==================== -->
+<div class="content" id="tab-correlation">
+  <div class="filters">
+    <label>📅 Від:</label>
+    <input type="date" id="cor-from">
+    <label>До:</label>
+    <input type="date" id="cor-to">
+    <label>або днів:</label>
+    <select id="cor-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="14">14</option><option value="30">30</option></select>
+    <label>🗺️ Область:</label>
+    <select id="cor-region"><option value="">Всі</option></select>
+    <label>🎯 Тип:</label>
+    <select id="cor-threat-type">
+      <option value="">Всі</option>
+      <option value="shahed">Shahed/БПЛА</option>
+      <option value="mig31k">МіГ-31К</option>
+      <option value="cruise_missile">Крилаті ракети</option>
+      <option value="ballistic">Балістика</option>
+      <option value="artillery">Обстріл</option>
+      <option value="recon">БПЛА розвідник</option>
+    </select>
+    <label>📊 Результат:</label>
+    <select id="cor-match">
+      <option value="">Всі</option>
+      <option value="match">✅ Підтверджено</option>
+      <option value="mitigated">🛡️ Збито/РЕБ</option>
+      <option value="mismatch">❌ Помилкові</option>
+      <option value="active">⏱️ Активні</option>
+    </select>
+    <button class="btn" onclick="loadCorrelation()">Оновити</button>
+  </div>
+
+  <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+    <div class="stat-card"><h3>Всього</h3><div class="value" style="color:var(--accent)" id="cor-total">0</div></div>
+    <div class="stat-card"><h3>✅ Підтверджено</h3><div class="value" style="color:var(--green)" id="cor-confirmed">0</div></div>
+    <div class="stat-card"><h3>🛡️ Збито</h3><div class="value" style="color:var(--purple)" id="cor-mitigated">0</div></div>
+    <div class="stat-card"><h3>❌ Помилкові</h3><div class="value" style="color:var(--red)" id="cor-overestimated">0</div></div>
+    <div class="stat-card"><h3>⏱️ Активні</h3><div class="value" style="color:var(--yellow)" id="cor-active">0</div></div>
+  </div>
+
+  <div class="charts-row three">
+    <div class="chart-box"><h3>📊 Загрози / Точність по днях</h3><canvas id="cor-chart-daily"></canvas></div>
+    <div class="chart-box"><h3>⏱️ Розподіл випередження AI (хвилини)</h3><canvas id="cor-chart-delta"></canvas></div>
+    <div class="chart-box"><h3>🚀 Точність за типами загроз</h3><canvas id="cor-chart-types"></canvas></div>
+  </div>
+
+  <div class="section-title">📋 Детальна кореляція подій</div>
+  <div id="cor-events-container"></div>
+  <div class="refresh-info">Автооновлення кожні 60с</div>
+</div>
+
+<!-- ==================== TAB 3: CHRONOLOGY (legacy v1) ==================== -->
+<div class="content" id="tab-chronology">
+  <div class="filters">
+    <label>Днів:</label>
+    <select id="chr-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="14">14</option><option value="30">30</option></select>
+    <label>Область:</label>
+    <select id="chr-region"><option value="">Всі</option></select>
+    <label>Тип загрози:</label>
+    <select id="chr-threat-type">
+      <option value="">Всі</option>
+      <option value="shahed">Shahed</option>
+      <option value="mig31k">МіГ-31К</option>
+      <option value="cruise_missile">Крилаті ракети</option>
+      <option value="ballistic">Балістика</option>
+      <option value="artillery">Обстріл</option>
+      <option value="recon">БПЛА розвідник</option>
+      <option value="unknown">Невідомо</option>
+    </select>
+    <label>Результат:</label>
+    <select id="chr-match-type">
+      <option value="">Всі</option>
+      <option value="match">✅ Співпадіння</option>
+      <option value="mitigated">🛡️ Збито/РЕБ</option>
+      <option value="mismatch">❌ Неспівпадіння</option>
+      <option value="active">⏱️ Активні</option>
+      <option value="cleared">🔄 Зняті</option>
+    </select>
+    <button class="btn" onclick="loadChronology()">Оновити</button>
+  </div>
+  <div class="charts-row">
+    <div class="chart-box"><h3>Загрози / Зняття по днях</h3><canvas id="chart-daily"></canvas></div>
+    <div class="chart-box"><h3>Точність передбачень (%)</h3><canvas id="chart-accuracy"></canvas></div>
+  </div>
+  <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+    <div class="stat-card"><h3>Всього подій</h3><div class="value" style="color:var(--accent)" id="chr-total">0</div></div>
+    <div class="stat-card"><h3>✅ Співпадіння</h3><div class="value" style="color:var(--green)" id="chr-match">0</div></div>
+    <div class="stat-card"><h3>🛡️ Збито/РЕБ</h3><div class="value" style="color:var(--purple)" id="chr-mitigated">0</div></div>
+    <div class="stat-card"><h3>❌ Неспівпадіння</h3><div class="value" style="color:var(--red)" id="chr-mismatch">0</div></div>
+    <div class="stat-card"><h3>⏱️ Активні</h3><div class="value" style="color:var(--yellow)" id="chr-active">0</div></div>
+  </div>
+  <div id="timeline-container"></div>
+  <div class="refresh-info">Автооновлення кожні 60с</div>
+</div>
+
+<!-- ==================== TAB 4: ERRORS ==================== -->
+<div class="content" id="tab-errors">
+  <div class="filters">
+    <label>Джерело:</label>
+    <select id="f-source"><option value="">Всі</option><option value="server">Server</option><option value="firebase">Firebase</option><option value="gemini">Gemini</option><option value="telegram">Telegram</option></select>
+    <label>Тип:</label>
+    <select id="f-type"><option value="">Всі</option><option value="systemic">Systemic</option><option value="network_error">Network</option><option value="429_rate_limit">429 Rate Limit</option><option value="500_server">500 Server</option><option value="timeout">Timeout</option><option value="auth">Auth</option><option value="general">General</option></select>
+    <label>Днів:</label>
+    <select id="f-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="30">30</option></select>
+    <button class="btn" onclick="loadErrors()">Оновити</button>
+  </div>
+  <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+    <div class="stat-card"><h3>Всього помилок</h3><div class="value" style="color:var(--red)" id="err-total">0</div></div>
+    <div class="stat-card"><h3>Системні</h3><div class="value" style="color:var(--yellow)" id="err-systemic">0</div></div>
+    <div class="stat-card"><h3>429 Rate Limit</h3><div class="value" style="color:var(--orange)" id="err-429">0</div></div>
+    <div class="stat-card"><h3>Firebase</h3><div class="value" style="color:var(--accent)" id="err-fb">0</div></div>
+    <div class="stat-card"><h3>Gemini</h3><div class="value" style="color:var(--purple)" id="err-gem">0</div></div>
+  </div>
+  <div class="charts-row">
+    <div class="chart-box"><h3>Помилки по джерелах</h3><canvas id="chart-src"></canvas></div>
+    <div class="chart-box"><h3>Помилки по годинах (48г)</h3><canvas id="chart-hourly"></canvas></div>
+  </div>
+  <div class="table-wrapper"><table><thead><tr><th>Час</th><th>Джерело</th><th>Тип</th><th>Повідомлення</th><th>Endpoint</th></tr></thead><tbody id="err-body"></tbody></table></div>
+  <div class="refresh-info">Автооновлення кожні 60с</div>
+</div>
+
+<!-- ==================== TAB 5: RULES ==================== -->
+<div class="content" id="tab-rules">
+  <div class="filters">
+    <label>Днів аудиту:</label>
+    <select id="rul-days"><option value="7">7</option><option value="14">14</option><option value="30" selected>30</option></select>
+    <label>Тип правила:</label>
+    <select id="rul-type"><option value="">Всі</option><option value="route_pattern">Маршрут</option><option value="confidence_correction">Коригування довіри</option><option value="time_pattern">Часовий патерн</option></select>
+    <label>Тип загрози:</label>
+    <select id="rul-threat-type"><option value="">Всі</option><option value="shahed">Shahed</option><option value="mig31k">МіГ-31К</option><option value="cruise_missile">Крилаті ракети</option><option value="ballistic">Балістика</option></select>
+    <label>Дія аудиту:</label>
+    <select id="rul-action"><option value="">Всі</option><option value="added">Створено</option><option value="deactivated">Деактивовано</option><option value="removed">Видалено</option></select>
+    <button class="btn" onclick="loadRules()">Оновити</button>
+  </div>
+  <div class="section-title">Активні правила</div>
+  <div class="table-wrapper" style="max-height:400px"><table><thead><tr><th>Тип</th><th>Правило</th><th>Регіон</th><th>Загроза</th><th>Accuracy</th><th>Evidence</th><th>Оновлено</th></tr></thead><tbody id="rules-active-body"></tbody></table></div>
+  <div class="section-title">📜 Аудит-лог правил</div>
+  <div id="rules-audit"></div>
+  <div class="refresh-info">Автооновлення кожні 60с</div>
+</div>
+
+<script>
+const API = '';
+const CHART_COLORS = {
+  confirmed:'#4ade80', mitigated:'#a78bfa', overestimated:'#ff5c5c',
+  active:'#fbbf24', cleared:'#5a6e87',
+  accent:'#4f9eff', accent2:'#7bb8ff', cyan:'#22d3ee', orange:'#fb923c'
+};
+let charts = {};
+
+// ===== Clock =====
+function updateClock() {
+  const now = new Date();
+  const el = document.getElementById('clock');
+  if (el) el.textContent = now.toLocaleString('uk-UA', {timeZone:'Europe/Kiev', hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ===== Tabs =====
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.content').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('tab-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+// ===== Helpers =====
+function fmtTime(ts) {
+  if (!ts) return '—';
+  try {
+    const d = new Date(ts + (ts.includes('Z') || ts.includes('+') ? '' : 'Z'));
+    return d.toLocaleString('uk-UA', {timeZone:'Europe/Kiev', hour:'2-digit', minute:'2-digit', second:'2-digit', day:'2-digit', month:'2-digit'});
+  } catch { return ts; }
+}
+function fmtDuration(s) {
+  if (!s && s !== 0) return '—';
+  if (s < 0) s = Math.abs(s);
+  if (s < 60) return s + 'с';
+  if (s < 3600) return Math.round(s/60) + 'хв';
+  return (Math.round(s/3600*10)/10) + 'год';
+}
+function destroyChart(key) { if (charts[key]) { charts[key].destroy(); delete charts[key]; } }
+function makeChart(key, canvas, config) { destroyChart(key); charts[key] = new Chart(canvas, config); }
+
+// ===== DASHBOARD =====
+async function loadDashboard() {
+  try {
+    const res = await fetch(API + '/api/admin/dashboard/stats');
+    const d = await res.json();
+
+    document.getElementById('dash-total').textContent = d.total_events_7d || 0;
+    document.getElementById('dash-accuracy').textContent = (d.accuracy_pct || 0) + '%';
+    const acc = d.accuracy || {};
+    document.getElementById('dash-accuracy-sub').textContent = 
+      `${acc.confirmed||0} підтв. / ${acc.mitigated||0} збито / ${acc.overestimated||0} помилк.`;
+    document.getElementById('dash-active').textContent = d.active_now || 0;
+    document.getElementById('dash-early').textContent = d.avg_early_seconds ? fmtDuration(d.avg_early_seconds) : '—';
+    document.getElementById('dash-confirmed').textContent = acc.confirmed || 0;
+    document.getElementById('dash-mitigated').textContent = acc.mitigated || 0;
+    document.getElementById('dash-false').textContent = acc.overestimated || 0;
+    document.getElementById('dash-errors').textContent = d.errors_24h || 0;
+
+    // Accuracy doughnut
+    makeChart('dashAcc', document.getElementById('dash-chart-accuracy'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Підтверджено','Збито/РЕБ','Помилкові','Активні'],
+        datasets: [{
+          data: [acc.confirmed||0, acc.mitigated||0, acc.overestimated||0, acc.active||0],
+          backgroundColor: [CHART_COLORS.confirmed, CHART_COLORS.mitigated, CHART_COLORS.overestimated, CHART_COLORS.active],
+          borderWidth: 0, borderRadius: 4
+        }]
+      },
+      options: { responsive:true, cutout:'65%', plugins:{legend:{position:'right',labels:{color:'#8b9ab5',font:{size:12},padding:14}}} }
+    });
+
+    // Types bar
+    if (d.by_type && d.by_type.length) {
+      makeChart('dashTypes', document.getElementById('dash-chart-types'), {
+        type: 'bar',
+        data: {
+          labels: d.by_type.map(t => t.threat_type || 'unknown'),
+          datasets: [{
+            data: d.by_type.map(t => t.count),
+            backgroundColor: d.by_type.map((_, i) => [CHART_COLORS.accent, CHART_COLORS.mitigated, CHART_COLORS.overestimated, CHART_COLORS.active, CHART_COLORS.cyan, CHART_COLORS.orange][i % 6]),
+            borderRadius: 6, borderSkipped: false
+          }]
+        },
+        options: { responsive:true, indexAxis:'y', plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#5a6e87'},grid:{color:'rgba(30,42,58,.5)'}},y:{ticks:{color:'#8b9ab5'},grid:{display:false}}} }
+      });
+    }
+
+    // Regions horizontal bar
+    if (d.top_regions && d.top_regions.length) {
+      makeChart('dashRegions', document.getElementById('dash-chart-regions'), {
+        type: 'bar',
+        data: {
+          labels: d.top_regions.map(r => r.region),
+          datasets: [{
+            data: d.top_regions.map(r => r.count),
+            backgroundColor: 'rgba(79,158,255,.5)', borderRadius: 6, borderSkipped: false
+          }]
+        },
+        options: { responsive:true, indexAxis:'y', plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#5a6e87'},grid:{color:'rgba(30,42,58,.5)'}},y:{ticks:{color:'#8b9ab5',font:{size:11}},grid:{display:false}}} }
+      });
+    }
+
+    // Hourly area
+    if (d.hourly && d.hourly.length) {
+      const hours = Array.from({length:24}, (_, i) => i);
+      const hourMap = {};
+      d.hourly.forEach(h => { hourMap[h.hour] = h.count; });
+      makeChart('dashHourly', document.getElementById('dash-chart-hourly'), {
+        type: 'line',
+        data: {
+          labels: hours.map(h => h + ':00'),
+          datasets: [{
+            data: hours.map(h => hourMap[h] || 0),
+            borderColor: CHART_COLORS.cyan, backgroundColor: 'rgba(34,211,238,.1)',
+            fill: true, tension: .4, pointRadius: 2, borderWidth: 2
+          }]
+        },
+        options: { responsive:true, plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#5a6e87',maxTicksLimit:12},grid:{display:false}},y:{ticks:{color:'#5a6e87'},grid:{color:'rgba(30,42,58,.5)'},beginAtZero:true}} }
+      });
+    }
+  } catch(e) { console.error('Dashboard load failed:', e); }
+}
+
+// ===== AI CORRELATION =====
+async function loadCorrelation() {
+  const dateFrom = document.getElementById('cor-from').value;
+  const dateTo = document.getElementById('cor-to').value;
+  const days = document.getElementById('cor-days').value;
+  const region = document.getElementById('cor-region').value;
+  const threatType = document.getElementById('cor-threat-type').value;
+  const matchResult = document.getElementById('cor-match').value;
+
+  const params = new URLSearchParams();
+  if (dateFrom && dateTo) { params.set('date_from', dateFrom); params.set('date_to', dateTo); }
+  else { params.set('days', days); }
+  if (region) params.set('region', region);
+  if (threatType) params.set('threat_type', threatType);
+  if (matchResult) params.set('match_result', matchResult);
+
+  try {
+    const res = await fetch(API + '/api/admin/chronology/v2?' + params);
+    const data = await res.json();
+
+    document.getElementById('cor-badge').textContent = data.total;
+    document.getElementById('cor-total').textContent = data.total;
+    const s = data.stats || {};
+    document.getElementById('cor-confirmed').textContent = s.confirmed || 0;
+    document.getElementById('cor-mitigated').textContent = s.mitigated || 0;
+    document.getElementById('cor-overestimated').textContent = s.overestimated || 0;
+    document.getElementById('cor-active').textContent = s.active || 0;
+
+    // Daily stacked bar + accuracy line
+    if (data.daily_stats && data.daily_stats.length) {
+      makeChart('corDaily', document.getElementById('cor-chart-daily'), {
+        type: 'bar',
+        data: {
+          labels: data.daily_stats.map(d => d.day),
+          datasets: [
+            {label:'Підтверджено', data: data.daily_stats.map(d => d.confirmed||0), backgroundColor:CHART_COLORS.confirmed, borderRadius:4, stack:'s'},
+            {label:'Збито', data: data.daily_stats.map(d => d.mitigated||0), backgroundColor:CHART_COLORS.mitigated, borderRadius:4, stack:'s'},
+            {label:'Помилкові', data: data.daily_stats.map(d => d.overestimated||0), backgroundColor:CHART_COLORS.overestimated, borderRadius:4, stack:'s'},
+          ]
+        },
+        options: { responsive:true, plugins:{legend:{labels:{color:'#8b9ab5',font:{size:11}}}}, scales:{x:{ticks:{color:'#5a6e87'},stacked:true,grid:{display:false}},y:{ticks:{color:'#5a6e87'},stacked:true,grid:{color:'rgba(30,42,58,.5)'},beginAtZero:true}} }
+      });
+    }
+
+    // Delta distribution histogram
+    const dd = data.delta_distribution || {};
+    const ddKeys = Object.keys(dd).sort((a,b) => parseInt(a) - parseInt(b));
+    if (ddKeys.length) {
+      makeChart('corDelta', document.getElementById('cor-chart-delta'), {
+        type: 'bar',
+        data: {
+          labels: ddKeys,
+          datasets: [{
+            data: ddKeys.map(k => dd[k]),
+            backgroundColor: ddKeys.map(k => parseInt(k) >= 0 ? 'rgba(74,222,128,.6)' : 'rgba(255,92,92,.5)'),
+            borderRadius: 4
+          }]
+        },
+        options: { responsive:true, plugins:{legend:{display:false},tooltip:{callbacks:{title: items => items[0].label + ' до тривоги'}}}, scales:{x:{ticks:{color:'#5a6e87'},grid:{display:false}},y:{ticks:{color:'#5a6e87'},grid:{color:'rgba(30,42,58,.5)'},beginAtZero:true}} }
+      });
+    }
+
+    // Type breakdown
+    const tb = data.type_breakdown || [];
+    if (tb.length) {
+      const typeNames = [...new Set(tb.map(t => t.threat_type))];
+      const accTypes = ['confirmed','mitigated','overestimated'];
+      const datasets = accTypes.map(at => ({
+        label: at === 'confirmed' ? 'Підтверджено' : at === 'mitigated' ? 'Збито' : 'Помилкові',
+        data: typeNames.map(tn => { const m = tb.find(t => t.threat_type === tn && t.prediction_accuracy === at); return m ? m.count : 0; }),
+        backgroundColor: CHART_COLORS[at], borderRadius: 4
+      }));
+      makeChart('corTypes', document.getElementById('cor-chart-types'), {
+        type: 'bar',
+        data: { labels: typeNames, datasets },
+        options: { responsive:true, plugins:{legend:{labels:{color:'#8b9ab5',font:{size:11}}}}, scales:{x:{ticks:{color:'#5a6e87'},grid:{display:false}},y:{ticks:{color:'#5a6e87'},grid:{color:'rgba(30,42,58,.5)'},beginAtZero:true}} }
+      });
+    }
+
+    // Event cards
+    const container = document.getElementById('cor-events-container');
+    if (!data.events || !data.events.length) {
+      container.innerHTML = '<div class="empty">Подій не знайдено</div>';
+    } else {
+      const grouped = {};
+      data.events.forEach(ev => {
+        const day = (ev.ai_timestamp || '').split(' ')[0] || (ev.ai_timestamp || '').split('T')[0] || 'Невідомо';
+        if (!grouped[day]) grouped[day] = [];
+        grouped[day].push(ev);
+      });
+
+      container.innerHTML = Object.entries(grouped)
+        .sort((a,b) => b[0].localeCompare(a[0]))
+        .map(([day, events]) => {
+          return `<div class="timeline-day">
+            <h4>📅 ${day} <span class="count">${events.length} подій</span></h4>
+            ${events.map(ev => {
+              const mt = ev.match_type || 'cleared';
+              const icon = mt === 'confirmed' ? '✅' : mt === 'mitigated' ? '🛡️' : mt === 'overestimated' ? '❌' : mt === 'active' ? '⏱️' : '🔄';
+              const delta = ev.time_delta_seconds;
+              const deltaStr = delta !== null ? (delta > 0 ? `+${fmtDuration(delta)}` : delta < 0 ? `-${fmtDuration(delta)}` : '0с') : '';
+
+              return `<div class="event-card ${mt}">
+                <div class="event-header">
+                  <div class="event-title">${icon} <strong>${ev.region||''}</strong> — ${ev.threat_type||''}</div>
+                  <span class="badge ${mt === 'confirmed' ? 'green' : mt === 'mitigated' ? 'purple' : mt === 'overestimated' ? 'red' : mt === 'active' ? 'yellow' : ''}">${ev.threat_level||''} ${ev.confidence_at_set ? ev.confidence_at_set + '%' : ''}</span>
+                </div>
+                <div class="event-meta">
+                  <div class="item"><span class="label">AI:</span> ${fmtTime(ev.ai_timestamp)}</div>
+                  <div class="item"><span class="label">Тривога:</span> ${ev.alarm_timestamp ? fmtTime(ev.alarm_timestamp) : '—'}</div>
+                  <div class="item"><span class="label">Δ Час:</span> ${deltaStr || '—'}</div>
+                  <div class="item"><span class="label">Тривалість:</span> ${fmtDuration(ev.duration_seconds)}</div>
+                </div>
+                ${ev.match_reason ? `<div class="match-reason ${mt}">${ev.match_reason}</div>` : ''}
+                ${ev.telemetry_summary ? `<div class="telemetry-bar">${ev.telemetry_summary.split(' | ').map(t => '<span class="telemetry-tag">' + t + '</span>').join('')}</div>` : ''}
+              </div>`;
+            }).join('')}
+          </div>`;
+        }).join('');
+    }
+  } catch(e) { console.error('Correlation load failed:', e); }
+}
+
+// ===== CHRONOLOGY (legacy v1) =====
+async function loadChronology() {
+  const days = document.getElementById('chr-days').value;
+  const region = document.getElementById('chr-region').value;
+  const threatType = document.getElementById('chr-threat-type').value;
+  const matchType = document.getElementById('chr-match-type').value;
+
+  const params = new URLSearchParams({days});
+  if (region) params.set('region', region);
+  if (threatType) params.set('threat_type', threatType);
+  if (matchType) params.set('prediction_accuracy', matchType);
+
+  try {
+    const res = await fetch(API + '/api/admin/chronology?' + params);
+    const data = await res.json();
+
+    const matches = data.events.filter(e => e.match_type === 'match').length;
+    const mitigated = data.events.filter(e => e.match_type === 'mitigated').length;
+    const mismatches = data.events.filter(e => e.match_type === 'mismatch').length;
+    const active = data.events.filter(e => e.match_type === 'active').length;
+
+    document.getElementById('chr-total').textContent = data.total;
+    document.getElementById('chr-badge').textContent = data.total;
+    document.getElementById('chr-match').textContent = matches;
+    document.getElementById('chr-mitigated').textContent = mitigated;
+    document.getElementById('chr-mismatch').textContent = mismatches;
+    document.getElementById('chr-active').textContent = active;
+
+    // Daily bar chart
+    makeChart('chrDaily', document.getElementById('chart-daily'), {
+      type: 'bar',
+      data: {
+        labels: data.daily_stats.map(d => d.day),
+        datasets: [
+          {label: 'Загрози', data: data.daily_stats.map(d => d.total_events), backgroundColor: 'rgba(255,92,92,.5)', borderRadius: 4},
+          {label: 'Зняття', data: data.daily_stats.map(d => d.cleared), backgroundColor: 'rgba(74,222,128,.5)', borderRadius: 4}
+        ]
+      },
+      options: {responsive:true, scales:{x:{ticks:{color:'#5a6e87'},grid:{display:false}},y:{ticks:{color:'#5a6e87'},grid:{color:'rgba(30,42,58,.5)'},beginAtZero:true}}, plugins:{legend:{labels:{color:'#8b9ab5'}}}}
+    });
+
+    // Accuracy line
+    const accData = data.daily_stats.map(d => {
+      const total = (d.confirmed||0) + (d.overestimated||0) + (d.mitigated||0);
+      return total > 0 ? Math.round(((d.confirmed||0) + (d.mitigated||0)*0.8) / total * 100) : null;
+    });
+    makeChart('chrAcc', document.getElementById('chart-accuracy'), {
+      type: 'line',
+      data: {
+        labels: data.daily_stats.map(d => d.day),
+        datasets: [{label:'Точність %', data:accData, borderColor:CHART_COLORS.confirmed, backgroundColor:'rgba(74,222,128,.08)', fill:true, tension:.3, pointRadius:3, spanGaps:true, borderWidth:2}]
+      },
+      options: {responsive:true, scales:{x:{ticks:{color:'#5a6e87'},grid:{display:false}},y:{ticks:{color:'#5a6e87'},grid:{color:'rgba(30,42,58,.5)'},beginAtZero:true,max:100}}, plugins:{legend:{display:false}}}
+    });
+
+    // Timeline
+    const container = document.getElementById('timeline-container');
+    const grouped = {};
+    data.events.forEach(ev => {
+      const day = (ev.threat_timestamp||'').split(' ')[0] || 'Невідомо';
+      if (!grouped[day]) grouped[day] = [];
+      grouped[day].push(ev);
+    });
+
+    if (Object.keys(grouped).length === 0) {
+      container.innerHTML = '<div class="empty">Подій не знайдено</div>';
+    } else {
+      container.innerHTML = Object.entries(grouped).sort((a,b) => b[0].localeCompare(a[0])).map(([day, events]) => {
+        return `<div class="timeline-day"><h4>📅 ${day} <span class="count">${events.length} подій</span></h4>
+        ${events.map(ev => {
+          const mt = ev.match_type;
+          const icon = mt === 'match' ? '✅' : mt === 'mitigated' ? '🛡️' : mt === 'mismatch' ? '❌' : mt === 'active' ? '⏱️' : '🔄';
+          return `<div class="event-card ${mt === 'match' ? 'confirmed' : mt}">
+            <div class="event-header">
+              <div class="event-title">${icon} <strong>${ev.region||''}</strong> — ${ev.threat_type||''} (${ev.threat_level||''})</div>
+            </div>
+            <div class="event-meta">
+              <div class="item"><span class="label">Час:</span> ${fmtTime(ev.threat_timestamp)}</div>
+              <div class="item"><span class="label">Тривалість:</span> ${fmtDuration(ev.duration_seconds)}</div>
+              <div class="item"><span class="label">Статус:</span> ${ev.lifecycle_status||''}</div>
+            </div>
+          </div>`;
+        }).join('')}</div>`;
+      }).join('');
+    }
+  } catch(e) { console.error('Chronology load failed:', e); }
+}
+
+// ===== ERRORS =====
+async function loadErrors() {
+  const src = document.getElementById('f-source').value;
+  const typ = document.getElementById('f-type').value;
+  const days = document.getElementById('f-days').value;
+
+  const params = new URLSearchParams({days});
+  if (src) params.set('source', src);
+  if (typ) params.set('error_type', typ);
+
+  try {
+    const [errRes, statRes] = await Promise.all([
+      fetch(API + '/api/admin/errors?' + params),
+      fetch(API + '/api/admin/errors/stats?days=' + days)
+    ]);
+    const errors = await errRes.json();
+    const stats = await statRes.json();
+
+    document.getElementById('err-total').textContent = stats.total;
+    document.getElementById('err-badge').textContent = stats.total;
+    const r429 = stats.by_type.find(x => x.error_type === '429_rate_limit');
+    document.getElementById('err-429').textContent = r429 ? r429.count : 0;
+    const fb = stats.by_source.find(x => x.source === 'firebase');
+    document.getElementById('err-fb').textContent = fb ? fb.count : 0;
+    const gm = stats.by_source.find(x => x.source === 'gemini');
+    document.getElementById('err-gem').textContent = gm ? gm.count : 0;
+    const sys = stats.by_type.find(x => x.error_type === 'systemic');
+    document.getElementById('err-systemic').textContent = sys ? sys.count : 0;
+
+    // Source doughnut
+    const srcLabels = stats.by_source.map(x => x.source);
+    const srcData = stats.by_source.map(x => x.count);
+    const srcColors = srcLabels.map(s => s === 'server' ? CHART_COLORS.accent : s === 'firebase' ? CHART_COLORS.orange : s === 'telegram' ? CHART_COLORS.active : CHART_COLORS.mitigated);
+    makeChart('errSrc', document.getElementById('chart-src'), {
+      type: 'doughnut',
+      data: {labels:srcLabels, datasets:[{data:srcData, backgroundColor:srcColors, borderWidth:0, borderRadius:4}]},
+      options: {responsive:true, cutout:'60%', plugins:{legend:{position:'right',labels:{color:'#8b9ab5',font:{size:11}}}}}
+    });
+
+    // Hourly line
+    makeChart('errHourly', document.getElementById('chart-hourly'), {
+      type: 'line',
+      data: {
+        labels: stats.hourly.map(x => x.hour.split(' ')[1] || x.hour),
+        datasets: [{data:stats.hourly.map(x => x.count), borderColor:CHART_COLORS.overestimated, backgroundColor:'rgba(255,92,92,.08)', fill:true, tension:.3, pointRadius:2, borderWidth:2}]
+      },
+      options: {responsive:true, scales:{x:{ticks:{color:'#5a6e87',maxTicksLimit:12},grid:{display:false}},y:{ticks:{color:'#5a6e87'},grid:{color:'rgba(30,42,58,.5)'},beginAtZero:true}}, plugins:{legend:{display:false}}}
+    });
+
+    // Table
+    const body = document.getElementById('err-body');
+    if (!errors.errors.length) {
+      body.innerHTML = '<tr><td colspan="5" class="empty">Помилок не знайдено 🎉</td></tr>';
+    } else {
+      body.innerHTML = errors.errors.map(e => {
+        const srcCls = e.source;
+        const typCls = (e.error_type||'').includes('429') ? 'rate' : (e.error_type||'').includes('timeout') ? 'timeout' : (e.error_type||'').includes('systemic') ? 'systemic' : (e.error_type||'').includes('network') ? 'network' : 'general';
+        return `<tr>
+          <td style="white-space:nowrap">${fmtTime(e.timestamp)}</td>
+          <td><span class="badge-src ${srcCls}">${e.source}</span></td>
+          <td><span class="badge-type ${typCls}">${e.error_type}</span></td>
+          <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.message||'').replace(/"/g,'&quot;')}">${e.message||''}</td>
+          <td style="color:var(--text3);font-size:11px">${e.endpoint||'—'}</td>
+        </tr>`;
+      }).join('');
+    }
+  } catch(e) { console.error('Errors load failed:', e); }
+}
+
+// ===== RULES =====
+async function loadRules() {
+  const days = document.getElementById('rul-days').value;
+  const ruleType = document.getElementById('rul-type').value;
+  const threatType = document.getElementById('rul-threat-type').value;
+  const auditAction = document.getElementById('rul-action').value;
+
+  const activeParams = new URLSearchParams({active_only: 'true', limit: '100'});
+  if (ruleType) activeParams.set('rule_type', ruleType);
+  if (threatType) activeParams.set('threat_type', threatType);
+
+  const auditParams = new URLSearchParams({days});
+  if (ruleType) auditParams.set('rule_type', ruleType);
+  if (threatType) auditParams.set('threat_type', threatType);
+  if (auditAction) auditParams.set('action', auditAction);
+
+  try {
+    const [rulesRes, auditRes] = await Promise.all([
+      fetch(API + '/api/analytics/rules?' + activeParams),
+      fetch(API + '/api/admin/rules/history?' + auditParams)
+    ]);
+    const rules = await rulesRes.json();
+    const audit = await auditRes.json();
+
+    document.getElementById('rul-badge').textContent = rules.total;
+
+    const tbody = document.getElementById('rules-active-body');
+    if (!rules.rules || !rules.rules.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">Немає активних правил</td></tr>';
+    } else {
+      tbody.innerHTML = rules.rules.map(r => `<tr>
+        <td><span class="badge-src" style="background:var(--green-bg);color:var(--green)">${r.rule_type||''}</span></td>
+        <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.rule_text||'').replace(/"/g,'&quot;')}">${r.rule_text||''}</td>
+        <td style="font-size:11px">${r.source_region||''} → ${r.target_region||''}</td>
+        <td style="font-size:11px">${r.threat_type||''}</td>
+        <td style="font-weight:700;color:${r.accuracy_score >= 0.7 ? 'var(--green)' : r.accuracy_score >= 0.5 ? 'var(--yellow)' : 'var(--red)'}">${(r.accuracy_score*100).toFixed(0)}%</td>
+        <td>${r.evidence_count||0}</td>
+        <td style="font-size:11px;color:var(--text3)">${fmtTime(r.updated_at)}</td>
+      </tr>`).join('');
+    }
+
+    const auditDiv = document.getElementById('rules-audit');
+    if (!audit.entries || !audit.entries.length) {
+      auditDiv.innerHTML = '<div class="empty">Аудит-лог порожній</div>';
+    } else {
+      auditDiv.innerHTML = audit.entries.map(e => {
+        const cls = e.action === 'added' ? 'added' : e.action === 'deactivated' ? 'deactivated' : 'removed';
+        return `<div class="rule-card ${cls}">
+          <div class="rule-header">
+            <span class="rule-action ${cls}">${e.action}</span>
+            <span style="font-size:11px;color:var(--text3)">${fmtTime(e.timestamp)}</span>
+          </div>
+          <div style="font-size:12px;margin-bottom:4px">${e.rule_text || e.reason || '—'}</div>
+          <div style="font-size:10px;color:var(--text3)">
+            ${e.rule_type ? 'Тип: ' + e.rule_type + ' · ' : ''}
+            ${e.threat_type ? 'Загроза: ' + e.threat_type + ' · ' : ''}
+            ${e.source_region ? e.source_region + ' → ' + (e.target_region||'') + ' · ' : ''}
+            ${e.reason ? 'Причина: ' + e.reason : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+  } catch(e) { console.error('Rules load failed:', e); }
+}
+
+// ===== Region selectors =====
+async function loadRegions() {
+  try {
+    const res = await fetch(API + '/api/threats');
+    const data = await res.json();
+    const regions = Object.keys(data.threats || {}).sort();
+    ['chr-region', 'cor-region'].forEach(id => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      regions.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r; opt.textContent = r;
+        sel.appendChild(opt);
+      });
+    });
+  } catch(e) {}
+}
+
+// ===== INIT =====
+loadRegions();
+loadDashboard();
+loadCorrelation();
+loadChronology();
+loadErrors();
+loadRules();
+
+// Auto-refresh every 60s
+setInterval(() => {
+  const active = document.querySelector('.tab.active')?.dataset.tab;
+  if (active === 'dashboard') loadDashboard();
+  else if (active === 'correlation') loadCorrelation();
+  else if (active === 'chronology') loadChronology();
+  else if (active === 'errors') loadErrors();
+  else if (active === 'rules') loadRules();
+}, 60000);
+</script>
+</body>
+</html>

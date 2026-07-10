@@ -358,8 +358,8 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
             ))
             telemetry_id = cursor.lastrowid
         
-        # Create paired_event for lifecycle tracking (only for non-none threats)
-        if level != "none" and event_id:
+        # Create paired_event for lifecycle tracking (only for non-none AI/Telegram threats, NOT official_alarm)
+        if level != "none" and event_id and threat_type != "official_alarm":
             rules_applied_json = json.dumps(rules_applied) if rules_applied else None
             cursor.execute('''
                 INSERT INTO paired_events (
@@ -1230,11 +1230,17 @@ class TelegramTestRequest(BaseModel):
 # --- API Endpoints ---
 
 @app.get("/")
-@app.head("/")
 async def root():
+    """Перенаправлення на адмін-панель."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/admin")
+
+@app.head("/")
+async def root_health():
+    """Health-check для Render / моніторингу."""
     return {
         "service": "SirenUA Threat Monitor",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "status": "running",
         "mode": "live" if is_live_mode else "mock",
         "telegram_connected": telegram_monitor is not None and telegram_monitor.is_running,
@@ -2514,496 +2520,412 @@ async def get_admin_rules_history(days: int = 30, limit: int = 200, rule_type: s
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ========================== ADMIN PANEL API v2 ==========================
+
+@app.get("/api/admin/dashboard/stats")
+async def get_admin_dashboard_stats():
+    """Агреговані статистичні дані для дашборду."""
+    try:
+        try:
+            import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        except Exception:
+            from backports import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        from datetime import datetime
+        dt = datetime.now(kiev_tz)
+        offset_hours = int(dt.strftime('%z')[:3])
+    except Exception:
+        offset_hours = 3
+    tz_modifier = f"'{offset_hours:+d} hours'"
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Total events (7d)
+        cursor.execute("SELECT COUNT(*) as c FROM paired_events WHERE created_at >= datetime('now', '-7 days')")
+        total_7d = cursor.fetchone()["c"]
+
+        # Accuracy breakdown (7d)
+        cursor.execute("""
+            SELECT
+                SUM(CASE WHEN prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+                SUM(CASE WHEN prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
+                SUM(CASE WHEN prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
+                SUM(CASE WHEN lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
+                COUNT(*) as total
+            FROM paired_events
+            WHERE created_at >= datetime('now', '-7 days') AND threat_type != 'official_alarm'
+        """)
+        acc = dict(cursor.fetchone())
+
+        # AI accuracy percentage
+        evaluated = (acc["confirmed"] or 0) + (acc["mitigated"] or 0) + (acc["overestimated"] or 0)
+        if evaluated > 0:
+            accuracy_pct = round(((acc["confirmed"] or 0) + (acc["mitigated"] or 0) * 0.8) / evaluated * 100, 1)
+        else:
+            accuracy_pct = 0
+
+        # Active threats right now
+        cursor.execute("SELECT COUNT(*) as c FROM paired_events WHERE lifecycle_status = 'active'")
+        active_now = cursor.fetchone()["c"]
+
+        # Average response time (how early AI detected before alarm)
+        cursor.execute("""
+            SELECT AVG(
+                strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)
+            ) as avg_delta
+            FROM paired_events pe
+            JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
+            JOIN threat_history th_alarm ON th_alarm.region = pe.region
+                AND th_alarm.threat_type = 'official_alarm'
+                AND th_alarm.threat_level = 'high'
+                AND ABS(strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)) < 1800
+                AND strftime('%s', th_alarm.timestamp) >= strftime('%s', th_ai.timestamp)
+            WHERE pe.created_at >= datetime('now', '-7 days')
+                AND pe.was_predictive = 1
+                AND pe.threat_type != 'official_alarm'
+        """)
+        avg_row = cursor.fetchone()
+        avg_early_seconds = round(avg_row["avg_delta"]) if avg_row and avg_row["avg_delta"] else None
+
+        # Threats by type (7d)
+        cursor.execute("""
+            SELECT threat_type, COUNT(*) as count
+            FROM paired_events
+            WHERE created_at >= datetime('now', '-7 days') AND threat_type != 'official_alarm'
+            GROUP BY threat_type ORDER BY count DESC
+        """)
+        by_type = [dict(r) for r in cursor.fetchall()]
+
+        # Top regions (7d)
+        cursor.execute("""
+            SELECT region, COUNT(*) as count
+            FROM paired_events
+            WHERE created_at >= datetime('now', '-7 days') AND threat_type != 'official_alarm'
+            GROUP BY region ORDER BY count DESC LIMIT 10
+        """)
+        top_regions = [dict(r) for r in cursor.fetchall()]
+
+        # Hourly distribution (7d) — UTC to Kyiv
+        cursor.execute(f"""
+            SELECT CAST(strftime('%H', datetime(th.timestamp, {tz_modifier})) AS INTEGER) as hour,
+                   COUNT(*) as count
+            FROM paired_events pe
+            JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE pe.created_at >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
+            GROUP BY hour ORDER BY hour
+        """)
+        hourly = [dict(r) for r in cursor.fetchall()]
+
+        # Errors count (24h)
+        cursor.execute("SELECT COUNT(*) as c FROM error_log WHERE timestamp >= datetime('now', '-1 day')")
+        errors_24h = cursor.fetchone()["c"]
+
+        conn.close()
+
+        return {
+            "total_events_7d": total_7d,
+            "accuracy": acc,
+            "accuracy_pct": accuracy_pct,
+            "active_now": active_now,
+            "avg_early_seconds": avg_early_seconds,
+            "by_type": by_type,
+            "top_regions": top_regions,
+            "hourly": hourly,
+            "errors_24h": errors_24h
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/chronology/v2")
+async def get_admin_chronology_v2(
+    region: str = None,
+    date_from: str = None,
+    date_to: str = None,
+    days: int = 7,
+    threat_type: str = None,
+    match_result: str = None,
+    confidence_min: int = None,
+    confidence_max: int = None,
+    limit: int = 300
+):
+    """Хронологія з кореляцією AI-детекцій та офіційних тривог.
+    
+    Для кожної AI-події шукає найближчу офіційну тривогу в ±30хв вікні
+    та обчислює time_delta, match_reason, та включає telemetry summary.
+    """
+    try:
+        try:
+            import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        except Exception:
+            from backports import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        from datetime import datetime
+        dt = datetime.now(kiev_tz)
+        offset_hours = int(dt.strftime('%z')[:3])
+    except Exception:
+        offset_hours = 3
+    tz_modifier = f"'{offset_hours:+d} hours'"
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Date filter
+        if date_from and date_to:
+            date_clause = "AND th_ai.timestamp BETWEEN ? AND ?"
+            date_params = [date_from, date_to + " 23:59:59"]
+        else:
+            date_clause = "AND th_ai.timestamp >= datetime('now', ?)"
+            date_params = [f'-{days} days']
+
+        # Build WHERE conditions
+        where_extra = ""
+        extra_params = []
+        if region:
+            from urllib.parse import unquote
+            where_extra += " AND pe.region = ?"
+            extra_params.append(unquote(region))
+        if threat_type:
+            where_extra += " AND pe.threat_type = ?"
+            extra_params.append(threat_type)
+        if confidence_min is not None:
+            where_extra += " AND pe.confidence_at_set >= ?"
+            extra_params.append(confidence_min)
+        if confidence_max is not None:
+            where_extra += " AND pe.confidence_at_set <= ?"
+            extra_params.append(confidence_max)
+
+        # Filter by match_result (applied in post-processing after correlation)
+        match_filter = match_result
+
+        # Main query: AI threat events with telemetry
+        query = f"""
+            SELECT pe.id, pe.region, pe.threat_level, pe.threat_type,
+                   pe.confidence_at_set, pe.confidence_at_clear,
+                   pe.was_predictive, pe.prediction_accuracy,
+                   pe.lifecycle_status, pe.duration_seconds,
+                   pe.gemini_group_id,
+                   th_ai.timestamp as ai_timestamp,
+                   th_ai.detail as threat_detail,
+                   td.attack_vector, td.target_count, td.speed_kmh,
+                   td.weapon_subtype, td.launch_origin, td.altitude_category,
+                   td.distance_to_target_km, td.event_phase,
+                   td.source_reliability, td.civilian_risk_level,
+                   tc.timestamp as clearing_timestamp,
+                   tc.resolution_type
+            FROM paired_events pe
+            JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
+            LEFT JOIN telemetry_data td ON td.threat_event_id = th_ai.id
+            LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
+            WHERE pe.threat_type != 'official_alarm'
+            {date_clause}
+            {where_extra}
+            ORDER BY th_ai.timestamp DESC
+            LIMIT ?
+        """
+        params = date_params + extra_params + [min(limit, 500)]
+        cursor.execute(query, params)
+        ai_events = [dict(r) for r in cursor.fetchall()]
+
+        # Get all official alarm timestamps for correlation
+        alarm_query = f"""
+            SELECT region, timestamp, threat_level, id
+            FROM threat_history
+            WHERE threat_type = 'official_alarm'
+            AND threat_level = 'high'
+            {date_clause.replace('th_ai.timestamp', 'timestamp')}
+            ORDER BY timestamp
+        """
+        cursor.execute(alarm_query, date_params)
+        alarm_rows = cursor.fetchall()
+
+        # Build alarm lookup: region -> [(timestamp_epoch, ts_str)]
+        from datetime import datetime as dt_cls
+        alarm_by_region = {}
+        for ar in alarm_rows:
+            r = ar["region"]
+            if r not in alarm_by_region:
+                alarm_by_region[r] = []
+            ts_str = ar["timestamp"]
+            try:
+                ts_epoch = dt_cls.fromisoformat(ts_str.replace('Z', '+00:00') if ts_str else "").timestamp()
+            except Exception:
+                try:
+                    ts_epoch = dt_cls.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timestamp()
+                except Exception:
+                    continue
+            alarm_by_region[r].append({"epoch": ts_epoch, "ts": ts_str})
+
+        # Correlate each AI event with nearest official alarm
+        correlated_events = []
+        for ev in ai_events:
+            ai_ts_str = ev.get("ai_timestamp", "")
+            try:
+                ai_epoch = dt_cls.fromisoformat(ai_ts_str.replace('Z', '+00:00') if ai_ts_str else "").timestamp()
+            except Exception:
+                try:
+                    ai_epoch = dt_cls.strptime(ai_ts_str, "%Y-%m-%d %H:%M:%S").timestamp()
+                except Exception:
+                    ai_epoch = None
+
+            # Find nearest alarm within ±30min window
+            best_alarm = None
+            best_delta = None
+            region_alarms = alarm_by_region.get(ev["region"], [])
+            if ai_epoch:
+                for alarm in region_alarms:
+                    delta = alarm["epoch"] - ai_epoch  # positive = AI was first
+                    if abs(delta) <= 1800:  # 30 min window
+                        if best_delta is None or abs(delta) < abs(best_delta):
+                            best_delta = delta
+                            best_alarm = alarm
+
+            ev["alarm_timestamp"] = best_alarm["ts"] if best_alarm else None
+            ev["time_delta_seconds"] = round(best_delta) if best_delta is not None else None
+
+            # Determine match_type and match_reason
+            pred_acc = ev.get("prediction_accuracy")
+            lifecycle = ev.get("lifecycle_status")
+
+            if pred_acc == "confirmed" or (best_alarm and best_delta is not None and abs(best_delta) <= 1800):
+                ev["match_type"] = "confirmed"
+                if best_delta is not None:
+                    if best_delta > 0:
+                        mins = round(best_delta / 60)
+                        ev["match_reason"] = f"AI визначив загрозу за {mins} хв до офіційної тривоги"
+                    elif best_delta < 0:
+                        mins = round(abs(best_delta) / 60)
+                        ev["match_reason"] = f"Офіційна тривога була за {mins} хв до AI-детекції"
+                    else:
+                        ev["match_reason"] = "AI та офіційна тривога одночасно"
+                else:
+                    ev["match_reason"] = "Підтверджено через lifecycle"
+            elif pred_acc == "mitigated":
+                ev["match_type"] = "mitigated"
+                ev["match_reason"] = "Загрозу нейтралізовано (ППО/РЕБ)"
+            elif pred_acc == "overestimated":
+                ev["match_type"] = "overestimated"
+                ev["match_reason"] = "Тривога не підтверджена — AI переоцінив загрозу"
+            elif lifecycle == "active":
+                ev["match_type"] = "active"
+                ev["match_reason"] = "Загроза ще активна, очікуємо результат"
+            else:
+                ev["match_type"] = "cleared"
+                ev["match_reason"] = "Знято без кореляції з офіційною тривогою"
+
+            # Telemetry summary
+            telem_parts = []
+            if ev.get("attack_vector") and ev["attack_vector"] != "unknown":
+                telem_parts.append(ev["attack_vector"])
+            if ev.get("weapon_subtype"):
+                telem_parts.append(ev["weapon_subtype"])
+            if ev.get("target_count") and ev["target_count"] > 0:
+                telem_parts.append(f"{ev['target_count']} цілей")
+            if ev.get("speed_kmh") and ev["speed_kmh"] > 0:
+                telem_parts.append(f"{ev['speed_kmh']} км/г")
+            if ev.get("launch_origin"):
+                telem_parts.append(f"з {ev['launch_origin']}")
+            ev["telemetry_summary"] = " | ".join(telem_parts) if telem_parts else None
+
+            correlated_events.append(ev)
+
+        # Apply match_filter
+        if match_filter:
+            if match_filter == "match":
+                correlated_events = [e for e in correlated_events if e["match_type"] == "confirmed"]
+            elif match_filter == "mitigated":
+                correlated_events = [e for e in correlated_events if e["match_type"] == "mitigated"]
+            elif match_filter == "mismatch":
+                correlated_events = [e for e in correlated_events if e["match_type"] == "overestimated"]
+            elif match_filter == "active":
+                correlated_events = [e for e in correlated_events if e["match_type"] == "active"]
+
+        # Aggregate stats
+        stats = {
+            "confirmed": sum(1 for e in correlated_events if e["match_type"] == "confirmed"),
+            "mitigated": sum(1 for e in correlated_events if e["match_type"] == "mitigated"),
+            "overestimated": sum(1 for e in correlated_events if e["match_type"] == "overestimated"),
+            "active": sum(1 for e in correlated_events if e["match_type"] == "active"),
+            "cleared": sum(1 for e in correlated_events if e["match_type"] == "cleared"),
+        }
+
+        # Time delta distribution (for histogram)
+        deltas = [e["time_delta_seconds"] for e in correlated_events if e["time_delta_seconds"] is not None]
+        delta_buckets = {}
+        for d in deltas:
+            bucket = (d // 60) * 60  # Round to nearest minute
+            bucket_label = f"{int(bucket // 60)} хв"
+            delta_buckets[bucket_label] = delta_buckets.get(bucket_label, 0) + 1
+
+        # Daily aggregation for charts
+        daily_agg_query = f"""
+            SELECT date(datetime(th_ai.timestamp, {tz_modifier})) as day,
+                   COUNT(*) as total_events,
+                   SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
+                   SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+                   SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
+                   SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
+                   SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
+            FROM paired_events pe
+            JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
+            WHERE pe.threat_type != 'official_alarm'
+            {date_clause.replace('th_ai.timestamp', 'th_ai.timestamp')}
+            {where_extra}
+            GROUP BY day ORDER BY day
+        """
+        agg_params = date_params + extra_params
+        cursor.execute(daily_agg_query, agg_params)
+        daily_stats = [dict(r) for r in cursor.fetchall()]
+
+        # Threat type breakdown for charts
+        cursor.execute(f"""
+            SELECT pe.threat_type, pe.prediction_accuracy, COUNT(*) as count
+            FROM paired_events pe
+            JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
+            WHERE pe.threat_type != 'official_alarm'
+            {date_clause.replace('th_ai.timestamp', 'th_ai.timestamp')}
+            {where_extra}
+            GROUP BY pe.threat_type, pe.prediction_accuracy
+        """, date_params + extra_params)
+        type_breakdown = [dict(r) for r in cursor.fetchall()]
+
+        conn.close()
+
+        return {
+            "total": len(correlated_events),
+            "stats": stats,
+            "events": correlated_events,
+            "daily_stats": daily_stats,
+            "delta_distribution": delta_buckets,
+            "type_breakdown": type_breakdown
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ========================== HTML ADMIN PANEL ==========================
 
 from fastapi.responses import HTMLResponse
 
-ADMIN_HTML = '''<!DOCTYPE html>
-<html lang="uk">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SirenUA Admin Panel</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#c9d1d9;--text2:#8b949e;--accent:#58a6ff;--red:#f85149;--green:#3fb950;--yellow:#d29922;--orange:#db6d28;--purple:#bc8cff}
-body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.5}
-.header{background:linear-gradient(135deg,#1a1e26,#161b22);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;gap:16px}
-.header h1{font-size:20px;font-weight:600;background:linear-gradient(135deg,var(--accent),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.header .status{margin-left:auto;font-size:13px;color:var(--text2)}
-.header .status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.tabs{display:flex;background:var(--card);border-bottom:1px solid var(--border);padding:0 24px;gap:4px}
-.tab{padding:12px 20px;cursor:pointer;color:var(--text2);font-size:14px;font-weight:500;border-bottom:2px solid transparent;transition:all .2s}
-.tab:hover{color:var(--text)}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
-.tab .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px;vertical-align:middle}
-.tab .badge.red{background:rgba(248,81,73,.2);color:var(--red)}
-.tab .badge.blue{background:rgba(88,166,255,.2);color:var(--accent)}
-.tab .badge.green{background:rgba(63,185,80,.2);color:var(--green)}
-.content{padding:24px;display:none}
-.content.active{display:block}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
-.stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
-.stat-card h3{font-size:13px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
-.stat-card .value{font-size:32px;font-weight:700}
-.stat-card .value.red{color:var(--red)}
-.stat-card .value.green{color:var(--green)}
-.stat-card .value.yellow{color:var(--yellow)}
-.chart-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
-.chart-box h3{font-size:14px;margin-bottom:12px;color:var(--text)}
-.chart-box canvas{max-height:250px}
-.filters{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;background:rgba(48,54,61,0.15);padding:12px 16px;border-radius:10px;border:1px solid var(--border)}
-.filters select,.filters input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:13px;outline:none}
-.filters select:focus,.filters input:focus{border-color:var(--accent)}
-.filters label{font-size:13px;color:var(--text2);margin-right:-4px;font-weight:500}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;padding:10px 12px;background:var(--card);border-bottom:2px solid var(--border);color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.3px;font-size:11px;position:sticky;top:0}
-td{padding:10px 12px;border-bottom:1px solid var(--border)}
-tr:hover{background:rgba(88,166,255,.05)}
-.badge-src{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
-.badge-src.server{background:rgba(88,166,255,.15);color:var(--accent)}
-.badge-src.firebase{background:rgba(219,109,40,.15);color:var(--orange)}
-.badge-src.gemini{background:rgba(188,140,255,.15);color:var(--purple)}
-.badge-src.telegram{background:rgba(226,197,48,.15);color:var(--yellow)}
-.badge-type{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
-.badge-type.rate{background:rgba(248,81,73,.2);color:var(--red)}
-.badge-type.timeout{background:rgba(210,153,34,.2);color:var(--yellow)}
-.badge-type.general{background:rgba(139,148,158,.2);color:var(--text2)}
-.match-icon{font-size:16px;margin-right:4px}
-.timeline-day{margin-bottom:16px}
-.timeline-day h4{font-size:14px;color:var(--accent);padding:8px 0;border-bottom:1px solid var(--border);margin-bottom:8px}
-.tl-event{display:grid;grid-template-columns:180px 1fr 120px 100px;gap:8px;padding:8px 4px;border-bottom:1px solid rgba(48,54,61,.5);align-items:center;font-size:13px}
-.tl-event:hover{background:rgba(88,166,255,.05)}
-.rule-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:8px}
-.rule-card.added{border-left:3px solid var(--green)}
-.rule-card.removed,.rule-card.deactivated{border-left:3px solid var(--red)}
-.rule-card.decayed{border-left:3px solid var(--yellow)}
-.rule-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.rule-action{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
-.rule-action.added{background:rgba(63,185,80,.15);color:var(--green)}
-.rule-action.removed,.rule-action.deactivated{background:rgba(248,81,73,.15);color:var(--red)}
-.table-wrapper{max-height:600px;overflow-y:auto;border-radius:8px;border:1px solid var(--border)}
-.empty{text-align:center;padding:40px;color:var(--text2);font-size:14px}
-.refresh-info{font-size:11px;color:var(--text2);text-align:right;padding:4px 0}
-</style>
-</head>
-<body>
-<div class="header">
-  <h1>🚨 SirenUA Admin Panel</h1>
-  <div class="status"><span class="dot"></span>Live Monitoring</div>
-</div>
-<div class="tabs">
-  <div class="tab active" data-tab="errors">🔴 Помилки <span class="badge red" id="err-badge">0</span></div>
-  <div class="tab" data-tab="chronology">📊 Хронологія <span class="badge blue" id="chr-badge">0</span></div>
-  <div class="tab" data-tab="rules">🧠 Правила Gemini <span class="badge green" id="rul-badge">0</span></div>
-</div>
-
-<!-- TAB 1: ERRORS -->
-<div class="content active" id="tab-errors">
-  <div class="filters">
-    <label>Джерело:</label>
-    <select id="f-source"><option value="">Всі</option><option value="server">Server</option><option value="firebase">Firebase</option><option value="gemini">Gemini</option><option value="telegram">Telegram</option></select>
-    <label>Тип:</label>
-    <select id="f-type"><option value="">Всі</option><option value="systemic">Systemic</option><option value="network_error">Network Error</option><option value="429_rate_limit">429 Rate Limit</option><option value="500_server">500 Server</option><option value="timeout">Timeout</option><option value="connection">Connection</option><option value="auth">Auth</option><option value="general">General</option></select>
-    <label>Днів:</label>
-    <select id="f-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="30">30</option></select>
-    <button onclick="loadErrors()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
-  </div>
-  <div class="grid">
-    <div class="stat-card"><h3>Всього помилок</h3><div class="value red" id="err-total">0</div></div>
-    <div class="stat-card"><h3>Системні</h3><div class="value yellow" id="err-systemic">0</div></div>
-    <div class="stat-card"><h3>429 Rate Limit</h3><div class="value" style="color:var(--orange)" id="err-429">0</div></div>
-    <div class="stat-card"><h3>Firebase</h3><div class="value" style="color:var(--accent)" id="err-fb">0</div></div>
-    <div class="stat-card"><h3>Gemini</h3><div class="value" style="color:var(--purple)" id="err-gem">0</div></div>
-  </div>
-  <div class="grid" style="grid-template-columns:1fr 1fr">
-    <div class="chart-box"><h3>Помилки по джерелах</h3><canvas id="chart-src"></canvas></div>
-    <div class="chart-box"><h3>Помилки по годинах (48г)</h3><canvas id="chart-hourly"></canvas></div>
-  </div>
-  <div class="table-wrapper"><table><thead><tr><th>Час</th><th>Джерело</th><th>Тип</th><th>Повідомлення</th><th>Endpoint</th></tr></thead><tbody id="err-body"></tbody></table></div>
-  <div class="refresh-info">Автооновлення кожні 60с</div>
-</div>
-
-<!-- TAB 2: CHRONOLOGY -->
-<div class="content" id="tab-chronology">
-  <div class="filters">
-    <label>Днів:</label>
-    <select id="chr-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="14">14</option><option value="30">30</option></select>
-    <label>Область:</label>
-    <select id="chr-region"><option value="">Всі</option></select>
-    <label>Тип загрози:</label>
-    <select id="chr-threat-type">
-      <option value="">Всі</option>
-      <option value="shahed">Shahed</option>
-      <option value="mig31k">МіГ-31К</option>
-      <option value="cruise_missile">Крилаті ракети</option>
-      <option value="ballistic">Балістика</option>
-      <option value="artillery">Обстріл</option>
-      <option value="recon">БПЛА розвідник</option>
-      <option value="unknown">Невідомо</option>
-    </select>
-    <label>Джерело:</label>
-    <select id="chr-was-predictive">
-      <option value="">Всі</option>
-      <option value="1">AI передбачення</option>
-      <option value="0">Офіційна тривога</option>
-    </select>
-    <label>Результат:</label>
-    <select id="chr-match-type">
-      <option value="">Всі</option>
-      <option value="match">✅ Співпадіння</option>
-      <option value="mitigated">🛡️ Збито/РЕБ</option>
-      <option value="mismatch">❌ Неспівпадіння</option>
-      <option value="active">⏱️ Активні</option>
-      <option value="cleared">🔄 Зняті</option>
-    </select>
-    <button onclick="loadChronology()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
-  </div>
-  <div class="grid" style="grid-template-columns:1fr 1fr">
-    <div class="chart-box"><h3>Загрози / Зняття по днях</h3><canvas id="chart-daily"></canvas></div>
-    <div class="chart-box"><h3>Точність передбачень (%)</h3><canvas id="chart-accuracy"></canvas></div>
-  </div>
-  <div class="grid">
-    <div class="stat-card"><h3>Всього подій</h3><div class="value" style="color:var(--accent)" id="chr-total">0</div></div>
-    <div class="stat-card"><h3>✅ Співпадіння</h3><div class="value green" id="chr-match">0</div></div>
-    <div class="stat-card"><h3>🛡️ Збито/РЕБ</h3><div class="value" style="color:var(--purple)" id="chr-mitigated">0</div></div>
-    <div class="stat-card"><h3>❌ Неспівпадіння</h3><div class="value red" id="chr-mismatch">0</div></div>
-    <div class="stat-card"><h3>⏱️ Активні</h3><div class="value yellow" id="chr-active">0</div></div>
-  </div>
-  <div id="timeline-container"></div>
-  <div class="refresh-info">Автооновлення кожні 60с</div>
-</div>
-
-<!-- TAB 3: RULES -->
-<div class="content" id="tab-rules">
-  <div class="filters">
-    <label>Днів аудиту:</label>
-    <select id="rul-days"><option value="7">7</option><option value="14">14</option><option value="30" selected>30</option></select>
-    <label>Тип правила:</label>
-    <select id="rul-type">
-      <option value="">Всі</option>
-      <option value="route_pattern">Маршрут</option>
-      <option value="confidence_correction">Коригування довіри</option>
-      <option value="time_pattern">Часовий патерн</option>
-    </select>
-    <label>Тип загрози:</label>
-    <select id="rul-threat-type">
-      <option value="">Всі</option>
-      <option value="shahed">Shahed</option>
-      <option value="mig31k">МіГ-31К</option>
-      <option value="cruise_missile">Крилаті ракети</option>
-      <option value="ballistic">Балістика</option>
-    </select>
-    <label>Дія аудиту:</label>
-    <select id="rul-action">
-      <option value="">Всі</option>
-      <option value="added">Створено</option>
-      <option value="deactivated">Деактивовано</option>
-      <option value="removed">Видалено</option>
-    </select>
-    <button onclick="loadRules()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
-  </div>
-  <h3 style="margin:16px 0 8px;font-size:15px">Активні правила</h3>
-  <div class="table-wrapper" style="max-height:400px"><table><thead><tr><th>Тип</th><th>Правило</th><th>Регіон</th><th>Тип загрози</th><th>Accuracy</th><th>Evidence</th><th>Оновлено</th></tr></thead><tbody id="rules-active-body"></tbody></table></div>
-  <h3 style="margin:24px 0 8px;font-size:15px">📜 Аудит-лог правил</h3>
-  <div id="rules-audit"></div>
-  <div class="refresh-info">Автооновлення кожні 60с</div>
-</div>
-
-<script>
-const API = '';
-let srcChart, hourlyChart, dailyChart, accChart;
-
-// Tabs
-document.querySelectorAll('.tab').forEach(t => {
-  t.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-    document.querySelectorAll('.content').forEach(x => x.classList.remove('active'));
-    t.classList.add('active');
-    document.getElementById('tab-' + t.dataset.tab).classList.add('active');
-  });
-});
-
-function fmtTime(ts) {
-  if (!ts) return '—';
-  try {
-    const d = new Date(ts + (ts.includes('Z') || ts.includes('+') ? '' : 'Z'));
-    return d.toLocaleString('uk-UA', {timeZone:'Europe/Kiev', hour:'2-digit', minute:'2-digit', second:'2-digit', day:'2-digit', month:'2-digit'});
-  } catch(e) { return ts; }
-}
-
-function fmtDuration(s) {
-  if (!s) return '—';
-  if (s < 60) return s + 'с';
-  if (s < 3600) return Math.round(s/60) + 'хв';
-  return Math.round(s/3600*10)/10 + 'год';
-}
-
-// === ERRORS ===
-async function loadErrors() {
-  const src = document.getElementById('f-source').value;
-  const typ = document.getElementById('f-type').value;
-  const days = document.getElementById('f-days').value;
-  
-  const params = new URLSearchParams({days});
-  if (src) params.set('source', src);
-  if (typ) params.set('error_type', typ);
-  
-  try {
-    const [errRes, statRes] = await Promise.all([
-      fetch(API + '/api/admin/errors?' + params),
-      fetch(API + '/api/admin/errors/stats?days=' + days)
-    ]);
-    const errors = await errRes.json();
-    const stats = await statRes.json();
-    
-    document.getElementById('err-total').textContent = stats.total;
-    document.getElementById('err-badge').textContent = stats.total;
-    
-    const r429 = stats.by_type.find(x => x.error_type === '429_rate_limit');
-    document.getElementById('err-429').textContent = r429 ? r429.count : 0;
-    const fb = stats.by_source.find(x => x.source === 'firebase');
-    document.getElementById('err-fb').textContent = fb ? fb.count : 0;
-    const gm = stats.by_source.find(x => x.source === 'gemini');
-    document.getElementById('err-gem').textContent = gm ? gm.count : 0;
-    const sys = stats.by_type.find(x => x.error_type === 'systemic');
-    document.getElementById('err-systemic').textContent = sys ? sys.count : 0;
-    
-    // Source chart
-    if (srcChart) srcChart.destroy();
-    const srcLabels = stats.by_source.map(x => x.source);
-    const srcData = stats.by_source.map(x => x.count);
-    const srcColors = srcLabels.map(s => s === 'server' ? '#58a6ff' : s === 'firebase' ? '#db6d28' : s === 'telegram' ? '#e2c530' : '#bc8cff');
-    srcChart = new Chart(document.getElementById('chart-src'), {
-      type: 'doughnut',
-      data: {labels: srcLabels, datasets: [{data: srcData, backgroundColor: srcColors, borderWidth: 0}]},
-      options: {responsive: true, plugins: {legend: {position: 'bottom', labels: {color: '#c9d1d9', font: {size: 12}}}}}
-    });
-    
-    // Hourly chart
-    if (hourlyChart) hourlyChart.destroy();
-    hourlyChart = new Chart(document.getElementById('chart-hourly'), {
-      type: 'line',
-      data: {
-        labels: stats.hourly.map(x => x.hour.split(' ')[1] || x.hour),
-        datasets: [{label: 'Помилки', data: stats.hourly.map(x => x.count), borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,.1)', fill: true, tension: .3, pointRadius: 2}]
-      },
-      options: {responsive: true, scales: {x: {ticks: {color: '#8b949e', maxTicksLimit: 12}}, y: {ticks: {color: '#8b949e'}, beginAtZero: true}}, plugins: {legend: {display: false}}}
-    });
-    
-    // Table
-    const body = document.getElementById('err-body');
-    if (!errors.errors.length) {
-      body.innerHTML = '<tr><td colspan="5" class="empty">Помилок не знайдено 🎉</td></tr>';
-    } else {
-      body.innerHTML = errors.errors.map(e => {
-        const srcCls = e.source;
-        const typCls = e.error_type.includes('429') ? 'rate' : e.error_type.includes('timeout') ? 'timeout' : e.error_type.includes('systemic') ? 'rate' : e.error_type.includes('network') ? 'timeout' : 'general';
-        return `<tr>
-          <td style="white-space:nowrap">${fmtTime(e.timestamp)}</td>
-          <td><span class="badge-src ${srcCls}">${e.source}</span></td>
-          <td><span class="badge-type ${typCls}">${e.error_type}</span></td>
-          <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(e.message||'').replace(/"/g,'&quot;')}">${e.message||''}</td>
-          <td style="color:var(--text2);font-size:12px">${e.endpoint||'—'}</td>
-        </tr>`;
-      }).join('');
-    }
-  } catch(e) { console.error('Errors load failed:', e); }
-}
-
-// === CHRONOLOGY ===
-async function loadChronology() {
-  const days = document.getElementById('chr-days').value;
-  const region = document.getElementById('chr-region').value;
-  const threatType = document.getElementById('chr-threat-type').value;
-  const wasPredictive = document.getElementById('chr-was-predictive').value;
-  const matchType = document.getElementById('chr-match-type').value;
-  
-  const params = new URLSearchParams({days});
-  if (region) params.set('region', region);
-  if (threatType) params.set('threat_type', threatType);
-  if (wasPredictive !== '') params.set('was_predictive', wasPredictive);
-  if (matchType) params.set('prediction_accuracy', matchType);
-  
-  try {
-    const res = await fetch(API + '/api/admin/chronology?' + params);
-    const data = await res.json();
-    
-    const matches = data.events.filter(e => e.match_type === 'match').length;
-    const mitigated = data.events.filter(e => e.match_type === 'mitigated').length;
-    const mismatches = data.events.filter(e => e.match_type === 'mismatch').length;
-    const active = data.events.filter(e => e.match_type === 'active').length;
-    
-    document.getElementById('chr-total').textContent = data.total;
-    document.getElementById('chr-badge').textContent = data.total;
-    document.getElementById('chr-match').textContent = matches;
-    document.getElementById('chr-mitigated').textContent = mitigated;
-    document.getElementById('chr-mismatch').textContent = mismatches;
-    document.getElementById('chr-active').textContent = active;
-    
-    // Daily bar chart
-    if (dailyChart) dailyChart.destroy();
-    dailyChart = new Chart(document.getElementById('chart-daily'), {
-      type: 'bar',
-      data: {
-        labels: data.daily_stats.map(d => d.day),
-        datasets: [
-          {label: 'Загрози', data: data.daily_stats.map(d => d.total_events), backgroundColor: 'rgba(248,81,73,.6)'},
-          {label: 'Зняття', data: data.daily_stats.map(d => d.cleared), backgroundColor: 'rgba(63,185,80,.6)'}
-        ]
-      },
-      options: {responsive: true, scales: {x: {ticks: {color: '#8b949e'}}, y: {ticks: {color: '#8b949e'}, beginAtZero: true}}, plugins: {legend: {labels: {color: '#c9d1d9'}}}}
-    });
-    
-    // Accuracy line chart
-    if (accChart) accChart.destroy();
-    const accData = data.daily_stats.map(d => {
-      const total = (d.confirmed || 0) + (d.overestimated || 0) + (d.mitigated || 0);
-      return total > 0 ? Math.round(((d.confirmed || 0) + (d.mitigated || 0) * 0.8) / total * 100) : null;
-    });
-    accChart = new Chart(document.getElementById('chart-accuracy'), {
-      type: 'line',
-      data: {
-        labels: data.daily_stats.map(d => d.day),
-        datasets: [{label: 'Точність %', data: accData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,.1)', fill: true, tension: .3, pointRadius: 3, spanGaps: true}]
-      },
-      options: {responsive: true, scales: {x: {ticks: {color: '#8b949e'}}, y: {ticks: {color: '#8b949e'}, beginAtZero: true, max: 100}}, plugins: {legend: {display: false}}}
-    });
-    
-    // Timeline
-    const container = document.getElementById('timeline-container');
-    const grouped = {};
-    data.events.forEach(ev => {
-      const day = (ev.threat_timestamp || '').split(' ')[0] || 'Невідомо';
-      if (!grouped[day]) grouped[day] = [];
-      grouped[day].push(ev);
-    });
-    
-    if (Object.keys(grouped).length === 0) {
-      container.innerHTML = '<div class="empty">Подій не знайдено</div>';
-    } else {
-      container.innerHTML = Object.entries(grouped).sort((a,b) => b[0].localeCompare(a[0])).map(([day, events]) => {
-        return `<div class="timeline-day"><h4>📅 ${day} (${events.length} подій)</h4>
-        ${events.map(ev => {
-          const icon = ev.match_type === 'match' ? '✅' : ev.match_type === 'mitigated' ? '🛡️' : ev.match_type === 'mismatch' ? '❌' : ev.match_type === 'active' ? '⏱️' : '🔄';
-          return `<div class="tl-event">
-            <div style="color:var(--text2)">${fmtTime(ev.threat_timestamp)}</div>
-            <div><span class="match-icon">${icon}</span><strong>${ev.region||''}</strong> — ${ev.threat_type||''} (${ev.threat_level||''})</div>
-            <div style="font-size:12px;color:var(--text2)">${fmtDuration(ev.duration_seconds)}</div>
-            <div style="font-size:12px;color:var(--text2)">${ev.lifecycle_status||''}</div>
-          </div>`;
-        }).join('')}
-        </div>`;
-      }).join('');
-    }
-  } catch(e) { console.error('Chronology load failed:', e); }
-}
-
-// === RULES ===
-async function loadRules() {
-  const days = document.getElementById('rul-days').value;
-  const ruleType = document.getElementById('rul-type').value;
-  const threatType = document.getElementById('rul-threat-type').value;
-  const auditAction = document.getElementById('rul-action').value;
-  
-  const activeParams = new URLSearchParams({active_only: 'true', limit: '100'});
-  if (ruleType) activeParams.set('rule_type', ruleType);
-  if (threatType) activeParams.set('threat_type', threatType);
-  
-  const auditParams = new URLSearchParams({days});
-  if (ruleType) auditParams.set('rule_type', ruleType);
-  if (threatType) auditParams.set('threat_type', threatType);
-  if (auditAction) auditParams.set('action', auditAction);
-  
-  try {
-    const [rulesRes, auditRes] = await Promise.all([
-      fetch(API + '/api/analytics/rules?' + activeParams),
-      fetch(API + '/api/admin/rules/history?' + auditParams)
-    ]);
-    const rules = await rulesRes.json();
-    const audit = await auditRes.json();
-    
-    document.getElementById('rul-badge').textContent = rules.total;
-    
-    // Active rules table
-    const tbody = document.getElementById('rules-active-body');
-    if (!rules.rules.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">Немає активних правил</td></tr>';
-    } else {
-      tbody.innerHTML = rules.rules.map(r => `<tr>
-        <td><span class="badge-src" style="background:rgba(63,185,80,.15);color:var(--green)">${r.rule_type||''}</span></td>
-        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.rule_text||'').replace(/"/g,'&quot;')}">${r.rule_text||''}</td>
-        <td style="font-size:12px">${r.source_region||''} → ${r.target_region||''}</td>
-        <td style="font-size:12px">${r.threat_type||''}</td>
-        <td style="font-weight:600;color:${r.accuracy_score >= 0.7 ? 'var(--green)' : r.accuracy_score >= 0.5 ? 'var(--yellow)' : 'var(--red)'}">${(r.accuracy_score*100).toFixed(0)}%</td>
-        <td>${r.evidence_count||0}</td>
-        <td style="font-size:12px;color:var(--text2)">${fmtTime(r.updated_at)}</td>
-      </tr>`).join('');
-    }
-    
-    // Audit log
-    const auditDiv = document.getElementById('rules-audit');
-    if (!audit.entries.length) {
-      auditDiv.innerHTML = '<div class="empty">Аудит-лог порожній</div>';
-    } else {
-      auditDiv.innerHTML = audit.entries.map(e => {
-        const cls = e.action === 'added' ? 'added' : e.action === 'deactivated' ? 'deactivated' : 'removed';
-        return `<div class="rule-card ${cls}">
-          <div class="rule-header">
-            <span class="rule-action ${cls}">${e.action}</span>
-            <span style="font-size:12px;color:var(--text2)">${fmtTime(e.timestamp)}</span>
-          </div>
-          <div style="font-size:13px;margin-bottom:4px">${e.rule_text || e.reason || '—'}</div>
-          <div style="font-size:11px;color:var(--text2)">
-            ${e.rule_type ? 'Тип: ' + e.rule_type + ' | ' : ''}
-            ${e.threat_type ? 'Загроза: ' + e.threat_type + ' | ' : ''}
-            ${e.source_region ? e.source_region + ' → ' + (e.target_region||'') + ' | ' : ''}
-            ${e.reason ? 'Причина: ' + e.reason : ''}
-          </div>
-        </div>`;
-      }).join('');
-    }
-  } catch(e) { console.error('Rules load failed:', e); }
-}
-
-// Populate region selector
-async function loadRegions() {
-  try {
-    const res = await fetch(API + '/api/threats');
-    const data = await res.json();
-    const sel = document.getElementById('chr-region');
-    Object.keys(data.threats || {}).sort().forEach(r => {
-      const opt = document.createElement('option');
-      opt.value = r; opt.textContent = r;
-      sel.appendChild(opt);
-    });
-  } catch(e) {}
-}
-
-// Initial load
-loadRegions();
-loadErrors();
-loadChronology();
-loadRules();
-
-// Auto-refresh every 60s
-setInterval(() => {
-  const active = document.querySelector('.tab.active')?.dataset.tab;
-  if (active === 'errors') loadErrors();
-  else if (active === 'chronology') loadChronology();
-  else if (active === 'rules') loadRules();
-}, 60000);
-</script>
-</body>
-</html>'''
-
-
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_panel():
     """HTML адмін-панель моніторингу."""
-    return ADMIN_HTML
+    html_path = os.path.join(os.path.dirname(__file__), "admin_panel.html")
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>admin_panel.html not found</h1>", status_code=500)
+
 
 
 if __name__ == "__main__":
