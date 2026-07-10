@@ -658,7 +658,10 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
             # Keep it critical if the region is already under an official alarm
             # so the warning plays even if the device is muted/DND
             is_critical = is_official_alarm
-            body = detail if detail else f"Загроза в: {region}."
+            if detail:
+                body = f"{detail}\n{region}"
+            else:
+                body = region
         else:
             # It's a general official alarm trigger (no specific threat type)
             title = "🚨 Повітряна тривога"
