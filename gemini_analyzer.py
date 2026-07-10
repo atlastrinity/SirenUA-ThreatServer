@@ -429,14 +429,11 @@ MANDATORY fields:
                         reason=f"overest_rate={overest_rate:.2f}, confirm_rate={confirm_rate:.2f}")
             
             # 4. Rule Type 3: Time Patterns
-            # Note: created_at is in UTC (CURRENT_TIMESTAMP). Ukraine uses UTC+3 (EEST).
-            # We add 3 hours to convert to Kyiv time for accurate time-of-day patterns.
             cursor.execute('''
                 SELECT 
-                    CAST((strftime('%H', pe.created_at) + 3) % 24 AS INTEGER) as hour,
+                    pe.created_at,
                     pe.threat_type,
-                    pe.region,
-                    COUNT(*) as count
+                    pe.region
                 FROM paired_events pe
                 WHERE pe.lifecycle_status = 'cleared'
                     AND pe.prediction_accuracy = 'confirmed'

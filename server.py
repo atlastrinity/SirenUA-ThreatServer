@@ -525,6 +525,17 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
         # --- Close the corresponding paired_event ---
         prediction_accuracy = clearing_telemetry.get("prediction_accuracy_hint", "not_applicable")
         if original_event_id:
+            # Check if it was already confirmed in real-time (by official alarm)
+            cursor.execute('''
+                SELECT prediction_accuracy FROM paired_events
+                WHERE threat_event_id = ? AND lifecycle_status = 'active'
+            ''', (original_event_id,))
+            pe_row = cursor.fetchone()
+            current_accuracy = pe_row[0] if pe_row else None
+            
+            if current_accuracy == 'confirmed' and prediction_accuracy != 'confirmed':
+                prediction_accuracy = 'confirmed'
+                
             cursor.execute('''
                 UPDATE paired_events SET
                     clearing_event_id = ?,
