@@ -20,7 +20,10 @@ from datetime import datetime, timezone
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -249,22 +252,25 @@ def init_analytics_db():
     print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings + gemini_rules + paired_events + error_log + gemini_rules_audit)")
 
 
-def log_error_to_db(source: str, message: str, endpoint: str = None, context: str = None):
+def log_error_to_db(source: str, message: str, endpoint: str = None, context: str = None, error_type: str = None):
     """Log an error event to the error_log table. Source: 'server', 'firebase', 'gemini'."""
     error_msg = str(message)
-    # Classify error type
-    if "429" in error_msg or "Quota" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower():
-        error_type = "429_rate_limit"
-    elif "500" in error_msg or "Internal" in error_msg:
-        error_type = "500_server"
-    elif "timeout" in error_msg.lower() or "Timeout" in error_msg:
-        error_type = "timeout"
-    elif "connection" in error_msg.lower() or "ConnectionError" in error_msg:
-        error_type = "connection"
-    elif "auth" in error_msg.lower() or "permission" in error_msg.lower() or "403" in error_msg:
-        error_type = "auth"
-    else:
-        error_type = "general"
+    # Classify error type if not provided
+    if not error_type:
+        if "429" in error_msg or "Quota" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower():
+            error_type = "429_rate_limit"
+        elif "500" in error_msg or "Internal" in error_msg:
+            error_type = "500_server"
+        elif "timeout" in error_msg.lower() or "Timeout" in error_msg:
+            error_type = "timeout"
+        elif "connection" in error_msg.lower() or "ConnectionError" in error_msg or "socket" in error_msg.lower() or "network" in error_msg.lower() or "http" in error_msg.lower():
+            error_type = "network_error"
+        elif "auth" in error_msg.lower() or "permission" in error_msg.lower() or "403" in error_msg or "credential" in error_msg.lower():
+            error_type = "auth"
+        elif "traceback" in error_msg.lower() or "exception" in error_msg.lower() or "syntax" in error_msg.lower() or "system" in error_msg.lower() or "sqlite" in error_msg.lower():
+            error_type = "systemic"
+        else:
+            error_type = "general"
     
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -1001,6 +1007,64 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    # Log HTTP exceptions >= 400
+    if exc.status_code >= 400:
+        safe_run_task(asyncio.to_thread(
+            log_error_to_db,
+            "server",
+            str(exc.detail),
+            str(request.url.path),
+            f"method={request.method}, status={exc.status_code}",
+            "auth" if exc.status_code in [401, 403] else ("500_server" if exc.status_code >= 500 else "general")
+        ))
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    error_msg = str(exc.errors())
+    safe_run_task(asyncio.to_thread(
+        log_error_to_db,
+        "server",
+        error_msg,
+        str(request.url.path),
+        f"method={request.method}",
+        "general"
+    ))
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+
+@app.exception_handler(Exception)
+async def custom_global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    tb = traceback.format_exc()
+    error_str = f"{str(exc)}\n{tb}"
+    safe_run_task(asyncio.to_thread(
+        log_error_to_db,
+        "server",
+        error_str,
+        str(request.url.path),
+        f"method={request.method}",
+        "systemic"
+    ))
+    # Trigger Firestore backup so the error log is captured immediately
+    try:
+        from mock_mode import backup_sqlite_to_firestore
+        safe_run_task(asyncio.to_thread(backup_sqlite_to_firestore))
+    except Exception:
+        pass
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Внутрішня помилка сервера. Помилку записано в системний лог."},
+    )
+
+
 # --- Pydantic моделі ---
 
 class ThreatSetRequest(BaseModel):
@@ -1589,7 +1653,7 @@ async def get_prediction_accuracy(days: int = 30):
 
 
 @app.get("/api/analytics/rules")
-async def get_rules(active_only: bool = True, rule_type: str = None, limit: int = 50):
+async def get_rules(active_only: bool = True, rule_type: str = None, limit: int = 50, threat_type: str = None):
     """Список правил самонавчання Gemini."""
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -1604,6 +1668,9 @@ async def get_rules(active_only: bool = True, rule_type: str = None, limit: int 
         if rule_type:
             query += " AND rule_type = ?"
             params.append(rule_type)
+        if threat_type:
+            query += " AND threat_type = ?"
+            params.append(threat_type)
         
         query += " ORDER BY evidence_count DESC, accuracy_score DESC LIMIT ?"
         params.append(min(limit, 200))
@@ -2138,7 +2205,7 @@ async def get_admin_errors_stats(days: int = 7):
 
 
 @app.get("/api/admin/chronology")
-async def get_admin_chronology(region: str = None, days: int = 7):
+async def get_admin_chronology(region: str = None, days: int = 7, threat_type: str = None, was_predictive: int = None, prediction_accuracy: str = None):
     """Хронологія загроз: встановлення → зняття, з match_type."""
     try:
         try:
@@ -2183,6 +2250,26 @@ async def get_admin_chronology(region: str = None, days: int = 7):
             from urllib.parse import unquote
             query += " AND pe.region = ?"
             params.append(unquote(region))
+            
+        if threat_type:
+            query += " AND pe.threat_type = ?"
+            params.append(threat_type)
+            
+        if was_predictive is not None:
+            query += " AND pe.was_predictive = ?"
+            params.append(was_predictive)
+            
+        if prediction_accuracy:
+            if prediction_accuracy == "match":
+                query += " AND pe.prediction_accuracy = 'confirmed'"
+            elif prediction_accuracy == "mismatch":
+                query += " AND pe.prediction_accuracy = 'overestimated'"
+            elif prediction_accuracy == "mitigated":
+                query += " AND pe.prediction_accuracy = 'mitigated'"
+            elif prediction_accuracy == "active":
+                query += " AND pe.lifecycle_status = 'active'"
+            elif prediction_accuracy == "cleared":
+                query += " AND pe.lifecycle_status = 'cleared' AND (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'overestimated', 'mitigated'))"
         
         query += " ORDER BY th.timestamp DESC LIMIT 500"
         cursor.execute(query, params)
@@ -2196,6 +2283,7 @@ async def get_admin_chronology(region: str = None, days: int = 7):
                    SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
+                   SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
             FROM paired_events pe
             LEFT JOIN threat_history th ON pe.threat_event_id = th.id
@@ -2205,6 +2293,27 @@ async def get_admin_chronology(region: str = None, days: int = 7):
         if region:
             daily_agg_query += " AND pe.region = ?"
             agg_params.append(unquote(region))
+            
+        if threat_type:
+            daily_agg_query += " AND pe.threat_type = ?"
+            agg_params.append(threat_type)
+            
+        if was_predictive is not None:
+            daily_agg_query += " AND pe.was_predictive = ?"
+            agg_params.append(was_predictive)
+            
+        if prediction_accuracy:
+            if prediction_accuracy == "match":
+                daily_agg_query += " AND pe.prediction_accuracy = 'confirmed'"
+            elif prediction_accuracy == "mismatch":
+                daily_agg_query += " AND pe.prediction_accuracy = 'overestimated'"
+            elif prediction_accuracy == "mitigated":
+                daily_agg_query += " AND pe.prediction_accuracy = 'mitigated'"
+            elif prediction_accuracy == "active":
+                daily_agg_query += " AND pe.lifecycle_status = 'active'"
+            elif prediction_accuracy == "cleared":
+                daily_agg_query += " AND pe.lifecycle_status = 'cleared' AND (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'overestimated', 'mitigated'))"
+                
         daily_agg_query += " GROUP BY day ORDER BY day"
         
         cursor.execute(daily_agg_query, agg_params)
@@ -2218,6 +2327,8 @@ async def get_admin_chronology(region: str = None, days: int = 7):
             # Determine match_type
             if event.get("prediction_accuracy") == "confirmed":
                 event["match_type"] = "match"
+            elif event.get("prediction_accuracy") == "mitigated":
+                event["match_type"] = "mitigated"
             elif event.get("prediction_accuracy") == "overestimated":
                 event["match_type"] = "mismatch"
             elif event.get("lifecycle_status") == "active":
@@ -2237,18 +2348,30 @@ async def get_admin_chronology(region: str = None, days: int = 7):
 
 
 @app.get("/api/admin/rules/history")
-async def get_admin_rules_history(days: int = 30, limit: int = 200):
+async def get_admin_rules_history(days: int = 30, limit: int = 200, rule_type: str = None, action: str = None, threat_type: str = None):
     """Аудит-лог змін правил Gemini."""
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
-        cursor.execute('''
-            SELECT * FROM gemini_rules_audit
-            WHERE timestamp >= datetime('now', ?)
-            ORDER BY timestamp DESC LIMIT ?
-        ''', (f'-{days} days', min(limit, 500)))
+        query = "SELECT * FROM gemini_rules_audit WHERE timestamp >= datetime('now', ?)"
+        params = [f'-{days} days']
+        
+        if rule_type:
+            query += " AND rule_type = ?"
+            params.append(rule_type)
+        if action:
+            query += " AND action = ?"
+            params.append(action)
+        if threat_type:
+            query += " AND threat_type = ?"
+            params.append(threat_type)
+            
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(min(limit, 500))
+        
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
         
@@ -2290,7 +2413,7 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-ap
 .tab .badge.green{background:rgba(63,185,80,.2);color:var(--green)}
 .content{padding:24px;display:none}
 .content.active{display:block}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
 .stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
 .stat-card h3{font-size:13px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
 .stat-card .value{font-size:32px;font-weight:700}
@@ -2300,9 +2423,10 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-ap
 .chart-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
 .chart-box h3{font-size:14px;margin-bottom:12px;color:var(--text)}
 .chart-box canvas{max-height:250px}
-.filters{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
-.filters select,.filters input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px}
-.filters label{font-size:13px;color:var(--text2)}
+.filters{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;background:rgba(48,54,61,0.15);padding:12px 16px;border-radius:10px;border:1px solid var(--border)}
+.filters select,.filters input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:13px;outline:none}
+.filters select:focus,.filters input:focus{border-color:var(--accent)}
+.filters label{font-size:13px;color:var(--text2);margin-right:-4px;font-weight:500}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:10px 12px;background:var(--card);border-bottom:2px solid var(--border);color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.3px;font-size:11px;position:sticky;top:0}
 td{padding:10px 12px;border-bottom:1px solid var(--border)}
@@ -2311,6 +2435,7 @@ tr:hover{background:rgba(88,166,255,.05)}
 .badge-src.server{background:rgba(88,166,255,.15);color:var(--accent)}
 .badge-src.firebase{background:rgba(219,109,40,.15);color:var(--orange)}
 .badge-src.gemini{background:rgba(188,140,255,.15);color:var(--purple)}
+.badge-src.telegram{background:rgba(226,197,48,.15);color:var(--yellow)}
 .badge-type{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
 .badge-type.rate{background:rgba(248,81,73,.2);color:var(--red)}
 .badge-type.timeout{background:rgba(210,153,34,.2);color:var(--yellow)}
@@ -2348,17 +2473,18 @@ tr:hover{background:rgba(88,166,255,.05)}
 <div class="content active" id="tab-errors">
   <div class="filters">
     <label>Джерело:</label>
-    <select id="f-source"><option value="">Всі</option><option value="server">Server</option><option value="firebase">Firebase</option><option value="gemini">Gemini</option></select>
+    <select id="f-source"><option value="">Всі</option><option value="server">Server</option><option value="firebase">Firebase</option><option value="gemini">Gemini</option><option value="telegram">Telegram</option></select>
     <label>Тип:</label>
-    <select id="f-type"><option value="">Всі</option><option value="429_rate_limit">429 Rate Limit</option><option value="500_server">500 Server</option><option value="timeout">Timeout</option><option value="connection">Connection</option><option value="auth">Auth</option><option value="general">General</option></select>
+    <select id="f-type"><option value="">Всі</option><option value="systemic">Systemic</option><option value="network_error">Network Error</option><option value="429_rate_limit">429 Rate Limit</option><option value="500_server">500 Server</option><option value="timeout">Timeout</option><option value="connection">Connection</option><option value="auth">Auth</option><option value="general">General</option></select>
     <label>Днів:</label>
     <select id="f-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="30">30</option></select>
     <button onclick="loadErrors()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
   </div>
   <div class="grid">
     <div class="stat-card"><h3>Всього помилок</h3><div class="value red" id="err-total">0</div></div>
-    <div class="stat-card"><h3>429 Rate Limit</h3><div class="value yellow" id="err-429">0</div></div>
-    <div class="stat-card"><h3>Firebase</h3><div class="value" style="color:var(--orange)" id="err-fb">0</div></div>
+    <div class="stat-card"><h3>Системні</h3><div class="value yellow" id="err-systemic">0</div></div>
+    <div class="stat-card"><h3>429 Rate Limit</h3><div class="value" style="color:var(--orange)" id="err-429">0</div></div>
+    <div class="stat-card"><h3>Firebase</h3><div class="value" style="color:var(--accent)" id="err-fb">0</div></div>
     <div class="stat-card"><h3>Gemini</h3><div class="value" style="color:var(--purple)" id="err-gem">0</div></div>
   </div>
   <div class="grid" style="grid-template-columns:1fr 1fr">
@@ -2376,6 +2502,32 @@ tr:hover{background:rgba(88,166,255,.05)}
     <select id="chr-days"><option value="1">1</option><option value="3">3</option><option value="7" selected>7</option><option value="14">14</option><option value="30">30</option></select>
     <label>Область:</label>
     <select id="chr-region"><option value="">Всі</option></select>
+    <label>Тип загрози:</label>
+    <select id="chr-threat-type">
+      <option value="">Всі</option>
+      <option value="shahed">Shahed</option>
+      <option value="mig31k">МіГ-31К</option>
+      <option value="cruise_missile">Крилаті ракети</option>
+      <option value="ballistic">Балістика</option>
+      <option value="artillery">Обстріл</option>
+      <option value="recon">БПЛА розвідник</option>
+      <option value="unknown">Невідомо</option>
+    </select>
+    <label>Джерело:</label>
+    <select id="chr-was-predictive">
+      <option value="">Всі</option>
+      <option value="1">AI передбачення</option>
+      <option value="0">Офіційна тривога</option>
+    </select>
+    <label>Результат:</label>
+    <select id="chr-match-type">
+      <option value="">Всі</option>
+      <option value="match">✅ Співпадіння</option>
+      <option value="mitigated">🛡️ Збито/РЕБ</option>
+      <option value="mismatch">❌ Неспівпадіння</option>
+      <option value="active">⏱️ Активні</option>
+      <option value="cleared">🔄 Зняті</option>
+    </select>
     <button onclick="loadChronology()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
   </div>
   <div class="grid" style="grid-template-columns:1fr 1fr">
@@ -2385,6 +2537,7 @@ tr:hover{background:rgba(88,166,255,.05)}
   <div class="grid">
     <div class="stat-card"><h3>Всього подій</h3><div class="value" style="color:var(--accent)" id="chr-total">0</div></div>
     <div class="stat-card"><h3>✅ Співпадіння</h3><div class="value green" id="chr-match">0</div></div>
+    <div class="stat-card"><h3>🛡️ Збито/РЕБ</h3><div class="value" style="color:var(--purple)" id="chr-mitigated">0</div></div>
     <div class="stat-card"><h3>❌ Неспівпадіння</h3><div class="value red" id="chr-mismatch">0</div></div>
     <div class="stat-card"><h3>⏱️ Активні</h3><div class="value yellow" id="chr-active">0</div></div>
   </div>
@@ -2397,6 +2550,28 @@ tr:hover{background:rgba(88,166,255,.05)}
   <div class="filters">
     <label>Днів аудиту:</label>
     <select id="rul-days"><option value="7">7</option><option value="14">14</option><option value="30" selected>30</option></select>
+    <label>Тип правила:</label>
+    <select id="rul-type">
+      <option value="">Всі</option>
+      <option value="route_pattern">Маршрут</option>
+      <option value="confidence_correction">Коригування довіри</option>
+      <option value="time_pattern">Часовий патерн</option>
+    </select>
+    <label>Тип загрози:</label>
+    <select id="rul-threat-type">
+      <option value="">Всі</option>
+      <option value="shahed">Shahed</option>
+      <option value="mig31k">МіГ-31К</option>
+      <option value="cruise_missile">Крилаті ракети</option>
+      <option value="ballistic">Балістика</option>
+    </select>
+    <label>Дія аудиту:</label>
+    <select id="rul-action">
+      <option value="">Всі</option>
+      <option value="added">Створено</option>
+      <option value="deactivated">Деактивовано</option>
+      <option value="removed">Видалено</option>
+    </select>
     <button onclick="loadRules()" style="background:var(--accent);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Оновити</button>
   </div>
   <h3 style="margin:16px 0 8px;font-size:15px">Активні правила</h3>
@@ -2462,12 +2637,14 @@ async function loadErrors() {
     document.getElementById('err-fb').textContent = fb ? fb.count : 0;
     const gm = stats.by_source.find(x => x.source === 'gemini');
     document.getElementById('err-gem').textContent = gm ? gm.count : 0;
+    const sys = stats.by_type.find(x => x.error_type === 'systemic');
+    document.getElementById('err-systemic').textContent = sys ? sys.count : 0;
     
     // Source chart
     if (srcChart) srcChart.destroy();
     const srcLabels = stats.by_source.map(x => x.source);
     const srcData = stats.by_source.map(x => x.count);
-    const srcColors = srcLabels.map(s => s === 'server' ? '#58a6ff' : s === 'firebase' ? '#db6d28' : '#bc8cff');
+    const srcColors = srcLabels.map(s => s === 'server' ? '#58a6ff' : s === 'firebase' ? '#db6d28' : s === 'telegram' ? '#e2c530' : '#bc8cff');
     srcChart = new Chart(document.getElementById('chart-src'), {
       type: 'doughnut',
       data: {labels: srcLabels, datasets: [{data: srcData, backgroundColor: srcColors, borderWidth: 0}]},
@@ -2492,7 +2669,7 @@ async function loadErrors() {
     } else {
       body.innerHTML = errors.errors.map(e => {
         const srcCls = e.source;
-        const typCls = e.error_type.includes('429') ? 'rate' : e.error_type.includes('timeout') ? 'timeout' : 'general';
+        const typCls = e.error_type.includes('429') ? 'rate' : e.error_type.includes('timeout') ? 'timeout' : e.error_type.includes('systemic') ? 'rate' : e.error_type.includes('network') ? 'timeout' : 'general';
         return `<tr>
           <td style="white-space:nowrap">${fmtTime(e.timestamp)}</td>
           <td><span class="badge-src ${srcCls}">${e.source}</span></td>
@@ -2509,20 +2686,29 @@ async function loadErrors() {
 async function loadChronology() {
   const days = document.getElementById('chr-days').value;
   const region = document.getElementById('chr-region').value;
+  const threatType = document.getElementById('chr-threat-type').value;
+  const wasPredictive = document.getElementById('chr-was-predictive').value;
+  const matchType = document.getElementById('chr-match-type').value;
+  
   const params = new URLSearchParams({days});
   if (region) params.set('region', region);
+  if (threatType) params.set('threat_type', threatType);
+  if (wasPredictive !== '') params.set('was_predictive', wasPredictive);
+  if (matchType) params.set('prediction_accuracy', matchType);
   
   try {
     const res = await fetch(API + '/api/admin/chronology?' + params);
     const data = await res.json();
     
     const matches = data.events.filter(e => e.match_type === 'match').length;
+    const mitigated = data.events.filter(e => e.match_type === 'mitigated').length;
     const mismatches = data.events.filter(e => e.match_type === 'mismatch').length;
     const active = data.events.filter(e => e.match_type === 'active').length;
     
     document.getElementById('chr-total').textContent = data.total;
     document.getElementById('chr-badge').textContent = data.total;
     document.getElementById('chr-match').textContent = matches;
+    document.getElementById('chr-mitigated').textContent = mitigated;
     document.getElementById('chr-mismatch').textContent = mismatches;
     document.getElementById('chr-active').textContent = active;
     
@@ -2543,8 +2729,8 @@ async function loadChronology() {
     // Accuracy line chart
     if (accChart) accChart.destroy();
     const accData = data.daily_stats.map(d => {
-      const total = (d.confirmed || 0) + (d.overestimated || 0);
-      return total > 0 ? Math.round(d.confirmed / total * 100) : null;
+      const total = (d.confirmed || 0) + (d.overestimated || 0) + (d.mitigated || 0);
+      return total > 0 ? Math.round(((d.confirmed || 0) + (d.mitigated || 0) * 0.8) / total * 100) : null;
     });
     accChart = new Chart(document.getElementById('chart-accuracy'), {
       type: 'line',
@@ -2570,7 +2756,7 @@ async function loadChronology() {
       container.innerHTML = Object.entries(grouped).sort((a,b) => b[0].localeCompare(a[0])).map(([day, events]) => {
         return `<div class="timeline-day"><h4>📅 ${day} (${events.length} подій)</h4>
         ${events.map(ev => {
-          const icon = ev.match_type === 'match' ? '✅' : ev.match_type === 'mismatch' ? '❌' : ev.match_type === 'active' ? '⏱️' : '🔄';
+          const icon = ev.match_type === 'match' ? '✅' : ev.match_type === 'mitigated' ? '🛡️' : ev.match_type === 'mismatch' ? '❌' : ev.match_type === 'active' ? '⏱️' : '🔄';
           return `<div class="tl-event">
             <div style="color:var(--text2)">${fmtTime(ev.threat_timestamp)}</div>
             <div><span class="match-icon">${icon}</span><strong>${ev.region||''}</strong> — ${ev.threat_type||''} (${ev.threat_level||''})</div>
@@ -2587,11 +2773,23 @@ async function loadChronology() {
 // === RULES ===
 async function loadRules() {
   const days = document.getElementById('rul-days').value;
+  const ruleType = document.getElementById('rul-type').value;
+  const threatType = document.getElementById('rul-threat-type').value;
+  const auditAction = document.getElementById('rul-action').value;
+  
+  const activeParams = new URLSearchParams({active_only: 'true', limit: '100'});
+  if (ruleType) activeParams.set('rule_type', ruleType);
+  if (threatType) activeParams.set('threat_type', threatType);
+  
+  const auditParams = new URLSearchParams({days});
+  if (ruleType) auditParams.set('rule_type', ruleType);
+  if (threatType) auditParams.set('threat_type', threatType);
+  if (auditAction) auditParams.set('action', auditAction);
   
   try {
     const [rulesRes, auditRes] = await Promise.all([
-      fetch(API + '/api/analytics/rules?active_only=true&limit=100'),
-      fetch(API + '/api/admin/rules/history?days=' + days)
+      fetch(API + '/api/analytics/rules?' + activeParams),
+      fetch(API + '/api/admin/rules/history?' + auditParams)
     ]);
     const rules = await rulesRes.json();
     const audit = await auditRes.json();
@@ -2654,10 +2852,10 @@ async function loadRegions() {
 }
 
 // Initial load
+loadRegions();
 loadErrors();
 loadChronology();
 loadRules();
-loadRegions();
 
 // Auto-refresh every 60s
 setInterval(() => {

@@ -204,6 +204,7 @@ class TelegramThreatMonitor:
         self._clear_tasks = {}
         
         from server import log_error_to_db, log_rule_audit_to_db
+        self.log_error = log_error_to_db
         self.analyzer = GeminiThreatAnalyzer(error_callback=log_error_to_db, rule_audit_callback=log_rule_audit_to_db)
         self.message_queue = asyncio.Queue()
         self.batch_task = None
@@ -386,7 +387,7 @@ class TelegramThreatMonitor:
                         print(f"📖 [Web: {channel}] Нове повідомлення (ID: {current_id}): \"{short_text}...\"")
                         await self._process_message(text, channel)
         except Exception as e:
-            pass
+            self.log_error("telegram", f"Помилка скрейпера для каналу {channel}: {e}", endpoint="_scrape_channel")
 
     def _find_path(self, start_region: str, end_region: str) -> list[str]:
         """BFS algorithm to find the shortest path between two regions."""
@@ -460,35 +461,38 @@ class TelegramThreatMonitor:
                 self.message_history = self.message_history[-15:]
                 
             if messages:
-                # Pre-filter: separate threat-relevant vs informational messages
-                threat_messages = [m for m in messages if self._is_threat_relevant(m.get("text", ""))]
-                skipped = len(messages) - len(threat_messages)
-                
-                if skipped > 0:
-                    print(f"📋 [Pre-filter] Пропущено {skipped} інформаційних повідомлень (не відправлено до Gemini)")
-                
-                if not threat_messages:
-                    print(f"📋 [Pre-filter] Всі {len(messages)} повідомлень — інформаційні. Gemini API не викликано.")
-                    continue
-                
-                print(f"🧠 Відправка батчу ({len(threat_messages)} повідомлень) до Gemini API...")
-                context_messages = [m for m in self.message_history if m not in threat_messages][-10:]
-                results = await self.analyzer.analyze_batch(threat_messages, context_messages=context_messages)
-                if results:
-                    # Enable batch mode: skip individual Firestore saves during batch processing
-                    self.threat_manager._batch_mode = True
-                    try:
-                        await self._apply_gemini_analysis(results)
-                    finally:
-                        self.threat_manager._batch_mode = False
-                    # One atomic Firestore save for the entire batch
-                    self.threat_manager._execute_save_to_db()
-                    # Flush buffered Firestore history writes in one batch
-                    from server import flush_history_batch
-                    flush_history_batch()
-                    # Flush buffered FCM notifications (sound only on first)
-                    self.threat_manager.flush_fcm_batch()
-                    print(f"💾 Атомарний запис у Firestore після батчу ({len(results)} результатів)")
+                try:
+                    # Pre-filter: separate threat-relevant vs informational messages
+                    threat_messages = [m for m in messages if self._is_threat_relevant(m.get("text", ""))]
+                    skipped = len(messages) - len(threat_messages)
+                    
+                    if skipped > 0:
+                        print(f"📋 [Pre-filter] Пропущено {skipped} інформаційних повідомлень (не відправлено до Gemini)")
+                    
+                    if not threat_messages:
+                        print(f"📋 [Pre-filter] Всі {len(messages)} повідомлень — інформаційні. Gemini API не викликано.")
+                        continue
+                    
+                    print(f"🧠 Відправка батчу ({len(threat_messages)} повідомлень) до Gemini API...")
+                    context_messages = [m for m in self.message_history if m not in threat_messages][-10:]
+                    results = await self.analyzer.analyze_batch(threat_messages, context_messages=context_messages)
+                    if results:
+                        # Enable batch mode: skip individual Firestore saves during batch processing
+                        self.threat_manager._batch_mode = True
+                        try:
+                            await self._apply_gemini_analysis(results)
+                        finally:
+                            self.threat_manager._batch_mode = False
+                        # One atomic Firestore save for the entire batch
+                        self.threat_manager._execute_save_to_db()
+                        # Flush buffered Firestore history writes in one batch
+                        from server import flush_history_batch
+                        flush_history_batch()
+                        # Flush buffered FCM notifications (sound only on first)
+                        self.threat_manager.flush_fcm_batch()
+                        print(f"💾 Атомарний запис у Firestore після батчу ({len(results)} результатів)")
+                except Exception as e:
+                    self.log_error("telegram", f"Помилка батч-процесингу повідомлень: {e}", endpoint="_batch_processor_loop")
 
 
 
