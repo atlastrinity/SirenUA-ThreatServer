@@ -18,9 +18,10 @@ import uvicorn
 import aiohttp
 
 # Core and Config
-from core.config import IS_LIVE_MODE, DB_PATH
+from core.config import IS_LIVE_MODE, DB_PATH, logger
 from core.globals import threat_manager, shelter_manager
 import core.globals
+import time
 
 # Database and Helpers
 from database.db_helpers import HAS_FIREBASE, get_db
@@ -51,7 +52,7 @@ except ImportError:
 
 def init_firebase():
     if not HAS_FIREBASE:
-        print("⚠️ Попередження: Бібліотека firebase-admin не встановлена. Сповіщення не надсилатимуться.")
+        logger.warning("Бібліотека firebase-admin не встановлена. Сповіщення не надсилатимуться.")
         return
     
     cred_env = os.environ.get("FIREBASE_CREDENTIALS_JSON")
@@ -62,19 +63,19 @@ def init_firebase():
                 cred_dict = json.loads(cred_env)
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
-                print("🔥 Firebase Admin SDK ініціалізовано за допомогою JSON-рядка з змінної оточення.")
+                logger.info("Firebase Admin SDK ініціалізовано за допомогою JSON-рядка з змінної оточення.")
                 return
             except Exception as e:
-                print(f"⚠️ Помилка ініціалізації Firebase за JSON-рядком: {e}")
+                logger.error(f"Помилка ініціалізації Firebase за JSON-рядком: {e}")
         
         if os.path.exists(cred_env):
             try:
                 cred = credentials.Certificate(cred_env)
                 firebase_admin.initialize_app(cred)
-                print(f"🔥 Firebase Admin SDK ініціалізовано за допомогою файлу: {cred_env}")
+                logger.info(f"Firebase Admin SDK ініціалізовано за допомогою файлу: {cred_env}")
                 return
             except Exception as e:
-                print(f"⚠️ Помилка ініціалізації Firebase за файлом ключів: {e}")
+                logger.error(f"Помилка ініціалізації Firebase за файлом ключів: {e}")
 
     default_paths = ["threat_server/firebase-credentials.json", "firebase-credentials.json"]
     for path in default_paths:
@@ -82,16 +83,16 @@ def init_firebase():
             try:
                 cred = credentials.Certificate(path)
                 firebase_admin.initialize_app(cred)
-                print(f"🔥 Firebase Admin SDK ініціалізовано за допомогою дефолтного файлу: {path}")
+                logger.info(f"Firebase Admin SDK ініціалізовано за допомогою дефолтного файлу: {path}")
                 return
             except Exception as e:
-                print(f"⚠️ Помилка ініціалізації Firebase за дефолтним файлом {path}: {e}")
+                logger.error(f"Помилка ініціалізації Firebase за дефолтним файлом {path}: {e}")
 
     try:
         firebase_admin.initialize_app()
-        print("🔥 Firebase Admin SDK ініціалізовано (Default Credentials / Env).")
+        logger.info("Firebase Admin SDK ініціалізовано (Default Credentials / Env).")
     except Exception as e:
-        print("⚠️ Попередження: Не знайдено credentials. Сповіщення у фоні не працюватимуть.")
+        logger.warning("Не знайдено credentials. Сповіщення у фоні не працюватимуть.")
 
 aerial_alerts_task = None
 
@@ -100,14 +101,14 @@ async def poll_aerial_alerts():
     token = os.environ.get("ALERTS_TOKEN")
     
     if token:
-        print("⏳ Запуск фонового опитування офіційних тривог з alerts.in.ua...")
+        logger.info("Запуск фонового опитування офіційних тривог з alerts.in.ua...")
         url = "https://api.alerts.in.ua/v1/alerts/active.json"
         headers = {
             "Authorization": f"Bearer {token}",
             "User-Agent": "SirenUA-ThreatServer/1.0"
         }
     else:
-        print("⏳ Запуск фонового опитування офіційних тривог з ubilling (резервний режим, ALERTS_TOKEN не знайдено)...")
+        logger.info("Запуск фонового опитування офіційних тривог з ubilling (резервний режим, ALERTS_TOKEN не знайдено)...")
         url = "https://ubilling.net.ua/aerialalerts/"
         headers = {"User-Agent": "SirenUA-ThreatServer/1.0"}
 
@@ -139,9 +140,9 @@ async def poll_aerial_alerts():
                                 is_active = state_data.get("alertnow", False)
                                 threat_manager.set_alarm_active(region_name, is_active)
                     else:
-                        print(f"⚠️ Помилка опитування тривог (URL: {url}): HTTP статус {response.status}")
+                        logger.warning(f"Помилка опитування тривог (URL: {url}): HTTP статус {response.status}")
         except Exception as e:
-            print(f"⚠️ Помилка під час опитування тривог (URL: {url}): {e}")
+            logger.error(f"Помилка під час опитування тривог (URL: {url}): {e}")
             log_error_to_db("server", str(e), endpoint="poll_aerial_alerts", context=f"url={url}")
         
         sleep_interval = 15.0 if token else 10.0
@@ -162,7 +163,7 @@ async def lifespan(app: FastAPI):
         from database.db_helpers import start_fcm_worker
         await start_fcm_worker()
     except Exception as e:
-        print(f"⚠️ Помилка запуску FCM воркера: {e}")
+        logger.error(f"Помилка запуску FCM воркера: {e}")
     
     # Ініціалізація БД аналітики
     init_analytics_db()
@@ -172,7 +173,7 @@ async def lifespan(app: FastAPI):
         from database.db_helpers import restore_sqlite_from_firestore
         await asyncio.to_thread(restore_sqlite_from_firestore)
     except Exception as e:
-        print(f"⚠️ Помилка автоматичного відновлення SQLite: {e}")
+        logger.error(f"Помилка автоматичного відновлення SQLite: {e}")
 
     # Завантаження збереженого стану загроз
     try:
@@ -195,7 +196,7 @@ async def lifespan(app: FastAPI):
                 "level": s.level
             }
     except Exception as e:
-        print(f"⚠️ Помилка асинхронного завантаження стану загроз: {e}")
+        logger.error(f"Помилка асинхронного завантаження стану загроз: {e}")
 
     # Завантаження бази укриттів
     async def load_shelters_background():
@@ -203,7 +204,7 @@ async def lifespan(app: FastAPI):
             await shelter_manager.load()
             await shelter_manager.start_refresh_loop()
         except Exception as e:
-            print(f"⚠️ Помилка завантаження укриттів: {e}")
+            logger.error(f"Помилка завантаження укриттів: {e}")
             
     asyncio.create_task(load_shelters_background())
     
@@ -214,9 +215,9 @@ async def lifespan(app: FastAPI):
         from monitor.telegram_monitor import TelegramThreatMonitor
         core.globals.telegram_monitor = TelegramThreatMonitor(threat_manager)
         await core.globals.telegram_monitor.start()
-        print("🟢 Сервер запущено в LIVE режимі (Telegram)")
+        logger.info("🟢 Сервер запущено в LIVE режимі (Telegram)")
     else:
-        print("🟡 Сервер запущено в MOCK режимі (тестування)")
+        logger.info("🟡 Сервер запущено в MOCK режимі (тестування)")
     
     yield
     
@@ -236,9 +237,9 @@ async def lifespan(app: FastAPI):
     try:
         from database.db_helpers import backup_sqlite_to_firestore
         await asyncio.to_thread(backup_sqlite_to_firestore)
-        print("💾 [Lifespan Shutdown] Фінальний бекап SQLite успішно створено.")
+        logger.info("💾 [Lifespan Shutdown] Фінальний бекап SQLite успішно створено.")
     except Exception as e:
-        print(f"⚠️ [Lifespan Shutdown] Помилка створення фінального бекапу: {e}")
+        logger.error(f"⚠️ [Lifespan Shutdown] Помилка створення фінального бекапу: {e}")
 
 app = FastAPI(
     title="SirenUA Threat Monitor",
@@ -254,6 +255,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# HTTP Request Logging Middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    client_host = request.client.host if request.client else "unknown"
+    logger.info(f"⬇️ Incoming request: {request.method} {request.url.path} from {client_host}")
+    try:
+        response = await call_next(request)
+        duration = time.time() - start_time
+        logger.info(
+            f"⬆️ Response: {request.method} {request.url.path} - Status: {response.status_code} - Duration: {duration:.3f}s"
+        )
+        return response
+    except Exception as e:
+        duration = time.time() - start_time
+        logger.error(
+            f"❌ Request Failed: {request.method} {request.url.path} - Error: {e} - Duration: {duration:.3f}s"
+        )
+        raise e
 
 # Exceptions handlers
 @app.exception_handler(StarletteHTTPException)

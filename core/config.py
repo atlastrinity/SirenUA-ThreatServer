@@ -5,6 +5,16 @@ Defines environment mode flags, API credentials, file paths, and parsing keyword
 
 import os
 import sys
+import logging
+
+# Configure global logging format and level
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+    stream=sys.stdout
+)
+logger = logging.getLogger("sirenua")
 
 # Live Mode vs Mock Mode
 IS_LIVE_MODE = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
