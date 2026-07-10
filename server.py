@@ -1231,9 +1231,15 @@ class TelegramTestRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    """Перенаправлення на адмін-панель."""
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/admin")
+    """Health-check для Render / моніторингу."""
+    return {
+        "service": "SirenUA Threat Monitor",
+        "version": "1.2.0",
+        "status": "running",
+        "mode": "live" if is_live_mode else "mock",
+        "telegram_connected": telegram_monitor is not None and telegram_monitor.is_running,
+        "shelters_loaded": shelter_manager.total_count,
+    }
 
 @app.head("/")
 async def root_health():
@@ -2911,20 +2917,6 @@ async def get_admin_chronology_v2(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# ========================== HTML ADMIN PANEL ==========================
-
-from fastapi.responses import HTMLResponse
-
-@app.get("/admin", response_class=HTMLResponse)
-async def admin_panel():
-    """HTML адмін-панель моніторингу."""
-    html_path = os.path.join(os.path.dirname(__file__), "admin_panel.html")
-    try:
-        with open(html_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(content="<h1>admin_panel.html not found</h1>", status_code=500)
 
 
 
