@@ -1115,6 +1115,7 @@ class TelegramTestRequest(BaseModel):
 # --- API Endpoints ---
 
 @app.get("/")
+@app.head("/")
 async def root():
     return {
         "service": "SirenUA Threat Monitor",
