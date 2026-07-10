@@ -1350,7 +1350,7 @@ class TelegramThreatMonitor:
         from datetime import datetime, timezone
         for region, state in self.threat_manager.threats.items():
             if state.level != "none" and state.active_threats:
-                for threat in state.active_threats:
+                for threat in list(state.active_threats):
                     t_type = threat.threat_type
                     t_gid = threat.group_id
                     since_str = threat.since
