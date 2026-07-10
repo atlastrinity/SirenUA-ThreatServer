@@ -276,23 +276,37 @@ def init_analytics_db():
 def log_error_to_db(source: str, message: str, endpoint: str = None, context: str = None, error_type: str = None):
     """Log an error event to the error_log table. Source: 'server', 'firebase', 'gemini'."""
     error_msg = str(message)
-    # Classify error type if not provided
-    if not error_type:
-        if "429" in error_msg or "Quota" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower():
+    error_msg_l = error_msg.lower()
+    
+    # Classify error type if not provided, or refine it if it's generic
+    if not error_type or error_type in ["general", "systemic"]:
+        if "429" in error_msg or "quota" in error_msg_l or "resource_exhausted" in error_msg_l or "rate limit" in error_msg_l:
             error_type = "429_rate_limit"
-        elif "500" in error_msg or "Internal" in error_msg:
+        elif "500" in error_msg or "internal" in error_msg_l:
             error_type = "500_server"
-        elif "timeout" in error_msg.lower() or "Timeout" in error_msg:
+        elif "timeout" in error_msg_l:
             error_type = "timeout"
-        elif "connection" in error_msg.lower() or "ConnectionError" in error_msg or "socket" in error_msg.lower() or "network" in error_msg.lower() or "http" in error_msg.lower():
+        elif "firebase" in error_msg_l or "fcm" in error_msg_l or "messaging" in error_msg_l:
+            error_type = "firebase_error"
+        elif "telegram" in error_msg_l or "telethon" in error_msg_l:
+            error_type = "telegram_error"
+        elif "gemini" in error_msg_l or "generativeai" in error_msg_l or "aiplatform" in error_msg_l:
+            error_type = "gemini_api_error"
+        elif "json" in error_msg_l or "decode" in error_msg_l or "parse" in error_msg_l:
+            error_type = "json_parse_error"
+        elif "sqlite" in error_msg_l or "database" in error_msg_l or "query" in error_msg_l or "locked" in error_msg_l:
+            error_type = "database_error"
+        elif "validate" in error_msg_l or "missing field" in error_msg_l or "pydantic" in error_msg_l or "valueerror" in error_msg_l:
+            error_type = "validation_error"
+        elif "connection" in error_msg_l or "connectionerror" in error_msg_l or "socket" in error_msg_l or "network" in error_msg_l or "http" in error_msg_l:
             error_type = "network_error"
-        elif "auth" in error_msg.lower() or "permission" in error_msg.lower() or "403" in error_msg or "credential" in error_msg.lower():
+        elif "auth" in error_msg_l or "permission" in error_msg_l or "403" in error_msg:
             error_type = "auth"
-        elif "traceback" in error_msg.lower() or "exception" in error_msg.lower() or "syntax" in error_msg.lower() or "system" in error_msg.lower() or "sqlite" in error_msg.lower():
+        elif "traceback" in error_msg_l or "exception" in error_msg_l or "syntax" in error_msg_l or "system" in error_msg_l:
             error_type = "systemic"
         else:
             error_type = "general"
-    
+            
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
