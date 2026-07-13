@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import sys
+import time
 from typing import Optional
 from telethon import TelegramClient, events
 import aiohttp
@@ -58,6 +59,8 @@ class TelegramThreatMonitor:
         self.message_queue = asyncio.Queue()
         self.batch_task = None
         self.message_history = []
+        self.channel_message_buffers = {channel: [] for channel in TARGET_CHANNELS}
+        self._reevaluation_tasks = {}
         
         # Session file path detection
         self.session_paths = [
@@ -385,7 +388,7 @@ class TelegramThreatMonitor:
                     # Log clearing for each previously active region
                     for r_name, r_state in self.threat_manager.threats.items():
                         if r_state.level != "none" or True:  # Log for all since we just cleared
-                            from server import log_clearing_to_db
+                            from database.analytics_db import log_clearing_to_db
                             log_clearing_to_db(
                                 region=r_name,
                                 clearing_telemetry=clearing_telemetry,
@@ -409,7 +412,7 @@ class TelegramThreatMonitor:
                             continue
                         
                         # Log clearing BEFORE clearing the threat (to capture original state)
-                        from server import log_clearing_to_db
+                        from database.analytics_db import log_clearing_to_db
                         log_clearing_to_db(
                             region=region,
                             clearing_telemetry=clearing_telemetry,
@@ -501,12 +504,12 @@ class TelegramThreatMonitor:
                             elif eta_seconds < 900:
                                 eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
                             elif eta_seconds < 3600:
-                                eta_str = f"~{eta_seconds // 60} хв"
+                                eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 5} хв"
                             else:
                                 h = eta_seconds // 3600
                                 m = (eta_seconds % 3600) // 60
                                 if m > 0:
-                                    eta_str = f"~{h} год {m} хв"
+                                    eta_str = f"~{h} год {m}-{m + 10} хв"
                                 else:
                                     eta_str = f"~{h} год"
                         
@@ -601,6 +604,29 @@ class TelegramThreatMonitor:
                                                is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
                                                eta_seconds=eta_seconds)
                 self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
+                
+                if is_pred:
+                    # Determine reevaluation delay (ETA in seconds + grace period)
+                    grace_period = 300  # 5 minutes
+                    eta_sec = eta_seconds
+                    if eta_sec is None:
+                        # Fallback default ETA times in seconds
+                        eta_defaults = {
+                            "mig31k": 1200,      # 20 mins
+                            "ballistic": 180,    # 3 mins
+                            "kab": 600,          # 10 mins
+                            "shahed": 5400,      # 1.5 hours
+                            "cruise_missile": 1200, # 20 mins
+                            "tu95": 3600,        # 1 hour
+                            "iskander": 180,     # 3 mins
+                            "artillery": 120,    # 2 mins
+                        }
+                        eta_sec = eta_defaults.get(threat_type, 1800)
+                    
+                    reeval_delay = eta_sec + grace_period
+                    self._schedule_predictive_reevaluation(region, reeval_delay, threat_type, group_id)
+                else:
+                    self._cancel_reevaluation_task(region, threat_type, group_id)
                 
                 # Enhanced logging with telemetry info
                 conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
@@ -1024,6 +1050,16 @@ class TelegramThreatMonitor:
 
 
     async def _process_message(self, text, channel):
+        # Store in rolling channel buffer
+        channel_key = channel.lower().strip() if isinstance(channel, str) else channel
+        if channel_key in self.channel_message_buffers:
+            self.channel_message_buffers[channel_key].append({
+                "text": text,
+                "timestamp": time.time()
+            })
+            if len(self.channel_message_buffers[channel_key]) > 10:
+                self.channel_message_buffers[channel_key] = self.channel_message_buffers[channel_key][-10:]
+
         if self.analyzer.is_configured:
             # Queue for Gemini
             await self.message_queue.put({"channel": channel, "text": text})
@@ -1333,6 +1369,116 @@ class TelegramThreatMonitor:
                     to_delete.append(key)
         for key in to_delete:
             del self._clear_tasks[key]
+
+        # Cancel corresponding re-evaluation tasks
+        to_delete_reeval = []
+        for key, task in self._reevaluation_tasks.items():
+            k_region, k_type, k_gid = key
+            if k_region == region:
+                match = True
+                if threat_type and k_type != threat_type:
+                    match = False
+                if group_id and k_gid != group_id:
+                    match = False
+                if match:
+                    task.cancel()
+                    to_delete_reeval.append(key)
+        for key in to_delete_reeval:
+            del self._reevaluation_tasks[key]
+
+    def _cancel_reevaluation_task(self, region: str, threat_type: str = None, group_id: str = None):
+        key = (region, threat_type, group_id)
+        if key in self._reevaluation_tasks:
+            self._reevaluation_tasks[key].cancel()
+            del self._reevaluation_tasks[key]
+
+    def _schedule_predictive_reevaluation(self, region: str, delay_seconds: float, threat_type: str, group_id: str):
+        key = (region, threat_type, group_id)
+        if key in self._reevaluation_tasks:
+            self._reevaluation_tasks[key].cancel()
+            
+        async def reevaluate():
+            await asyncio.sleep(delay_seconds)
+            try:
+                await self._run_predictive_reevaluation(region, threat_type, group_id)
+            except Exception as e:
+                print(f"⚠️ [Re-evaluation] Error executing task for {region}: {e}")
+            self._reevaluation_tasks.pop(key, None)
+            
+        self._reevaluation_tasks[key] = asyncio.create_task(reevaluate())
+        print(f"⏳ Заплановано переоцінку предиктивної загрози для {region} (тип: {threat_type}, група: {group_id}) через {int(delay_seconds)} сек")
+
+    async def _run_predictive_reevaluation(self, region: str, threat_type: str, group_id: str):
+        state = self.threat_manager.threats.get(region)
+        if not state or state.level == "none" or state.is_active:
+            # Threat is cleared or official siren became active, no need to reevaluate
+            return
+            
+        target_threat = None
+        for t in state.active_threats:
+            if (group_id and t.group_id == group_id) or (not group_id and t.threat_type == threat_type):
+                if t.is_predictive:
+                    target_threat = t
+                    break
+                    
+        if not target_threat:
+            return
+            
+        print(f"🔍 [Re-evaluation] Початок автоматичної переоцінки загрози для {region} (тип: {threat_type}, група: {group_id})")
+        
+        # Collect last 5 messages from all channels
+        recent_messages = []
+        for channel, msgs in self.channel_message_buffers.items():
+            for m in msgs[-5:]:
+                recent_messages.append({
+                    "channel": channel,
+                    "text": m["text"],
+                    "timestamp": m["timestamp"]
+                })
+                
+        # Sort by timestamp desc and take top 15
+        recent_messages.sort(key=lambda x: x["timestamp"], reverse=True)
+        latest_msgs = recent_messages[:15]
+        
+        result = await self.analyzer.reevaluate_expired_threat(
+            region=region,
+            threat_type=threat_type,
+            set_time=target_threat.since,
+            recent_messages=latest_msgs
+        )
+        
+        if result and not result.get("is_active", True):
+            res_type = result.get("resolution_type", "expired")
+            pred_acc = result.get("prediction_accuracy", "overestimated")
+            reasoning = result.get("reasoning_ukr", "Час ETA минув, сирена не активна.")
+            
+            print(f"🟢 [Re-evaluation] Gemini підтвердив неактивність загрози для {region}. Причина: {res_type} ({pred_acc}). Обгрунтування: {reasoning}")
+            
+            clearing_telemetry = {
+                "linked_group_id": group_id,
+                "resolution_type": res_type,
+                "prediction_accuracy_hint": pred_acc,
+                "damage_assessment": "none",
+                "impact_confirmed": False,
+                "clearing_context_tags": ["авто_переоцінка", res_type]
+            }
+            
+            # Log clearing to DB
+            from database.analytics_db import log_clearing_to_db
+            log_clearing_to_db(
+                region=region,
+                clearing_telemetry=clearing_telemetry,
+                source_channel="Gemini_Reevaluation",
+                message_text=f"[Авто-переоцінка] {reasoning}",
+                clearing_confidence=target_threat.confidence,
+                was_predictive=True
+            )
+            
+            # Clear in manager
+            self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type, group_id=group_id)
+            self._cancel_clear_tasks(region, threat_type=threat_type, group_id=group_id)
+        else:
+            print(f"🟡 [Re-evaluation] Gemini визначив загрозу як АКТИВНУ або не зміг відповісти для {region}. Залишаємо загрозу діяти.")
 
     def _schedule_auto_clear(self, region: str, delay_seconds: float = 3600, threat_type: str = None, group_id: str = None):
         key = (region, threat_type, group_id)
