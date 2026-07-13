@@ -55,3 +55,9 @@ if os.path.exists(db_path):
     print(f"🗑️ Deleted local SQLite database file '{db_path}'.")
 else:
     print("ℹ️ Local SQLite database file not found, skipping delete.")
+
+# We also want to delete it in the deployment directory just in case it is run locally there
+deploy_db_path = "../SirenUA-ThreatServer/threat_analytics.db"
+if os.path.exists(deploy_db_path):
+    os.remove(deploy_db_path)
+    print(f"🗑️ Deleted deployment SQLite database file '{deploy_db_path}'.")

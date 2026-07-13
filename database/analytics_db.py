@@ -284,6 +284,9 @@ def log_error_to_db(source: str, message: str, endpoint: str = None, context: st
             error_type = "json_parse_error"
         elif "sqlite" in error_msg_l or "database" in error_msg_l or "query" in error_msg_l or "locked" in error_msg_l:
             error_type = "database_error"
+        elif "not found" in error_msg_l or "404" in error_msg:
+            error_type = "404_not_found"
+            error_type = "database_error"
         elif "validate" in error_msg_l or "missing field" in error_msg_l or "pydantic" in error_msg_l or "valueerror" in error_msg_l:
             error_type = "validation_error"
         elif "connection" in error_msg_l or "connectionerror" in error_msg_l or "socket" in error_msg_l or "network" in error_msg_l or "http" in error_msg_l:
