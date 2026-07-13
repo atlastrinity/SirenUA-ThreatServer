@@ -27,6 +27,101 @@ def detect_mitigation_from_text(text: str) -> bool:
     return any(kw in text_lower for kw in keywords)
 
 
+def _find_original_threat_event(cursor, region: str, clearing_telemetry: dict):
+    """Helper to locate the original active threat event for a region."""
+    linked_gid = clearing_telemetry.get("linked_group_id")
+    row = None
+    if linked_gid:
+        cursor.execute('''
+            SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
+            FROM threat_history th
+            JOIN telemetry_data td ON th.id = td.threat_event_id
+            JOIN paired_events pe ON th.id = pe.threat_event_id
+            WHERE th.region = ? AND td.group_id = ? AND pe.lifecycle_status = 'active'
+            ORDER BY th.timestamp DESC LIMIT 1
+        ''', (region, linked_gid))
+        row = cursor.fetchone()
+
+    if not row:
+        cursor.execute('''
+            SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
+            FROM threat_history th
+            LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
+            WHERE th.region = ? AND th.threat_type = 'official_alarm' AND tc.id IS NULL
+            ORDER BY th.timestamp DESC LIMIT 1
+        ''', (region,))
+        row = cursor.fetchone()
+
+    if not row:
+        cursor.execute('''
+            SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
+            FROM threat_history th
+            JOIN paired_events pe ON th.id = pe.threat_event_id
+            WHERE th.region = ? AND pe.lifecycle_status = 'active'
+            ORDER BY th.timestamp DESC LIMIT 1
+        ''', (region,))
+        row = cursor.fetchone()
+        
+    return row
+
+
+def _close_paired_events(
+    cursor,
+    original_event_id: int,
+    clearing_id: int,
+    clearing_confidence: int,
+    prediction_accuracy: str,
+    threat_duration_sec: int,
+    region: str,
+    clearing_telemetry: dict,
+    message_text: str
+):
+    """Closes paired events related to the original threat or region."""
+    cursor.execute('''
+        SELECT prediction_accuracy FROM paired_events
+        WHERE threat_event_id = ? AND lifecycle_status = 'active'
+    ''', (original_event_id,))
+    pe_row = cursor.fetchone()
+    current_accuracy = pe_row[0] if pe_row else None
+
+    if current_accuracy == 'confirmed' and prediction_accuracy != 'confirmed':
+        prediction_accuracy = 'confirmed'
+    elif prediction_accuracy in ["overestimated", "unknown", "not_applicable", "n/a"]:
+        res_type = clearing_telemetry.get("resolution_type", "unknown")
+        if res_type in ["intercepted", "lost_contact"] or detect_mitigation_from_text(message_text):
+            prediction_accuracy = 'mitigated'
+
+    cursor.execute('''
+        UPDATE paired_events SET
+            clearing_event_id = ?,
+            lifecycle_status = 'cleared',
+            confidence_at_clear = ?,
+            prediction_accuracy = ?,
+            duration_seconds = ?
+        WHERE threat_event_id = ? AND lifecycle_status = 'active'
+    ''', (
+        clearing_id, clearing_confidence, prediction_accuracy,
+        threat_duration_sec, original_event_id
+    ))
+    closed_count = cursor.rowcount
+    if closed_count > 0:
+        print(f"🔗 [Paired] Закрито {closed_count} paired_event(s) для {region} (accuracy: {prediction_accuracy})")
+
+    if not clearing_telemetry.get("linked_group_id"):
+        cursor.execute('''
+            UPDATE paired_events SET
+                clearing_event_id = ?,
+                lifecycle_status = 'cleared',
+                confidence_at_clear = ?,
+                prediction_accuracy = ?,
+                duration_seconds = CAST((strftime('%s', 'now') - strftime('%s', created_at)) AS INTEGER)
+            WHERE region = ? AND lifecycle_status = 'active'
+        ''', (clearing_id, clearing_confidence, prediction_accuracy, region))
+        other_closed = cursor.rowcount
+        if other_closed > 0:
+            print(f"🔗 [Paired] Додатково закрито {other_closed} завислих подій для {region}")
+
+
 def log_clearing_to_db(
     region: str,
     clearing_telemetry: dict = None,
@@ -45,47 +140,7 @@ def log_clearing_to_db(
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        original_event_id = None
-        original_level = None
-        original_type = None
-        original_confidence = None
-        threat_set_ts = None
-        threat_duration_sec = None
-
-        # Try to find linked original threat event
-        linked_gid = clearing_telemetry.get("linked_group_id")
-        row = None
-        if linked_gid:
-            cursor.execute('''
-                SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
-                FROM threat_history th
-                JOIN telemetry_data td ON th.id = td.threat_event_id
-                JOIN paired_events pe ON th.id = pe.threat_event_id
-                WHERE th.region = ? AND td.group_id = ? AND pe.lifecycle_status = 'active'
-                ORDER BY th.timestamp DESC LIMIT 1
-            ''', (region, linked_gid))
-            row = cursor.fetchone()
-
-        if not row:
-            cursor.execute('''
-                SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
-                FROM threat_history th
-                LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
-                WHERE th.region = ? AND th.threat_type = 'official_alarm' AND tc.id IS NULL
-                ORDER BY th.timestamp DESC LIMIT 1
-            ''', (region,))
-            row = cursor.fetchone()
-
-        if not row:
-            cursor.execute('''
-                SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
-                FROM threat_history th
-                JOIN paired_events pe ON th.id = pe.threat_event_id
-                WHERE th.region = ? AND pe.lifecycle_status = 'active'
-                ORDER BY th.timestamp DESC LIMIT 1
-            ''', (region,))
-            row = cursor.fetchone()
-
+        row = _find_original_threat_event(cursor, region, clearing_telemetry)
         if not row:
             conn.close()
             return None
@@ -95,6 +150,7 @@ def log_clearing_to_db(
         original_type = row["threat_type"]
         original_confidence = row["confidence"]
         threat_set_ts = row["timestamp"]
+        threat_duration_sec = None
 
         try:
             set_time = datetime.fromisoformat(threat_set_ts.replace('Z', '+00:00') if threat_set_ts else "")
@@ -154,49 +210,10 @@ def log_clearing_to_db(
         prediction_accuracy = clearing_telemetry.get("prediction_accuracy_hint", "not_applicable")
 
         if original_event_id:
-            cursor.execute('''
-                SELECT prediction_accuracy FROM paired_events
-                WHERE threat_event_id = ? AND lifecycle_status = 'active'
-            ''', (original_event_id,))
-            pe_row = cursor.fetchone()
-            current_accuracy = pe_row[0] if pe_row else None
-
-            if current_accuracy == 'confirmed' and prediction_accuracy != 'confirmed':
-                prediction_accuracy = 'confirmed'
-            elif prediction_accuracy in ["overestimated", "unknown", "not_applicable", "n/a"]:
-                res_type = clearing_telemetry.get("resolution_type", "unknown")
-                if res_type in ["intercepted", "lost_contact"] or detect_mitigation_from_text(message_text):
-                    prediction_accuracy = 'mitigated'
-
-            cursor.execute('''
-                UPDATE paired_events SET
-                    clearing_event_id = ?,
-                    lifecycle_status = 'cleared',
-                    confidence_at_clear = ?,
-                    prediction_accuracy = ?,
-                    duration_seconds = ?
-                WHERE threat_event_id = ? AND lifecycle_status = 'active'
-            ''', (
-                clearing_id, clearing_confidence, prediction_accuracy,
-                threat_duration_sec, original_event_id
-            ))
-            closed_count = cursor.rowcount
-            if closed_count > 0:
-                print(f"🔗 [Paired] Закрито {closed_count} paired_event(s) для {region} (accuracy: {prediction_accuracy})")
-
-            if not clearing_telemetry.get("linked_group_id"):
-                cursor.execute('''
-                    UPDATE paired_events SET
-                        clearing_event_id = ?,
-                        lifecycle_status = 'cleared',
-                        confidence_at_clear = ?,
-                        prediction_accuracy = ?,
-                        duration_seconds = CAST((strftime('%s', 'now') - strftime('%s', created_at)) AS INTEGER)
-                    WHERE region = ? AND lifecycle_status = 'active'
-                ''', (clearing_id, clearing_confidence, prediction_accuracy, region))
-                other_closed = cursor.rowcount
-                if other_closed > 0:
-                    print(f"🔗 [Paired] Додатково закрито {other_closed} завислих подій для {region}")
+            _close_paired_events(
+                cursor, original_event_id, clearing_id, clearing_confidence,
+                prediction_accuracy, threat_duration_sec, region, clearing_telemetry, message_text
+            )
 
         conn.commit()
         conn.close()
