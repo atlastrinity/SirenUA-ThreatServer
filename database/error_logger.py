@@ -12,6 +12,40 @@ from database.db_helpers import get_sqlite_connection, execute_write
 main_loop = None
 
 
+def _classify_error_type(error_msg: str, source: str) -> str:
+    """Helper to classify error messages into standardized types."""
+    error_msg_l = error_msg.lower()
+
+    if "429" in error_msg or "quota" in error_msg_l or "resource_exhausted" in error_msg_l or "rate limit" in error_msg_l:
+        return "429_rate_limit"
+    if "500" in error_msg or "internal" in error_msg_l:
+        return "500_server"
+    if "timeout" in error_msg_l:
+        return "timeout"
+    if "firebase" in error_msg_l or "fcm" in error_msg_l or "messaging" in error_msg_l:
+        return "firebase_error"
+    if "telegram" in error_msg_l or "telethon" in error_msg_l:
+        return "telegram_error"
+    if "gemini" in error_msg_l or "generativeai" in error_msg_l or "aiplatform" in error_msg_l or source == "gemini" or source == "analyzer":
+        return "gemini_api_error"
+    if "json" in error_msg_l or "decode" in error_msg_l or "parse" in error_msg_l:
+        return "json_parse_error"
+    if "sqlite" in error_msg_l or "database" in error_msg_l or "query" in error_msg_l or "locked" in error_msg_l:
+        return "database_error"
+    if "not found" in error_msg_l or "404" in error_msg:
+        return "database_error"
+    if "validate" in error_msg_l or "missing field" in error_msg_l or "pydantic" in error_msg_l or "valueerror" in error_msg_l:
+        return "validation_error"
+    if "connection" in error_msg_l or "connectionerror" in error_msg_l or "socket" in error_msg_l or "network" in error_msg_l or "http" in error_msg_l:
+        return "network_error"
+    if "auth" in error_msg_l or "permission" in error_msg_l or "403" in error_msg:
+        return "auth"
+    if "traceback" in error_msg_l or "exception" in error_msg_l or "syntax" in error_msg_l or "system" in error_msg_l:
+        return "systemic"
+
+    return "general"
+
+
 def log_error_to_db(
     source: str,
     message: str,
@@ -21,37 +55,9 @@ def log_error_to_db(
 ):
     """Log an error event to the error_log table with automatic type classification."""
     error_msg = str(message)
-    error_msg_l = error_msg.lower()
 
     if not error_type or error_type in ["general", "systemic"]:
-        if "429" in error_msg or "quota" in error_msg_l or "resource_exhausted" in error_msg_l or "rate limit" in error_msg_l:
-            error_type = "429_rate_limit"
-        elif "500" in error_msg or "internal" in error_msg_l:
-            error_type = "500_server"
-        elif "timeout" in error_msg_l:
-            error_type = "timeout"
-        elif "firebase" in error_msg_l or "fcm" in error_msg_l or "messaging" in error_msg_l:
-            error_type = "firebase_error"
-        elif "telegram" in error_msg_l or "telethon" in error_msg_l:
-            error_type = "telegram_error"
-        elif "gemini" in error_msg_l or "generativeai" in error_msg_l or "aiplatform" in error_msg_l or source == "gemini" or source == "analyzer":
-            error_type = "gemini_api_error"
-        elif "json" in error_msg_l or "decode" in error_msg_l or "parse" in error_msg_l:
-            error_type = "json_parse_error"
-        elif "sqlite" in error_msg_l or "database" in error_msg_l or "query" in error_msg_l or "locked" in error_msg_l:
-            error_type = "database_error"
-        elif "not found" in error_msg_l or "404" in error_msg:
-            error_type = "database_error"
-        elif "validate" in error_msg_l or "missing field" in error_msg_l or "pydantic" in error_msg_l or "valueerror" in error_msg_l:
-            error_type = "validation_error"
-        elif "connection" in error_msg_l or "connectionerror" in error_msg_l or "socket" in error_msg_l or "network" in error_msg_l or "http" in error_msg_l:
-            error_type = "network_error"
-        elif "auth" in error_msg_l or "permission" in error_msg_l or "403" in error_msg:
-            error_type = "auth"
-        elif "traceback" in error_msg_l or "exception" in error_msg_l or "syntax" in error_msg_l or "system" in error_msg_l:
-            error_type = "systemic"
-        else:
-            error_type = "general"
+        error_type = _classify_error_type(error_msg, source)
 
     try:
         execute_write(
