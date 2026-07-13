@@ -1503,11 +1503,11 @@ class TelegramThreatMonitor:
                     since_str = threat.since
                     if not since_str:
                         continue
-                    # Determine delay based on threat type and predictive status
+                    is_pred = getattr(threat, "is_predictive", False)
                     delay = 3600
-                    if getattr(threat, "is_predictive", False):
+                    if is_pred:
                         pred_eta = getattr(threat, "eta_seconds", None) or 1800
-                        delay = max(600, min(int(pred_eta * 2.0), 7200))
+                        delay = pred_eta + 300  # ETA + 5 minutes grace period
                     else:
                         if t_type == "mig31k":
                             delay = 1800
@@ -1525,19 +1525,34 @@ class TelegramThreatMonitor:
                             delay = 1200
                         elif t_type == "artillery":
                             delay = 1800
+                            
                     try:
                         since_str_normalized = since_str.replace("Z", "+00:00")
                         since_dt = datetime.fromisoformat(since_str_normalized)
                         elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
                         remaining = delay - elapsed
-                        if remaining <= 0:
-                            self.threat_manager.clear_threat(region, threat_type=t_type, group_id=t_gid)
-                            print(f"⏳ Загроза для {region} (тип: {t_type}, група: {t_gid}) застаріла під час офлайну. Очищено.")
+                        
+                        if is_pred:
+                            if remaining <= 0:
+                                # Process immediately via reevaluation instead of silent clear
+                                self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
+                                print(f"⏳ Предиктивна загроза для {region} (тип: {t_type}) застаріла під час офлайну. Заплановано миттєву переоцінку.")
+                            else:
+                                self._schedule_predictive_reevaluation(region, remaining, t_type, t_gid)
+                                print(f"⏳ Відновлено таймер переоцінки предиктивної загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
                         else:
-                            self._schedule_auto_clear(region, remaining, threat_type=t_type, group_id=t_gid)
-                            print(f"⏳ Заплановано автозняття загрози для {region} (тип: {t_type}, група: {t_gid}) через {int(remaining)} сек.")
+                            if remaining <= 0:
+                                self.threat_manager.clear_threat(region, threat_type=t_type, group_id=t_gid)
+                                print(f"⏳ Офіційна загроза для {region} (тип: {t_type}) застаріла під час офлайну. Очищено.")
+                            else:
+                                self._schedule_auto_clear(region, remaining, threat_type=t_type, group_id=t_gid)
+                                print(f"⏳ Заплановано автозняття загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
                     except Exception as e:
-                        self._schedule_auto_clear(region, delay, threat_type=t_type, group_id=t_gid)
+                        print(f"⚠️ Помилка відновлення таймерів для {region}: {e}")
+                        if is_pred:
+                            self._schedule_predictive_reevaluation(region, float(delay), t_type, t_gid)
+                        else:
+                            self._schedule_auto_clear(region, float(delay), threat_type=t_type, group_id=t_gid)
 
     def _get_time_of_day_modifier(self, threat_type: str) -> int:
         """Returns a confidence modifier based on current time of day and threat type.
