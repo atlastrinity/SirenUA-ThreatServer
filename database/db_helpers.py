@@ -9,6 +9,7 @@ import sqlite3
 import gzip
 import base64
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Optional
 from core.config import DB_PATH, logger
@@ -443,3 +444,64 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     except Exception as e:
         logger.error(f"Помилка відправки FCM Push для {region}: {e}")
         _log_error("database_helpers", f"Помилка відправки FCM Push для {region}: {e}", "send_fcm_notification", context=f"region={region}, topic={topic}", error_type="firebase_error")
+
+
+def run_firestore_with_retry(operation_func, operation_name: str, context_info: str = "", max_retries: int = 3):
+    """
+    Runs a Firestore database operation with automatic retry on quota hits (HTTP 429).
+    """
+    for attempt in range(max_retries):
+        try:
+            return operation_func()
+        except Exception as e:
+            err_str = str(e)
+            if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
+                wait = (2 ** attempt) * 5
+                print(f"⚠️ Firestore quota hit during {operation_name}, retry {attempt+1}/{max_retries} in {wait}s ({context_info})")
+                _log_error("firebase", str(e), endpoint=operation_name, context=f"{context_info}, attempt={attempt+1}", error_type="firebase_quota")
+                time.sleep(wait)
+            else:
+                print(f"⚠️ Error executing Firestore operation {operation_name}: {e}")
+                raise e
+
+
+def execute_query_as_dicts(query: str, params: tuple = (), json_fields: list = None) -> list:
+    """
+    Executes a SQLite query and returns the results as a list of dictionaries,
+    optionally parsing specified fields as JSON objects.
+    """
+    conn = get_sqlite_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        results = []
+        for row in rows:
+            d = dict(row)
+            if json_fields:
+                for field in json_fields:
+                    val = d.get(field)
+                    if val and isinstance(val, str):
+                        try:
+                            d[field] = json.loads(val)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+            results.append(d)
+        return results
+    finally:
+        conn.close()
+
+
+def execute_write(query: str, params: tuple = ()):
+    """Executes a SQLite write query (INSERT, UPDATE, DELETE) and commits it."""
+    conn = get_sqlite_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+    finally:
+        conn.close()
+
+

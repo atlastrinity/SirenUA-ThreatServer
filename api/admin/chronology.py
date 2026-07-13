@@ -8,26 +8,10 @@ from datetime import datetime as dt_cls
 from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 
-from core.config import DB_PATH
+from core.config import DB_PATH, get_kyiv_tz_offset
 from database.analytics_db import get_sqlite_connection
 
 router = APIRouter()
-
-
-def _get_kyiv_tz_offset() -> int:
-    """Returns the current UTC offset for Europe/Kiev (handles DST)."""
-    try:
-        try:
-            import zoneinfo
-            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
-        except Exception:
-            from backports import zoneinfo
-            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
-        from datetime import datetime
-        dt = datetime.now(kiev_tz)
-        return int(dt.strftime('%z')[:3])
-    except Exception:
-        return 3  # Fallback to Kyiv default (UTC+3)
 
 
 def _apply_prediction_accuracy_filter(query: str, prediction_accuracy: str) -> str:
@@ -54,7 +38,7 @@ async def get_admin_chronology(
     prediction_accuracy: str = None
 ):
     """Хронологія загроз: встановлення → зняття, з match_type."""
-    offset_hours = _get_kyiv_tz_offset()
+    offset_hours = get_kyiv_tz_offset()
     tz_modifier = f"'{offset_hours:+d} hours'"
 
     try:
@@ -170,7 +154,7 @@ async def get_admin_chronology_v2(
     Для кожної AI-події шукає найближчу офіційну тривогу в ±30хв вікні
     та обчислює time_delta, match_reason, та включає telemetry summary.
     """
-    offset_hours = _get_kyiv_tz_offset()
+    offset_hours = get_kyiv_tz_offset()
     tz_modifier = f"'{offset_hours:+d} hours'"
 
     try:

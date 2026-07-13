@@ -19,6 +19,7 @@ from database.db_helpers import (
     delete_test_history_from_sqlite,
     delete_test_history_from_firestore,
     send_fcm_notification,
+    run_firestore_with_retry,
 )
 
 # Типи загроз з описами українською
@@ -310,21 +311,14 @@ class MockThreatManager:
                 region: state.to_dict()
                 for region, state in self.threats.items()
             }
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    doc_ref = db.collection('sirenua_state').document('threats')
-                    doc_ref.set(state_data)
-                    break
-                except Exception as e:
-                    err_str = str(e)
-                    if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
-                        wait = (2 ** attempt) * 5
-                        print(f"⚠️ Firestore quota hit saving state, retry {attempt+1}/{max_retries} in {wait}s")
-                        time.sleep(wait)
-                    else:
-                        print(f"⚠️ Помилка збереження стану загроз у Firebase: {e}")
-                        break
+            try:
+                run_firestore_with_retry(
+                    lambda: db.collection('sirenua_state').document('threats').set(state_data),
+                    operation_name="save_threats_state",
+                    context_info="MockThreatManager"
+                )
+            except Exception:
+                pass
         self.save_to_file()
 
     def load_from_db(self):

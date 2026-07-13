@@ -1349,9 +1349,10 @@ class TelegramThreatMonitor:
                 
         return list(found)
 
-    def _cancel_clear_tasks(self, region: str, threat_type: str = None, group_id: str = None):
+    def _cancel_matching_tasks(self, tasks_dict: dict, region: str, threat_type: str = None, group_id: str = None):
+        """Cancels all tasks in the dict matching the region, type, and group_id."""
         to_delete = []
-        for key, task in self._clear_tasks.items():
+        for key, task in tasks_dict.items():
             k_region, k_type, k_gid = key
             if k_region == region:
                 match = True
@@ -1363,23 +1364,11 @@ class TelegramThreatMonitor:
                     task.cancel()
                     to_delete.append(key)
         for key in to_delete:
-            del self._clear_tasks[key]
+            del tasks_dict[key]
 
-        # Cancel corresponding re-evaluation tasks
-        to_delete_reeval = []
-        for key, task in self._reevaluation_tasks.items():
-            k_region, k_type, k_gid = key
-            if k_region == region:
-                match = True
-                if threat_type and k_type != threat_type:
-                    match = False
-                if group_id and k_gid != group_id:
-                    match = False
-                if match:
-                    task.cancel()
-                    to_delete_reeval.append(key)
-        for key in to_delete_reeval:
-            del self._reevaluation_tasks[key]
+    def _cancel_clear_tasks(self, region: str, threat_type: str = None, group_id: str = None):
+        self._cancel_matching_tasks(self._clear_tasks, region, threat_type, group_id)
+        self._cancel_matching_tasks(self._reevaluation_tasks, region, threat_type, group_id)
 
     def _cancel_reevaluation_task(self, region: str, threat_type: str = None, group_id: str = None):
         key = (region, threat_type, group_id)
@@ -1387,20 +1376,38 @@ class TelegramThreatMonitor:
             self._reevaluation_tasks[key].cancel()
             del self._reevaluation_tasks[key]
 
-    def _schedule_predictive_reevaluation(self, region: str, delay_seconds: float, threat_type: str, group_id: str):
-        key = (region, threat_type, group_id)
-        if key in self._reevaluation_tasks:
-            self._reevaluation_tasks[key].cancel()
+    def _schedule_task_helper(self, tasks_dict: dict, key: tuple, delay_seconds: float, callback_coro_or_func, description: str, *args, **kwargs):
+        """
+        Helper method to schedule an asynchronous task with a delay, after cancelling any existing task with the same key.
+        """
+        if key in tasks_dict:
+            tasks_dict[key].cancel()
             
-        async def reevaluate():
+        async def task_wrapper():
             await asyncio.sleep(delay_seconds)
             try:
-                await self._run_predictive_reevaluation(region, threat_type, group_id)
+                if asyncio.iscoroutinefunction(callback_coro_or_func):
+                    await callback_coro_or_func(*args, **kwargs)
+                else:
+                    callback_coro_or_func(*args, **kwargs)
             except Exception as e:
-                print(f"⚠️ [Re-evaluation] Error executing task for {region}: {e}")
-            self._reevaluation_tasks.pop(key, None)
+                print(f"⚠️ [{description}] Error executing task: {e}")
+            tasks_dict.pop(key, None)
             
-        self._reevaluation_tasks[key] = asyncio.create_task(reevaluate())
+        tasks_dict[key] = asyncio.create_task(task_wrapper())
+
+    def _schedule_predictive_reevaluation(self, region: str, delay_seconds: float, threat_type: str, group_id: str):
+        key = (region, threat_type, group_id)
+        self._schedule_task_helper(
+            self._reevaluation_tasks,
+            key,
+            delay_seconds,
+            self._run_predictive_reevaluation,
+            "Re-evaluation",
+            region,
+            threat_type,
+            group_id
+        )
         print(f"⏳ Заплановано переоцінку предиктивної загрози для {region} (тип: {threat_type}, група: {group_id}) через {int(delay_seconds)} сек")
 
     async def _run_predictive_reevaluation(self, region: str, threat_type: str, group_id: str):
@@ -1475,18 +1482,23 @@ class TelegramThreatMonitor:
         else:
             print(f"🟡 [Re-evaluation] Gemini визначив загрозу як АКТИВНУ або не зміг відповісти для {region}. Залишаємо загрозу діяти.")
 
+    def _execute_auto_clear_callback(self, region: str, delay_seconds: float, threat_type: str, group_id: str):
+        self.threat_manager.clear_threat(region, threat_type=threat_type, group_id=group_id)
+        print(f"⏳ Автоматичне зняття загрози для {region} (тип: {threat_type or 'all'}, група: {group_id or 'all'}, таймаут {int(delay_seconds)} сек)")
+
     def _schedule_auto_clear(self, region: str, delay_seconds: float = 3600, threat_type: str = None, group_id: str = None):
         key = (region, threat_type, group_id)
-        if key in self._clear_tasks:
-            self._clear_tasks[key].cancel()
-        
-        async def auto_clear():
-            await asyncio.sleep(delay_seconds)
-            self.threat_manager.clear_threat(region, threat_type=threat_type, group_id=group_id)
-            print(f"⏳ Автоматичне зняття загрози для {region} (тип: {threat_type or 'all'}, група: {group_id or 'all'}, таймаут {int(delay_seconds)} сек)")
-            self._clear_tasks.pop(key, None)
-            
-        self._clear_tasks[key] = asyncio.create_task(auto_clear())
+        self._schedule_task_helper(
+            self._clear_tasks,
+            key,
+            delay_seconds,
+            self._execute_auto_clear_callback,
+            "Auto-clear",
+            region,
+            delay_seconds,
+            threat_type,
+            group_id
+        )
 
     def _schedule_initial_auto_clears(self):
         from datetime import datetime, timezone

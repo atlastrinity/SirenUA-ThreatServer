@@ -3,12 +3,11 @@ Analytics Lifecycle & Telemetry API.
 Endpoints: per-region telemetry, attack groups, lifecycle data, paired events.
 """
 
-import sqlite3
 import json
 from fastapi import APIRouter, HTTPException
 
 from core.config import DB_PATH
-from database.analytics_db import get_sqlite_connection
+from database.db_helpers import get_sqlite_connection, execute_query_as_dicts
 
 router = APIRouter()
 
@@ -20,11 +19,7 @@ async def get_region_telemetry(region: str, limit: int = 50, days: int = 30):
     region = unquote(region)
 
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute('''
+        query = '''
             SELECT th.id, th.timestamp, th.region, th.threat_level, th.threat_type,
                    th.detail, th.confidence,
                    td.group_id, td.attack_vector, td.target_count, td.speed_kmh,
@@ -39,21 +34,12 @@ async def get_region_telemetry(region: str, limit: int = 50, days: int = 30):
             WHERE th.region = ? AND th.timestamp >= datetime('now', ?)
             ORDER BY th.timestamp DESC
             LIMIT ?
-        ''', (region, f'-{days} days', min(limit, 200)))
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        events = []
-        for row in rows:
-            event = dict(row)
-            if event.get("message_context_tags"):
-                try:
-                    event["message_context_tags"] = json.loads(event["message_context_tags"])
-                except (json.JSONDecodeError, TypeError):
-                    event["message_context_tags"] = []
-            events.append(event)
-
+        '''
+        events = execute_query_as_dicts(
+            query, 
+            (region, f'-{days} days', min(limit, 200)), 
+            json_fields=["message_context_tags"]
+        )
         return {"region": region, "count": len(events), "events": events}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -63,11 +49,7 @@ async def get_region_telemetry(region: str, limit: int = 50, days: int = 30):
 async def get_attack_groups(days: int = 7, limit: int = 50):
     """Список атакових хвиль/груп за останні N днів."""
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute('''
+        query = '''
             SELECT 
                 td.group_id,
                 td.correlation_group,
@@ -89,14 +71,11 @@ async def get_attack_groups(days: int = 7, limit: int = 50):
             GROUP BY td.group_id
             ORDER BY MAX(th.timestamp) DESC
             LIMIT ?
-        ''', (f'-{days} days', min(limit, 100)))
-
-        rows = cursor.fetchall()
-        conn.close()
+        '''
+        rows = execute_query_as_dicts(query, (f'-{days} days', min(limit, 100)))
 
         groups = []
-        for row in rows:
-            group = dict(row)
+        for group in rows:
             group["regions"] = group["regions"].split(",") if group["regions"] else []
             group["threat_types"] = group["threat_types"].split(",") if group["threat_types"] else []
             if group["avg_confidence"]:
@@ -110,6 +89,7 @@ async def get_attack_groups(days: int = 7, limit: int = 50):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.get("/api/analytics/lifecycle/{region}")
 async def get_lifecycle_data(region: str, days: int = 30, limit: int = 50):
     """Повний lifecycle загроз для регіону: встановлення → зняття з телеметрією обох подій."""
@@ -117,11 +97,7 @@ async def get_lifecycle_data(region: str, days: int = 30, limit: int = 50):
     region = unquote(region)
 
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute('''
+        query = '''
             SELECT 
                 tc.id as clearing_id,
                 tc.timestamp as clearing_timestamp,
@@ -154,21 +130,12 @@ async def get_lifecycle_data(region: str, days: int = 30, limit: int = 50):
             WHERE tc.region = ? AND tc.timestamp >= datetime('now', ?)
             ORDER BY tc.timestamp DESC
             LIMIT ?
-        ''', (region, f'-{days} days', min(limit, 200)))
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        events = []
-        for row in rows:
-            event = dict(row)
-            if event.get("clearing_context_tags"):
-                try:
-                    event["clearing_context_tags"] = json.loads(event["clearing_context_tags"])
-                except (json.JSONDecodeError, TypeError):
-                    event["clearing_context_tags"] = []
-            events.append(event)
-
+        '''
+        events = execute_query_as_dicts(
+            query,
+            (region, f'-{days} days', min(limit, 200)),
+            json_fields=["clearing_context_tags"]
+        )
         return {"region": region, "count": len(events), "lifecycle_events": events}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -178,10 +145,6 @@ async def get_lifecycle_data(region: str, days: int = 30, limit: int = 50):
 async def get_paired_events(region: str = None, status: str = None, days: int = 7, limit: int = 50):
     """Спарені події (lifecycle): загроза → телеметрія → clearing."""
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         query = """
             SELECT pe.*, 
                    th.timestamp as threat_timestamp,
@@ -208,25 +171,11 @@ async def get_paired_events(region: str = None, status: str = None, days: int = 
         query += " ORDER BY pe.created_at DESC LIMIT ?"
         params.append(min(limit, 200))
 
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
-
-        events = []
-        for row in rows:
-            event = dict(row)
-            if event.get("clearing_context_tags"):
-                try:
-                    event["clearing_context_tags"] = json.loads(event["clearing_context_tags"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            if event.get("rules_applied"):
-                try:
-                    event["rules_applied"] = json.loads(event["rules_applied"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            events.append(event)
-
+        events = execute_query_as_dicts(
+            query,
+            tuple(params),
+            json_fields=["clearing_context_tags", "rules_applied"]
+        )
         return {"total": len(events), "days": days, "events": events}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -34,6 +34,33 @@ class GeminiThreatAnalyzer:
         self.db_path = "threat_analytics.db"
         self._error_callback = error_callback
         self._rule_audit_callback = rule_audit_callback
+
+    def _handle_api_error(self, e: Exception, attempt: int, max_attempts: int, endpoint: str, context: str) -> bool:
+        """
+        Handles Gemini API errors, switches API keys on rate limits, and triggers error callback.
+        Returns True if it switched keys and execution should retry.
+        Returns False if it is a terminal failure.
+        """
+        error_msg = str(e)
+        print(f"❌ Gemini API Error in {endpoint} (Attempt {attempt + 1}/{max_attempts}): {error_msg}")
+        is_rate_limit = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower()
+        
+        if is_rate_limit and len(self.api_keys) > 1:
+            self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
+            print(f"🔄 Перемикання на наступний API ключ (Індекс {self.current_key_idx})")
+            genai.configure(api_key=self.api_keys[self.current_key_idx])
+            self.model = genai.GenerativeModel(self.model_name)
+            return True
+            
+        if is_rate_limit:
+            self.last_error = "Rate Limit Exceeded (429)"
+        else:
+            self.last_error = error_msg
+            
+        if self._error_callback:
+            self._error_callback("gemini", error_msg, endpoint=endpoint, context=context)
+            
+        return False
         
         self.system_prompt = """You are a specialized military AI threat analyst (SirenUA Threat Intelligence System).
 Your task: deeply analyze batches of messages from Ukrainian Telegram channels and produce a JSON array with detected threats AND full telemetry data.
@@ -606,27 +633,9 @@ MANDATORY fields:
                 
                 return results
             except Exception as e:
-                error_msg = str(e)
-                print(f"❌ Gemini API Error (Attempt {attempt + 1}/{max_attempts}): {error_msg}")
-                is_rate_limit = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower()
-                
-                if is_rate_limit and len(self.api_keys) > 1:
-                    # Switch key
-                    self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
-                    print(f"🔄 Перемикання на наступний API ключ (Індекс {self.current_key_idx})")
-                    genai.configure(api_key=self.api_keys[self.current_key_idx])
-                    self.model = genai.GenerativeModel(self.model_name)
-                    # Continue to next attempt
-                else:
-                    if is_rate_limit:
-                        self.last_error = "Rate Limit Exceeded (429)"
-                    else:
-                        self.last_error = error_msg
-                    
-                    # Log error via callback
-                    if self._error_callback:
-                        self._error_callback("gemini", error_msg, endpoint="analyze_batch", context=f"messages_count={len(messages)}")
-                    return []
+                if self._handle_api_error(e, attempt, max_attempts, endpoint="analyze_batch", context=f"messages_count={len(messages)}"):
+                    continue
+                return []
         
         # If we exhausted all attempts
         self.last_error = "Rate Limit Exceeded across all available keys"
@@ -886,23 +895,8 @@ Here are the latest Telegram messages:
                 self.last_error = None
                 return json.loads(result_text.strip())
             except Exception as e:
-                error_msg = str(e)
-                print(f"❌ Gemini Re-evaluation API Error (Attempt {attempt + 1}/{max_attempts}): {error_msg}")
-                is_rate_limit = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower()
-                
-                if is_rate_limit and len(self.api_keys) > 1:
-                    self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
-                    print(f"🔄 Перемикання на наступний API ключ (Індекс {self.current_key_idx})")
-                    genai.configure(api_key=self.api_keys[self.current_key_idx])
-                    self.model = genai.GenerativeModel(self.model_name)
-                else:
-                    if is_rate_limit:
-                        self.last_error = "Rate Limit Exceeded (429)"
-                    else:
-                        self.last_error = error_msg
-                    
-                    if self._error_callback:
-                        self._error_callback("gemini", error_msg, endpoint="reevaluate_expired_threat", context=f"region={region}")
-                    return None
+                if self._handle_api_error(e, attempt, max_attempts, endpoint="reevaluate_expired_threat", context=f"region={region}"):
+                    continue
+                return None
         return None
 

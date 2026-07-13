@@ -100,3 +100,20 @@ CLEAR_KEYWORDS = [
     r"чисто", 
     r"дорозвідка"
 ]
+
+
+def get_kyiv_tz_offset() -> int:
+    """Returns the current UTC offset for Europe/Kiev (handles DST)."""
+    try:
+        try:
+            import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        except Exception:
+            from backports import zoneinfo
+            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        from datetime import datetime
+        dt = datetime.now(kiev_tz)
+        return int(dt.strftime('%z')[:3])
+    except Exception:
+        return 3  # Fallback to Kyiv default (UTC+3)
+

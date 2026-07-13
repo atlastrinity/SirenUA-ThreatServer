@@ -58,9 +58,7 @@ app.include_router(admin_router)
 # Health-checks
 # ---------------------------------------------------------------------------
 
-@app.get("/")
-async def root():
-    """Health-check для Render / моніторингу."""
+def _get_health_status() -> dict:
     telegram_connected = core.globals.telegram_monitor is not None and core.globals.telegram_monitor.is_running
     return {
         "service": "SirenUA Threat Monitor",
@@ -70,20 +68,18 @@ async def root():
         "telegram_connected": telegram_connected,
         "shelters_loaded": shelter_manager.total_count,
     }
+
+
+@app.get("/")
+async def root():
+    """Health-check для Render / моніторингу."""
+    return _get_health_status()
 
 
 @app.head("/")
 async def root_health():
     """Health-check для Render / моніторингу."""
-    telegram_connected = core.globals.telegram_monitor is not None and core.globals.telegram_monitor.is_running
-    return {
-        "service": "SirenUA Threat Monitor",
-        "version": "1.2.0",
-        "status": "running",
-        "mode": "live" if IS_LIVE_MODE else "mock",
-        "telegram_connected": telegram_connected,
-        "shelters_loaded": shelter_manager.total_count,
-    }
+    return _get_health_status()
 
 
 # ---------------------------------------------------------------------------

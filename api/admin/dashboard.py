@@ -6,32 +6,16 @@ Aggregated statistics for the admin dashboard.
 import sqlite3
 from fastapi import APIRouter, HTTPException
 
-from core.config import DB_PATH
+from core.config import DB_PATH, get_kyiv_tz_offset
 from database.analytics_db import get_sqlite_connection
 
 router = APIRouter()
 
 
-def _get_kyiv_tz_offset() -> int:
-    """Returns the current UTC offset for Europe/Kiev (handles DST)."""
-    try:
-        try:
-            import zoneinfo
-            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
-        except Exception:
-            from backports import zoneinfo
-            kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
-        from datetime import datetime
-        dt = datetime.now(kiev_tz)
-        return int(dt.strftime('%z')[:3])
-    except Exception:
-        return 3  # Fallback to Kyiv default (UTC+3)
-
-
 @router.get("/api/admin/dashboard/stats")
 async def get_admin_dashboard_stats():
     """Агреговані статистичні дані для дашборду."""
-    offset_hours = _get_kyiv_tz_offset()
+    offset_hours = get_kyiv_tz_offset()
     tz_modifier = f"'{offset_hours:+d} hours'"
 
     try:

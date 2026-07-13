@@ -3,11 +3,9 @@ Admin Rules API.
 Endpoints for Gemini rules audit history and threat history seeding.
 """
 
-import sqlite3
 from fastapi import APIRouter, HTTPException
 
-from core.config import DB_PATH
-from database.db_helpers import get_db, get_sqlite_connection
+from database.db_helpers import get_db, get_sqlite_connection, execute_query_as_dicts
 
 router = APIRouter()
 
@@ -22,10 +20,6 @@ async def get_admin_rules_history(
 ):
     """Аудит-лог змін правил Gemini."""
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         query = "SELECT * FROM gemini_rules_audit WHERE timestamp >= datetime('now', ?)"
         params = [f'-{days} days']
 
@@ -42,13 +36,10 @@ async def get_admin_rules_history(
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(min(limit, 500))
 
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
-
+        entries = execute_query_as_dicts(query, tuple(params))
         return {
-            "total": len(rows),
-            "entries": [dict(r) for r in rows]
+            "total": len(entries),
+            "entries": entries
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

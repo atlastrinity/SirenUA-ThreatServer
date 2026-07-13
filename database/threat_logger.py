@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 
 from core.config import DB_PATH
-from database.db_helpers import get_db, is_duplicate_event, get_sqlite_connection
+from database.db_helpers import get_db, is_duplicate_event, get_sqlite_connection, run_firestore_with_retry
 from database.error_logger import log_error_to_db
 
 # Firestore history batch buffer — collects writes during batch mode for one flush
@@ -135,24 +135,15 @@ def log_threat_to_firestore(
     if telemetry:
         doc_data["telemetry"] = telemetry
 
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            db.collection('sirenua_history').add(doc_data)
-            print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type}, is_test={is_test})")
-            return
-        except Exception as e:
-            err_str = str(e)
-            if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
-                wait = (2 ** attempt) * 5
-                print(f"⚠️ Firestore quota hit writing history for {region}, retry {attempt+1}/{max_retries} in {wait}s")
-                log_error_to_db("firebase", str(e), endpoint="log_threat_to_firestore", context=f"region={region}, attempt={attempt+1}")
-                time.sleep(wait)
-            else:
-                print(f"⚠️ Помилка запису історії в Firestore: {e}")
-                log_error_to_db("firebase", str(e), endpoint="log_threat_to_firestore", context=f"region={region}, final_failure")
-                return
-    print(f"❌ Firestore history write failed after {max_retries} retries for {region}")
+    try:
+        run_firestore_with_retry(
+            lambda: db.collection('sirenua_history').add(doc_data),
+            operation_name="log_threat_to_firestore",
+            context_info=f"region={region}"
+        )
+        print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type}, is_test={is_test})")
+    except Exception:
+        print(f"❌ Firestore history write failed for {region}")
 
 
 def flush_history_batch():
@@ -169,27 +160,22 @@ def flush_history_batch():
     items = list(_history_batch_buffer)
     _history_batch_buffer.clear()
 
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
+    try:
+        def perform_batch():
             batch = db.batch()
             for doc_data in items:
                 ref = db.collection('sirenua_history').document()
                 batch.set(ref, doc_data)
             batch.commit()
-            print(f"🔥 Batch flush: {len(items)} history записів за один Firestore write")
-            return
-        except Exception as e:
-            err_str = str(e)
-            if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
-                wait = (2 ** attempt) * 5
-                print(f"⚠️ Firestore quota hit on batch flush, retry {attempt+1}/{max_retries} in {wait}s")
-                log_error_to_db("firebase", str(e), endpoint="flush_history_batch", context=f"batch_size={len(items)}, attempt={attempt+1}")
-                time.sleep(wait)
-            else:
-                print(f"⚠️ Помилка batch flush Firestore history: {e}")
-                log_error_to_db("firebase", str(e), endpoint="flush_history_batch", context=f"batch_size={len(items)}, final_failure")
-                return
+
+        run_firestore_with_retry(
+            perform_batch,
+            operation_name="flush_history_batch",
+            context_info=f"batch_size={len(items)}"
+        )
+        print(f"🔥 Batch flush: {len(items)} history записів за один Firestore write")
+    except Exception:
+        pass
 
 
 def validate_prediction_on_alarm(region: str):

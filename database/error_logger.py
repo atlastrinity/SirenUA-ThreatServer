@@ -6,7 +6,7 @@ Functions: log_error_to_db, log_rule_audit_to_db, safe_run_task.
 import asyncio
 
 from core.config import DB_PATH
-from database.db_helpers import get_sqlite_connection
+from database.db_helpers import get_sqlite_connection, execute_write
 
 # Global reference to the main event loop (set from lifespan)
 main_loop = None
@@ -54,14 +54,10 @@ def log_error_to_db(
             error_type = "general"
 
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
+        execute_write(
             "INSERT INTO error_log (source, error_type, message, endpoint, context) VALUES (?, ?, ?, ?, ?)",
             (source, error_type, error_msg[:2000], endpoint, context)
         )
-        conn.commit()
-        conn.close()
     except Exception:
         pass
 
@@ -77,14 +73,10 @@ def log_rule_audit_to_db(
 ):
     """Log a Gemini rule addition/removal/deactivation to the audit table."""
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
+        execute_write(
             "INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (action, rule_type, rule_text[:1000] if rule_text else None, source_region, target_region, threat_type, reason)
         )
-        conn.commit()
-        conn.close()
     except Exception:
         pass
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
 
 from core.config import DB_PATH
-from database.db_helpers import get_db, get_sqlite_connection
+from database.db_helpers import get_db, get_sqlite_connection, execute_query_as_dicts
 
 router = APIRouter()
 
@@ -18,10 +18,6 @@ router = APIRouter()
 async def get_predictions(region: str = None, days: int = 3, limit: int = 50):
     """Активні та завершені AI-прогнози загроз."""
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         query = '''
             SELECT th.*, td.attack_vector, td.speed_kmh, td.altitude_category,
                    td.launch_origin, td.weapon_subtype, td.source_reliability,
@@ -43,20 +39,7 @@ async def get_predictions(region: str = None, days: int = 3, limit: int = 50):
         query += " ORDER BY th.timestamp DESC LIMIT ?"
         params.append(min(limit, 200))
 
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
-
-        events = []
-        for row in rows:
-            event = dict(row)
-            if event.get("message_context_tags"):
-                try:
-                    event["message_context_tags"] = json.loads(event["message_context_tags"])
-                except (json.JSONDecodeError, TypeError):
-                    event["message_context_tags"] = []
-            events.append(event)
-
+        events = execute_query_as_dicts(query, tuple(params), json_fields=["message_context_tags"])
         return {"total": len(events), "days": days, "events": events}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -66,29 +49,15 @@ async def get_predictions(region: str = None, days: int = 3, limit: int = 50):
 async def get_rules(active_only: bool = False):
     """Список ML-правил (правила класифікації Gemini)."""
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         if active_only:
-            cursor.execute("SELECT * FROM gemini_rules WHERE is_active = 1 ORDER BY evidence_count DESC, accuracy_score DESC")
+            query = "SELECT * FROM gemini_rules WHERE is_active = 1 ORDER BY evidence_count DESC, accuracy_score DESC"
         else:
-            cursor.execute("SELECT * FROM gemini_rules ORDER BY is_active DESC, evidence_count DESC, accuracy_score DESC")
+            query = "SELECT * FROM gemini_rules ORDER BY is_active DESC, evidence_count DESC, accuracy_score DESC"
 
-        rows = cursor.fetchall()
-        conn.close()
-
-        rules = []
-        for row in rows:
-            rule = dict(row)
-            for field in ["trigger_conditions", "override_conditions", "applicable_regions", "applicable_types"]:
-                if rule.get(field):
-                    try:
-                        rule[field] = json.loads(rule[field])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            rules.append(rule)
-
+        rules = execute_query_as_dicts(
+            query,
+            json_fields=["trigger_conditions", "override_conditions", "applicable_regions", "applicable_types"]
+        )
         return {"total": len(rules), "rules": rules}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
