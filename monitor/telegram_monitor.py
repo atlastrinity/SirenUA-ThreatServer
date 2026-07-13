@@ -499,19 +499,13 @@ class TelegramThreatMonitor:
                         
                         # Generate dynamic ETA string if not provided by Gemini
                         if not eta_str:
-                            if eta_seconds < 300:
-                                eta_str = "~2-5 хв"
-                            elif eta_seconds < 900:
-                                eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
-                            elif eta_seconds < 3600:
-                                eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 5} хв"
-                            else:
-                                h = eta_seconds // 3600
-                                m = (eta_seconds % 3600) // 60
-                                if m > 0:
-                                    eta_str = f"~{h} год {m}-{m + 10} хв"
-                                else:
-                                    eta_str = f"~{h} год"
+                            buffer_minutes = 5
+                            if eta_seconds > 1800:
+                                buffer_minutes = 10
+                            if threat_type == "shahed":
+                                buffer_minutes = 20
+                            eta_minutes = int(eta_seconds / 60) + buffer_minutes
+                            eta_str = f"~{eta_minutes} хв"
                         
                         # Calculate delay with 50% buffer
                         telemetry_delay = int(eta_seconds * 1.5)
@@ -522,35 +516,35 @@ class TelegramThreatMonitor:
                 elif threat_type == "mig31k":
                     delay = 1800  # 30 хв
                     if not eta_str:
-                        eta_str = "~20-40 хв"
+                        eta_str = "~40 хв"
                 elif threat_type == "ballistic":
                     delay = 600   # 10 хв
                     if not eta_str:
-                        eta_str = "~2-5 хв"
+                        eta_str = "~15 хв"
                 elif threat_type == "kab":
                     delay = 1200  # 20 хв
                     if not eta_str:
-                        eta_str = "~5-15 хв"
+                        eta_str = "~25 хв"
                 elif threat_type == "shahed":
                     delay = 10800  # 3 години
                     if not eta_str:
-                        eta_str = "+1-2 год"
+                        eta_str = "~200 хв"
                 elif threat_type == "cruise_missile":
                     delay = 2700  # 45 хв
                     if not eta_str:
-                        eta_str = "+15-30 хв"
+                        eta_str = "~55 хв"
                 elif threat_type == "tu95":
                     delay = 5400  # 1.5 год
                     if not eta_str:
-                        eta_str = "~30-90 хв"
+                        eta_str = "~110 хв"
                 elif threat_type == "iskander":
                     delay = 1200  # 20 хв
                     if not eta_str:
-                        eta_str = "~2-5 хв"
+                        eta_str = "~25 хв"
                 elif threat_type == "artillery":
                     delay = 1800  # 30 хв
                     if not eta_str:
-                        eta_str = "~0-5 хв"
+                        eta_str = "~10 хв"
                     
                 detail = clean_user_facing_threat_detail(text)
                 
