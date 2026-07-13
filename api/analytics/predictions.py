@@ -71,9 +71,9 @@ async def get_rules(active_only: bool = False):
         cursor = conn.cursor()
 
         if active_only:
-            cursor.execute("SELECT * FROM gemini_rules WHERE is_active = 1 ORDER BY priority ASC, created_at DESC")
+            cursor.execute("SELECT * FROM gemini_rules WHERE is_active = 1 ORDER BY evidence_count DESC, accuracy_score DESC")
         else:
-            cursor.execute("SELECT * FROM gemini_rules ORDER BY is_active DESC, priority ASC, created_at DESC")
+            cursor.execute("SELECT * FROM gemini_rules ORDER BY is_active DESC, evidence_count DESC, accuracy_score DESC")
 
         rows = cursor.fetchall()
         conn.close()
