@@ -2,7 +2,7 @@ import sqlite3
 import os
 import json
 import google.generativeai as genai
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from database.db_helpers import get_sqlite_connection
@@ -580,16 +580,17 @@ MANDATORY fields:
                 self._error_callback("gemini", str(e), endpoint="run_rules_learner")
             return 0
 
-    async def analyze_batch(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> List[Dict[str, Any]]:
-        if not messages:
-            return []
-            
-        if not self.is_configured:
-            # Fallback/Mock behavior if no API key is provided
-            print("⚠️ Gemini in MOCK mode: Returning empty analysis.")
-            return []
+    def _clean_and_parse_json(self, response_text: str) -> Any:
+        """Cleans markdown JSON fences from response text and parses it."""
+        result_text = response_text.strip()
+        if result_text.startswith("```json"):
+            result_text = result_text.split("```json", 1)[1]
+        if result_text.endswith("```"):
+            result_text = result_text.rsplit("```", 1)[0]
+        return json.loads(result_text.strip())
 
-        # Отримуємо поточний час у Києві для часового контексту Gemini
+    def _build_analysis_prompt(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> Tuple[str, Optional[str]]:
+        """Helper to construct the prompt with Kyiv timezone, rules, and message payloads."""
         from datetime import datetime
         try:
             import zoneinfo
@@ -613,6 +614,19 @@ MANDATORY fields:
         prompt += "ОСЬ НОВІ ПОВІДОМЛЕННЯ ДЛЯ АНАЛІЗУ:\n"
         for msg in messages:
             prompt += f"Канал: {msg['channel']}\nТекст: {msg['text']}\n---\n"
+            
+        return prompt, rules_ctx
+
+    async def analyze_batch(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+        if not messages:
+            return []
+            
+        if not self.is_configured:
+            # Fallback/Mock behavior if no API key is provided
+            print("⚠️ Gemini in MOCK mode: Returning empty analysis.")
+            return []
+
+        prompt, rules_ctx = self._build_analysis_prompt(messages, context_messages)
 
         max_attempts = len(self.api_keys) if self.api_keys else 1
         for attempt in range(max_attempts):
@@ -624,14 +638,8 @@ MANDATORY fields:
                     )
                 )
                 
-                result_text = response.text
-                if result_text.startswith("```json"):
-                    result_text = result_text.split("```json", 1)[1]
-                if result_text.endswith("```"):
-                    result_text = result_text.rsplit("```", 1)[0]
-                    
                 self.last_error = None
-                results = json.loads(result_text.strip())
+                results = self._clean_and_parse_json(response.text)
                 
                 # Normalize telemetry for each result
                 if isinstance(results, list):
@@ -904,14 +912,8 @@ Here are the latest Telegram messages:
                     )
                 )
                 
-                result_text = response.text
-                if result_text.startswith("```json"):
-                    result_text = result_text.split("```json", 1)[1]
-                if result_text.endswith("```"):
-                    result_text = result_text.rsplit("```", 1)[0]
-                    
                 self.last_error = None
-                return json.loads(result_text.strip())
+                return self._clean_and_parse_json(response.text)
             except Exception as e:
                 if self._handle_api_error(e, attempt, max_attempts, endpoint="reevaluate_expired_threat", context=f"region={region}"):
                     continue
