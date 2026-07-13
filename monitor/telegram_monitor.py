@@ -199,50 +199,57 @@ class TelegramThreatMonitor:
                     return
                 
                 is_first_run = self.last_seen_posts[channel] is None
-                
                 if is_first_run:
-                    max_id = 0
-                    for msg in messages:
-                        post_id = msg.get('data-post')
-                        if post_id:
-                            try:
-                                current_id = int(post_id.split('/')[-1])
-                                if current_id > max_id:
-                                    max_id = current_id
-                                    self.last_seen_posts[channel] = post_id
-                            except:
-                                continue
-                    print(f"📡 [{channel}] Первинний запуск веб-скрейпера. Базовий ID: {max_id}")
+                    self._init_scrape_base_id(channel, messages)
                     return
 
-                last_id = 0
-                if self.last_seen_posts[channel] is not None:
-                    last_id = int(self.last_seen_posts[channel].split('/')[-1])
-
-                for msg in messages:
-                    post_id = msg.get('data-post')
-                    if not post_id:
-                        continue
-                        
-                    try:
-                        current_id = int(post_id.split('/')[-1])
-                        if current_id <= last_id:
-                            continue
-                        self.last_seen_posts[channel] = post_id
-                    except:
-                        continue
-
-                    text_div = msg.select_one('.tgme_widget_message_text')
-                    if text_div:
-                        for br in text_div.find_all("br"):
-                            br.replace_with("\n")
-                        text = text_div.get_text()
-                        
-                        short_text = text.strip().replace('\n', ' ')[:80]
-                        print(f"📖 [Web: {channel}] Нове повідомлення (ID: {current_id}): \"{short_text}...\"")
-                        await self._process_message(text, channel)
+                await self._process_scraped_messages(channel, messages)
         except Exception as e:
             self.log_error("telegram", f"Помилка скрейпера для каналу {channel}: {e}", endpoint="_scrape_channel")
+
+    def _init_scrape_base_id(self, channel: str, messages):
+        """Finds and sets the initial maximum message ID on first run."""
+        max_id = 0
+        for msg in messages:
+            post_id = msg.get('data-post')
+            if post_id:
+                try:
+                    current_id = int(post_id.split('/')[-1])
+                    if current_id > max_id:
+                        max_id = current_id
+                        self.last_seen_posts[channel] = post_id
+                except:
+                    continue
+        print(f"📡 [{channel}] Первинний запуск веб-скрейпера. Базовий ID: {max_id}")
+
+    async def _process_scraped_messages(self, channel: str, messages):
+        """Processes new scraped messages that have IDs greater than last seen."""
+        last_id = 0
+        if self.last_seen_posts[channel] is not None:
+            last_id = int(self.last_seen_posts[channel].split('/')[-1])
+
+        for msg in messages:
+            post_id = msg.get('data-post')
+            if not post_id:
+                continue
+                
+            try:
+                current_id = int(post_id.split('/')[-1])
+                if current_id <= last_id:
+                    continue
+                self.last_seen_posts[channel] = post_id
+            except:
+                continue
+
+            text_div = msg.select_one('.tgme_widget_message_text')
+            if text_div:
+                for br in text_div.find_all("br"):
+                    br.replace_with("\n")
+                text = text_div.get_text()
+                
+                short_text = text.strip().replace('\n', ' ')[:80]
+                print(f"📖 [Web: {channel}] Нове повідомлення (ID: {current_id}): \"{short_text}...\"")
+                await self._process_message(text, channel)
 
     def _find_path(self, start_region: str, end_region: str) -> list[str]:
         """BFS algorithm to find the shortest path between two regions."""
