@@ -194,6 +194,31 @@ class ThreatState:
                     t.since = data["since"]
                 self.active_threats.append(t)
 
+    def _update_existing_threat(self, existing: SingleThreat, level: str, detail: Optional[str],
+                                confidence: Optional[int], eta: Optional[str],
+                                eta_seconds: Optional[int], is_predictive: bool) -> bool:
+        """Updates properties of an existing SingleThreat if they changed."""
+        changed = False
+        if existing.level != level:
+            existing.level = level
+            changed = True
+        if detail and existing.detail != detail:
+            existing.detail = detail
+            changed = True
+        if confidence is not None and existing.confidence != confidence:
+            existing.confidence = confidence
+            changed = True
+        if eta and existing.eta != eta:
+            existing.eta = eta
+            changed = True
+        if eta_seconds is not None and existing.eta_seconds != eta_seconds:
+            existing.eta_seconds = eta_seconds
+            changed = True
+        if existing.is_predictive != is_predictive:
+            existing.is_predictive = is_predictive
+            changed = True
+        return changed
+
     def set_threat(self, level: str, threat_type: Optional[str] = None,
                    detail: Optional[str] = None, confidence: Optional[int] = None,
                    eta: Optional[str] = None, is_predictive: bool = False,
@@ -209,26 +234,9 @@ class ThreatState:
         if group_id:
             for existing in self.active_threats:
                 if existing.group_id == group_id:
-                    changed = False
-                    if existing.level != level:
-                        existing.level = level
-                        changed = True
-                    if detail and existing.detail != detail:
-                        existing.detail = detail
-                        changed = True
-                    if confidence is not None and existing.confidence != confidence:
-                        existing.confidence = confidence
-                        changed = True
-                    if eta and existing.eta != eta:
-                        existing.eta = eta
-                        changed = True
-                    if eta_seconds is not None and existing.eta_seconds != eta_seconds:
-                        existing.eta_seconds = eta_seconds
-                        changed = True
-                    if existing.is_predictive != is_predictive:
-                        existing.is_predictive = is_predictive
-                        changed = True
-                    return changed
+                    return self._update_existing_threat(
+                        existing, level, detail, confidence, eta, eta_seconds, is_predictive
+                    )
 
         # Розумна дедуплікація за часовим вікном (якщо немає group_id)
         now = time.time()
@@ -240,26 +248,9 @@ class ThreatState:
                     elapsed = now - since_dt.timestamp()
                     if elapsed < self.DEDUP_WINDOW_SECONDS:
                         # Оновлюємо існуючу загрозу в рамках вікна
-                        changed = False
-                        if existing.level != level:
-                            existing.level = level
-                            changed = True
-                        if detail and existing.detail != detail:
-                            existing.detail = detail
-                            changed = True
-                        if confidence is not None and existing.confidence != confidence:
-                            existing.confidence = confidence
-                            changed = True
-                        if eta and existing.eta != eta:
-                            existing.eta = eta
-                            changed = True
-                        if eta_seconds is not None and existing.eta_seconds != eta_seconds:
-                            existing.eta_seconds = eta_seconds
-                            changed = True
-                        if existing.is_predictive != is_predictive:
-                            existing.is_predictive = is_predictive
-                            changed = True
-                        return changed
+                        return self._update_existing_threat(
+                            existing, level, detail, confidence, eta, eta_seconds, is_predictive
+                        )
                 except Exception:
                     pass
 
