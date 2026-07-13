@@ -28,15 +28,7 @@ logger = logging.getLogger("shelter_manager")
 GOV_DATASET_URLS = os.environ.get("GOV_DATASET_URLS", "").split(",")
 GOV_DATASET_URLS = [url.strip() for url in GOV_DATASET_URLS if url.strip()]
 
-import aiohttp
-
-try:
-    from firebase_admin import firestore
-    HAS_FIREBASE = True
-except ImportError:
-    HAS_FIREBASE = False
-
-logger = logging.getLogger("shelter_manager")
+from database.db_helpers import _log_error
 
 # ──────────────────────────────────────────────────────────────
 # Data model
@@ -286,13 +278,6 @@ async def _fetch_firestore_shelters() -> List[Shelter]:
         logger.error(f"⚠️ Помилка завантаження з Firestore: {e}")
         _log_error("shelter_manager", f"Помилка завантаження з Firestore: {e}", "load_from_firestore", error_type="firebase_error")
         return []
-
-def _log_error(source: str, message: str, endpoint: str = None, context: str = None, error_type: str = None):
-    try:
-        from database.analytics_db import log_error_to_db
-        log_error_to_db(source, message, endpoint, context, error_type)
-    except Exception as err:
-        logger.error(f"Internal error logger failure: {err}")
 
 
 # ──────────────────────────────────────────────────────────────
