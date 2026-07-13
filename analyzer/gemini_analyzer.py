@@ -672,200 +672,24 @@ MANDATORY fields:
     @staticmethod
     def normalize_telemetry(telemetry: dict = None) -> dict:
         """Normalize and validate telemetry block, filling defaults for missing fields."""
-        defaults = {
-            "group_id": None,
-            "attack_vector": "unknown",
-            "target_count": None,
-            "speed_kmh": None,
-            "altitude_category": "unknown",
-            "heading_degrees": None,
-            "distance_to_target_km": None,
-            "launch_origin": None,
-            "weapon_subtype": None,
-            "engagement_status": "unknown",
-            "air_defense_active": False,
-            "multiple_waves": False,
-            "wave_number": 1,
-            "time_of_day_category": "unknown",
-            "weather_factor": "unknown",
-            "source_reliability": "medium",
-            "message_context_tags": [],
-            "strategic_priority": None,
-            "civilian_risk_level": "moderate",
-            "event_phase": "unknown",
-            "correlation_group": None,
-            "final_target_cities": [],
-            "target_cities_coords": {},
-        }
-        
+        from models.telemetry_models import TelemetryDataModel
         if not telemetry or not isinstance(telemetry, dict):
-            return defaults.copy()
-        
-        normalized = defaults.copy()
-        
-        # Valid enum values for validation
-        valid_vectors = {"south_to_north", "east_to_west", "north_to_south", "west_to_east",
-                         "southeast_to_northwest", "northeast_to_southwest", "crimea_inland",
-                         "sea_to_coast", "border_shelling", "unknown"}
-        valid_altitudes = {"low", "medium", "high", "unknown"}
-        valid_engagement = {"launched", "approaching", "in_transit", "overhead", "intercepted",
-                           "impact", "missed", "lost", "unknown"}
-        valid_time_cat = {"night", "dawn", "day", "dusk", "unknown"}
-        valid_reliability = {"official", "high", "medium", "low"}
-        valid_priority = {"energy", "military", "industrial", "civilian", "port", "airfield", "unknown", None}
-        valid_risk = {"low", "moderate", "elevated", "high", "critical"}
-        valid_phase = {"launch", "cruise", "transit", "terminal", "impact", "aftermath", "intercept", "all_clear", "unknown"}
-        
-        for key, default in defaults.items():
-            val = telemetry.get(key, default)
-            
-            # Type coercion and validation
-            if key == "target_count" and val is not None:
-                try:
-                    val = int(val)
-                except (ValueError, TypeError):
-                    val = None
-            elif key == "speed_kmh" and val is not None:
-                try:
-                    val = int(val)
-                except (ValueError, TypeError):
-                    val = None
-            elif key == "heading_degrees" and val is not None:
-                try:
-                    val = int(val) % 360
-                except (ValueError, TypeError):
-                    val = None
-            elif key == "distance_to_target_km" and val is not None:
-                try:
-                    val = float(val)
-                except (ValueError, TypeError):
-                    val = None
-            elif key == "wave_number":
-                try:
-                    val = max(1, int(val))
-                except (ValueError, TypeError):
-                    val = 1
-            elif key in ("air_defense_active", "multiple_waves"):
-                val = bool(val)
-            elif key == "message_context_tags":
-                if not isinstance(val, list):
-                    val = []
-                val = [str(t) for t in val[:5]]  # Max 5 tags
-            elif key == "attack_vector":
-                val = val if val in valid_vectors else "unknown"
-            elif key == "altitude_category":
-                val = val if val in valid_altitudes else "unknown"
-            elif key == "engagement_status":
-                val = val if val in valid_engagement else "unknown"
-            elif key == "time_of_day_category":
-                val = val if val in valid_time_cat else "unknown"
-            elif key == "source_reliability":
-                val = val if val in valid_reliability else "medium"
-            elif key == "strategic_priority":
-                val = val if val in valid_priority else None
-            elif key == "civilian_risk_level":
-                val = val if val in valid_risk else "moderate"
-            elif key == "event_phase":
-                val = val if val in valid_phase else "unknown"
-            elif key == "final_target_cities":
-                if not isinstance(val, list):
-                    val = []
-                val = [str(c) for c in val]
-            elif key == "target_cities_coords":
-                if not isinstance(val, dict):
-                    val = {}
-                else:
-                    cleaned_coords = {}
-                    for city, coords in val.items():
-                        if isinstance(coords, list) and len(coords) == 2:
-                            try:
-                                cleaned_coords[str(city)] = [float(coords[0]), float(coords[1])]
-                            except (ValueError, TypeError):
-                                pass
-                    val = cleaned_coords
-            
-            normalized[key] = val
-        
-        return normalized
+            telemetry = {}
+        try:
+            return TelemetryDataModel(**telemetry).model_dump()
+        except Exception:
+            return TelemetryDataModel().model_dump()
 
     @staticmethod
     def normalize_clearing_telemetry(clearing_telemetry: dict = None) -> dict:
         """Normalize and validate clearing telemetry block, filling defaults for missing fields."""
-        defaults = {
-            "linked_group_id": None,
-            "linked_correlation_group": None,
-            "resolution_type": "unknown",
-            "intercepted_count": None,
-            "total_targets_in_wave": None,
-            "impact_confirmed": False,
-            "damage_assessment": "unknown",
-            "civilian_casualties_reported": False,
-            "infrastructure_hit": None,
-            "air_defense_effectiveness": "unknown",
-            "threat_duration_assessment": "unknown",
-            "prediction_accuracy_hint": "not_applicable",
-            "clearing_context_tags": [],
-            "source_reliability": "medium",
-            "time_of_day_category": "unknown",
-        }
-        
+        from models.telemetry_models import ClearingTelemetryModel
         if not clearing_telemetry or not isinstance(clearing_telemetry, dict):
-            return defaults.copy()
-        
-        normalized = defaults.copy()
-        
-        # Valid enum values
-        valid_resolution = {"intercepted", "passed_through", "impact", "lost_contact",
-                           "diverted", "false_alarm", "all_clear_official", "expired", "unknown"}
-        valid_damage = {"none", "minor", "moderate", "severe", "catastrophic", "unknown"}
-        valid_infra = {"energy", "military", "residential", "industrial", "transport", "medical", "none", None}
-        valid_ad_eff = {"excellent", "high", "medium", "low", "none", "unknown"}
-        valid_duration = {"very_short", "short", "medium", "long", "unknown"}
-        valid_pred_acc = {"confirmed", "partially_confirmed", "overestimated",
-                         "underestimated", "not_applicable", "unknown"}
-        valid_reliability = {"official", "high", "medium", "low"}
-        valid_time_cat = {"night", "dawn", "day", "dusk", "unknown"}
-        
-        for key, default in defaults.items():
-            val = clearing_telemetry.get(key, default)
-            
-            # Type coercion and validation
-            if key == "intercepted_count" and val is not None:
-                try:
-                    val = max(0, int(val))
-                except (ValueError, TypeError):
-                    val = None
-            elif key == "total_targets_in_wave" and val is not None:
-                try:
-                    val = max(0, int(val))
-                except (ValueError, TypeError):
-                    val = None
-            elif key in ("impact_confirmed", "civilian_casualties_reported"):
-                val = bool(val)
-            elif key == "clearing_context_tags":
-                if not isinstance(val, list):
-                    val = []
-                val = [str(t) for t in val[:5]]
-            elif key == "resolution_type":
-                val = val if val in valid_resolution else "unknown"
-            elif key == "damage_assessment":
-                val = val if val in valid_damage else "unknown"
-            elif key == "infrastructure_hit":
-                val = val if val in valid_infra else None
-            elif key == "air_defense_effectiveness":
-                val = val if val in valid_ad_eff else "unknown"
-            elif key == "threat_duration_assessment":
-                val = val if val in valid_duration else "unknown"
-            elif key == "prediction_accuracy_hint":
-                val = val if val in valid_pred_acc else "unknown"
-            elif key == "source_reliability":
-                val = val if val in valid_reliability else "medium"
-            elif key == "time_of_day_category":
-                val = val if val in valid_time_cat else "unknown"
-            
-            normalized[key] = val
-        
-        return normalized
+            clearing_telemetry = {}
+        try:
+            return ClearingTelemetryModel(**clearing_telemetry).model_dump()
+        except Exception:
+            return ClearingTelemetryModel().model_dump()
 
     async def reevaluate_expired_threat(self, region: str, threat_type: str, set_time: str, recent_messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not self.is_configured:

@@ -11,28 +11,26 @@ from database.db_helpers import execute_query_as_dicts
 router = APIRouter()
 
 
+from database.query_builder import build_and_execute_query
+
 @router.get("/api/admin/errors")
 async def get_admin_errors(source: str = None, error_type: str = None, days: int = 7, limit: int = 100):
     """Список помилок з фільтрами."""
-    try:
-        query = "SELECT * FROM error_log WHERE timestamp >= datetime('now', ?)"
-        params = [f'-{days} days']
-        if source:
-            query += " AND source = ?"
-            params.append(source)
-        if error_type:
-            query += " AND error_type = ?"
-            params.append(error_type)
-        query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(min(limit, 500))
-
-        errors = execute_query_as_dicts(query, tuple(params))
-        return {
-            "total": len(errors),
-            "errors": errors
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    filters = {
+        "source": source,
+        "error_type": error_type
+    }
+    errors = build_and_execute_query(
+        base_query="SELECT * FROM error_log",
+        days=days,
+        filters=filters,
+        order_by="timestamp DESC",
+        limit=limit
+    )
+    return {
+        "total": len(errors),
+        "errors": errors
+    }
 
 
 @router.get("/api/admin/errors/stats")

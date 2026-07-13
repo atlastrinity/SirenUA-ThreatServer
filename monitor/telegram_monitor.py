@@ -782,25 +782,9 @@ class TelegramThreatMonitor:
             else:
                 return f"~{h} год"
 
-    def _evaluate_prediction_candidate(
-        self,
-        source_region: str,
-        state,
-        adj_region: str,
-        telemetry: Optional[dict],
-        bearing: Optional[float],
-        speed: float,
-        path_boost_regions: set
-    ) -> Optional[dict]:
-        """Evaluates prediction score and confidence from source_region to adj_region."""
+    def _calc_direction_score(self, source_region: str, adj_region: str, bearing: Optional[float]) -> float:
         import math
-        # Skip if already has active (non-predictive) threat
-        adj_state = self.threat_manager.threats.get(adj_region)
-        if not adj_state or (adj_state.level != "none" and not adj_state.is_predictive):
-            return None
-
-        # Calculate direction alignment score (0.0 - 1.0)
-        direction_score = 0.5  # Neutral if no bearing
+        direction_score = 0.5
         if bearing is not None and source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
             src_coords = self.REGION_CENTROIDS[source_region]
             adj_coords = self.REGION_CENTROIDS[adj_region]
@@ -816,18 +800,14 @@ class TelegramThreatMonitor:
             direction_score = max(0.0, 1.0 - (diff / 180.0))
             if diff < 45:
                 direction_score = min(1.0, direction_score * 1.3)
-        
-        # Skip if direction is completely wrong (>120° off course)
-        if bearing is not None and direction_score < 0.2:
-            return None
-        
-        # Calculate distance and ETA
+        return direction_score
+
+    def _calc_distance_and_eta(self, source_region: str, adj_region: str, telemetry: Optional[dict], speed: float) -> tuple[Optional[float], Optional[int]]:
+        import math
         eta_seconds = None
         distance_km = None
         if source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
             src = self.REGION_CENTROIDS[source_region]
-            
-            # If target region has a specific final target city, use its exact coordinates!
             target_coords = None
             if telemetry and telemetry.get("final_target_cities"):
                 for city in telemetry["final_target_cities"]:
@@ -843,8 +823,9 @@ class TelegramThreatMonitor:
             distance_km = math.sqrt(dlat**2 + dlon**2)
             if speed and speed > 0:
                 eta_seconds = int((distance_km / speed) * 3600)
-        
-        # Check historical patterns (known SHAHED routes)
+        return distance_km, eta_seconds
+
+    def _calc_route_boost(self, source_region: str, adj_region: str, path_boost_regions: set) -> float:
         route_boost = 0.0
         if adj_region in path_boost_regions:
             route_boost = 0.8
@@ -856,68 +837,75 @@ class TelegramThreatMonitor:
                     if adj_idx > src_idx:
                         route_boost = 0.25
                         break
-        
-        # Check DB for historical patterns
-        db_boost = self._get_historical_route_score(source_region, adj_region)
-        
-        # Calculate final prediction score
-        base_score = direction_score * 0.5 + 0.2  # 20-70% base from direction
-        
-        # Threat type weight (slow = more predictable trajectory)
+        return route_boost
+
+    def _calc_total_score(self, direction_score: float, route_boost: float, db_boost: float, threat_type: str) -> float:
+        base_score = direction_score * 0.5 + 0.2
         type_weight = {"shahed": 0.15, "cruise_missile": 0.08, "mig31k": 0.05, "ballistic": 0.0, "kab": 0.02, "tu95": 0.10, "iskander": 0.0, "artillery": 0.01}
-        base_score += type_weight.get(state.threat_type, 0.05)
+        base_score += type_weight.get(threat_type, 0.05)
+        return min(1.0, base_score + route_boost + db_boost)
+
+    def _calc_confidence(self, total_score: float, distance_km: Optional[float], route_boost: float, db_boost: float, threat_type: str, adj_region: str) -> int:
+        if total_score >= 0.85: base_conf = 75
+        elif total_score >= 0.70: base_conf = 65
+        elif total_score >= 0.55: base_conf = 55
+        elif total_score >= 0.45: base_conf = 45
+        else: base_conf = 35
         
-        # Apply boosts
-        total_score = min(1.0, base_score + route_boost + db_boost)
-        if total_score < 0.4:
-            return None
-        
-        # Base confidence from total_score
-        if total_score >= 0.85:
-            base_conf = 75
-        elif total_score >= 0.70:
-            base_conf = 65
-        elif total_score >= 0.55:
-            base_conf = 55
-        elif total_score >= 0.45:
-            base_conf = 45
-        else:
-            base_conf = 35
-        
-        # Distance modifier
         dist_mod = 0
         if distance_km is not None:
-            if distance_km < 80:
-                dist_mod = 8
-            elif distance_km < 150:
-                dist_mod = 4
-            elif distance_km < 250:
-                dist_mod = 0
-            elif distance_km < 400:
-                dist_mod = -4
-            else:
-                dist_mod = -8
-        
+            if distance_km < 80: dist_mod = 8
+            elif distance_km < 150: dist_mod = 4
+            elif distance_km < 250: dist_mod = 0
+            elif distance_km < 400: dist_mod = -4
+            else: dist_mod = -8
+            
         route_mod = int(route_boost * 12)
         db_mod = int(db_boost * 8)
-        time_mod = self._get_time_of_day_modifier(state.threat_type)
+        time_mod = self._get_time_of_day_modifier(threat_type)
         
-        # Learned rules correction
         rules_correction = 0
         try:
             corrections = self.analyzer.load_confidence_corrections()
             if adj_region in corrections:
-                rules_correction = corrections[adj_region].get(state.threat_type, 0)
+                rules_correction = corrections[adj_region].get(threat_type, 0)
         except Exception:
             pass
-        
+            
         raw_confidence = base_conf + dist_mod + route_mod + db_mod + time_mod + rules_correction
         confidence = max(25, min(80, raw_confidence))
         
-        # Ensure uniqueness: add small pseudo-random offset based on region name hash
         region_hash_offset = (hash(adj_region) % 5) - 2
-        confidence = max(25, min(80, confidence + region_hash_offset))
+        return max(25, min(80, confidence + region_hash_offset))
+
+    def _evaluate_prediction_candidate(
+        self,
+        source_region: str,
+        state,
+        adj_region: str,
+        telemetry: Optional[dict],
+        bearing: Optional[float],
+        speed: float,
+        path_boost_regions: set
+    ) -> Optional[dict]:
+        """Evaluates prediction score and confidence from source_region to adj_region."""
+        adj_state = self.threat_manager.threats.get(adj_region)
+        if not adj_state or (adj_state.level != "none" and not adj_state.is_predictive):
+            return None
+
+        direction_score = self._calc_direction_score(source_region, adj_region, bearing)
+        if bearing is not None and direction_score < 0.2:
+            return None
         
+        distance_km, eta_seconds = self._calc_distance_and_eta(source_region, adj_region, telemetry, speed)
+        route_boost = self._calc_route_boost(source_region, adj_region, path_boost_regions)
+        db_boost = self._get_historical_route_score(source_region, adj_region)
+        
+        total_score = self._calc_total_score(direction_score, route_boost, db_boost, state.threat_type)
+        if total_score < 0.4:
+            return None
+            
+        confidence = self._calc_confidence(total_score, distance_km, route_boost, db_boost, state.threat_type, adj_region)
         eta_str = self._format_prediction_eta_str(eta_seconds)
         
         return {

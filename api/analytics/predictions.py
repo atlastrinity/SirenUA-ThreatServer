@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
 
 from database.db_helpers import get_db, execute_query_as_dicts
+from database.query_builder import build_and_execute_query
 
 router = APIRouter()
 
@@ -15,50 +16,46 @@ router = APIRouter()
 @router.get("/api/analytics/predictions")
 async def get_predictions(region: str = None, days: int = 3, limit: int = 50):
     """Активні та завершені AI-прогнози загроз."""
-    try:
-        query = '''
-            SELECT th.*, td.attack_vector, td.speed_kmh, td.altitude_category,
-                   td.launch_origin, td.weapon_subtype, td.source_reliability,
-                   td.message_context_tags, td.civilian_risk_level,
-                   td.air_defense_active, td.engagement_status,
-                   pe.prediction_accuracy, pe.lifecycle_status, pe.was_predictive
-            FROM threat_history th
-            LEFT JOIN telemetry_data td ON th.id = td.threat_event_id
-            LEFT JOIN paired_events pe ON th.id = pe.threat_event_id
-            WHERE th.timestamp >= datetime('now', ?)
-        '''
-        params = [f'-{days} days']
+    base_query = '''
+        SELECT th.*, td.attack_vector, td.speed_kmh, td.altitude_category,
+               td.launch_origin, td.weapon_subtype, td.source_reliability,
+               td.message_context_tags, td.civilian_risk_level,
+               td.air_defense_active, td.engagement_status,
+               pe.prediction_accuracy, pe.lifecycle_status, pe.was_predictive
+        FROM threat_history th
+        LEFT JOIN telemetry_data td ON th.id = td.threat_event_id
+        LEFT JOIN paired_events pe ON th.id = pe.threat_event_id
+    '''
+    filters = {}
+    if region:
+        from urllib.parse import unquote
+        filters["th.region"] = unquote(region)
 
-        if region:
-            from urllib.parse import unquote
-            query += " AND th.region = ?"
-            params.append(unquote(region))
-
-        query += " ORDER BY th.timestamp DESC LIMIT ?"
-        params.append(min(limit, 200))
-
-        events = execute_query_as_dicts(query, tuple(params), json_fields=["message_context_tags"])
-        return {"total": len(events), "days": days, "events": events}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    events = build_and_execute_query(
+        base_query=base_query,
+        date_column="th.timestamp",
+        days=days,
+        filters=filters,
+        order_by="th.timestamp DESC",
+        limit=limit,
+        json_fields=["message_context_tags"]
+    )
+    return {"total": len(events), "days": days, "events": events}
 
 
 @router.get("/api/analytics/rules")
 async def get_rules(active_only: bool = False):
     """Список ML-правил (правила класифікації Gemini)."""
-    try:
-        if active_only:
-            query = "SELECT * FROM gemini_rules WHERE is_active = 1 ORDER BY evidence_count DESC, accuracy_score DESC"
-        else:
-            query = "SELECT * FROM gemini_rules ORDER BY is_active DESC, evidence_count DESC, accuracy_score DESC"
+    filters = {"is_active": 1} if active_only else None
+    order_by = "evidence_count DESC, accuracy_score DESC" if active_only else "is_active DESC, evidence_count DESC, accuracy_score DESC"
 
-        rules = execute_query_as_dicts(
-            query,
-            json_fields=["trigger_conditions", "override_conditions", "applicable_regions", "applicable_types"]
-        )
-        return {"total": len(rules), "rules": rules}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    rules = build_and_execute_query(
+        base_query="SELECT * FROM gemini_rules",
+        filters=filters,
+        order_by=order_by,
+        json_fields=["trigger_conditions", "override_conditions", "applicable_regions", "applicable_types"]
+    )
+    return {"total": len(rules), "rules": rules}
 
 
 @router.post("/api/analytics/rules/rebuild")

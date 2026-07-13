@@ -10,6 +10,8 @@ from database.db_helpers import get_db, execute_query_as_dicts
 router = APIRouter()
 
 
+from database.query_builder import build_and_execute_query
+
 @router.get("/api/admin/rules/history")
 async def get_admin_rules_history(
     days: int = 30,
@@ -19,30 +21,22 @@ async def get_admin_rules_history(
     threat_type: str = None
 ):
     """Аудит-лог змін правил Gemini."""
-    try:
-        query = "SELECT * FROM gemini_rules_audit WHERE timestamp >= datetime('now', ?)"
-        params = [f'-{days} days']
-
-        if rule_type:
-            query += " AND rule_type = ?"
-            params.append(rule_type)
-        if action:
-            query += " AND action = ?"
-            params.append(action)
-        if threat_type:
-            query += " AND threat_type = ?"
-            params.append(threat_type)
-
-        query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(min(limit, 500))
-
-        entries = execute_query_as_dicts(query, tuple(params))
-        return {
-            "total": len(entries),
-            "entries": entries
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    filters = {
+        "rule_type": rule_type,
+        "action": action,
+        "threat_type": threat_type
+    }
+    entries = build_and_execute_query(
+        base_query="SELECT * FROM gemini_rules_audit",
+        days=days,
+        filters=filters,
+        order_by="timestamp DESC",
+        limit=limit
+    )
+    return {
+        "total": len(entries),
+        "entries": entries
+    }
 
 
 @router.post("/api/admin/seed_history")
