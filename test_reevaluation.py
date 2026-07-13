@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from core.threat_state import MockThreatManager
 from core.regions import ALL_REGIONS
 from monitor.telegram_monitor import TelegramThreatMonitor
-from database.analytics_db import init_analytics_db, DB_PATH, on_threat_changed
+from core.config import DB_PATH
+from database.analytics_db import init_analytics_db, on_threat_changed
 import google.generativeai as genai
 
 class TestThreatManager(MockThreatManager):
