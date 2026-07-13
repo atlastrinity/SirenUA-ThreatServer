@@ -8,6 +8,7 @@ import json
 from fastapi import APIRouter, HTTPException
 
 from core.config import DB_PATH
+from database.analytics_db import get_sqlite_connection
 
 router = APIRouter()
 
@@ -19,7 +20,7 @@ async def get_region_telemetry(region: str, limit: int = 50, days: int = 30):
     region = unquote(region)
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -62,7 +63,7 @@ async def get_region_telemetry(region: str, limit: int = 50, days: int = 30):
 async def get_attack_groups(days: int = 7, limit: int = 50):
     """Список атакових хвиль/груп за останні N днів."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -116,7 +117,7 @@ async def get_lifecycle_data(region: str, days: int = 30, limit: int = 50):
     region = unquote(region)
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -177,7 +178,7 @@ async def get_lifecycle_data(region: str, days: int = 30, limit: int = 50):
 async def get_paired_events(region: str = None, status: str = None, days: int = 7, limit: int = 50):
     """Спарені події (lifecycle): загроза → телеметрія → clearing."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 

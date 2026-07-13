@@ -59,6 +59,21 @@ def _log_error(source: str, message: str, endpoint: str = None, context: str = N
     except Exception as err:
         logger.error(f"Internal error logger failure: {err}")
 
+def get_sqlite_connection(db_path: str = None) -> sqlite3.Connection:
+    """
+    Створює безпечне підключення до бази даних SQLite.
+    Налаштовує busy timeout (20 секунд) та WAL (Write-Ahead Logging) режим.
+    """
+    if db_path is None:
+        db_path = DB_PATH
+    conn = sqlite3.connect(db_path, timeout=20.0)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
+    return conn
+
 def get_db():
     if not HAS_FIREBASE or not firebase_admin._apps:
         return None
@@ -81,7 +96,7 @@ def backup_sqlite_to_firestore():
         if not os.path.exists(DB_PATH):
             return False
             
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -131,7 +146,7 @@ def restore_sqlite_from_firestore(force: bool = False):
     try:
         # Перевіряємо чи є дані локально. Якщо правила чи зв'язані події вже є — пропуск відновлення (якщо не примусово)
         if os.path.exists(DB_PATH):
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_sqlite_connection(DB_PATH)
             cursor = conn.cursor()
             
             # Перевіряємо наявність таблиць
@@ -167,7 +182,7 @@ def restore_sqlite_from_firestore(force: bool = False):
         json_str = gzip.decompress(compressed).decode('utf-8')
         backup_data = json.loads(json_str)
         
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
         
         tables = [
@@ -257,7 +272,7 @@ def delete_test_history_from_firestore():
 
 def delete_test_history_from_sqlite():
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
         
         cursor.execute('''

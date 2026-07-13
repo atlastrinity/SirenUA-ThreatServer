@@ -1,9 +1,11 @@
+import sqlite3
 import os
 import json
-import sqlite3
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+
+from database.db_helpers import get_sqlite_connection
 
 class GeminiThreatAnalyzer:
     def __init__(self, error_callback=None, rule_audit_callback=None):
@@ -221,7 +223,7 @@ MANDATORY fields:
         """Load learned rules from DB and format them as context for Gemini prompt.
         Only feeds active rules with solid evidence (>= 3 events) and high accuracy (>= 60%)."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_sqlite_connection(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
@@ -260,7 +262,7 @@ MANDATORY fields:
         Returns dict: {region: {threat_type: correction_value}}"""
         corrections = {}
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_sqlite_connection(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
@@ -292,7 +294,7 @@ MANDATORY fields:
         """Central Rules Learner engine. Analyzes historical paired events,
         derives route/time/confidence rules, and performs rule decay (aging out old patterns)."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_sqlite_connection(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             

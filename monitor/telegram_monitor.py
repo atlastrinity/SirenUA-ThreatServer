@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import sqlite3
 import sys
 import time
 from typing import Optional
@@ -22,7 +23,9 @@ from core.config import (
     MEDIUM_KEYWORDS,
     LOW_KEYWORDS,
     CLEAR_KEYWORDS,
+    DB_PATH
 )
+from database.db_helpers import get_sqlite_connection
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -987,8 +990,7 @@ class TelegramThreatMonitor:
     def _get_latest_telemetry(self, region: str) -> dict:
         """Get the latest telemetry data for a region from the DB."""
         try:
-            import sqlite3
-            conn = sqlite3.connect("threat_analytics.db")
+            conn = get_sqlite_connection(DB_PATH)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
@@ -1015,8 +1017,7 @@ class TelegramThreatMonitor:
     def _get_historical_route_score(self, source: str, target: str) -> float:
         """Check DB for historical threat progression from source → target region."""
         try:
-            import sqlite3
-            conn = sqlite3.connect("threat_analytics.db")
+            conn = get_sqlite_connection(DB_PATH)
             cursor = conn.cursor()
             # Look for clearings where target had a threat shortly after source
             cursor.execute('''

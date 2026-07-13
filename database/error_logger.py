@@ -3,10 +3,10 @@ Error & Audit Logging.
 Functions: log_error_to_db, log_rule_audit_to_db, safe_run_task.
 """
 
-import sqlite3
 import asyncio
 
 from core.config import DB_PATH
+from database.db_helpers import get_sqlite_connection
 
 # Global reference to the main event loop (set from lifespan)
 main_loop = None
@@ -54,7 +54,7 @@ def log_error_to_db(
             error_type = "general"
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO error_log (source, error_type, message, endpoint, context) VALUES (?, ?, ?, ?, ?)",
@@ -77,7 +77,7 @@ def log_rule_audit_to_db(
 ):
     """Log a Gemini rule addition/removal/deactivation to the audit table."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason) VALUES (?, ?, ?, ?, ?, ?, ?)",

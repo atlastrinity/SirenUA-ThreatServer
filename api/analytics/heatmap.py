@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import APIRouter, HTTPException
 
 from core.config import DB_PATH
+from database.analytics_db import get_sqlite_connection
 
 router = APIRouter()
 
@@ -15,7 +16,7 @@ router = APIRouter()
 async def get_heatmap_data(days: int = 7):
     """Повертає історичні дані загроз для побудови теплової карти."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -39,7 +40,7 @@ async def get_heatmap_data(days: int = 7):
 async def get_analytics_stats(days: int = 7):
     """Агреговані показники за останні N днів."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         day_filter = f'-{days} days'
@@ -139,7 +140,7 @@ async def get_analytics_stats(days: int = 7):
 async def get_patterns(days: int = 14):
     """Виявлені патерни атак (час доби, напрямки, типи)."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         day_filter = f'-{days} days'

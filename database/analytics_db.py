@@ -18,6 +18,7 @@ from typing import Dict
 
 # Re-export public API from sub-modules
 from database.schema import init_analytics_db
+from database.db_helpers import get_sqlite_connection
 from database.error_logger import log_error_to_db, log_rule_audit_to_db, safe_run_task
 from database.error_logger import main_loop  # mutable – callers set this directly
 from database.threat_logger import (
@@ -162,6 +163,7 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
 
 __all__ = [
     "init_analytics_db",
+    "get_sqlite_connection",
     "log_error_to_db",
     "log_rule_audit_to_db",
     "safe_run_task",

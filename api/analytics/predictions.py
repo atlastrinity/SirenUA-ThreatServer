@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
 
 from core.config import DB_PATH
-from database.db_helpers import get_db
+from database.db_helpers import get_db, get_sqlite_connection
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ router = APIRouter()
 async def get_predictions(region: str = None, days: int = 3, limit: int = 50):
     """Активні та завершені AI-прогнози загроз."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -66,7 +66,7 @@ async def get_predictions(region: str = None, days: int = 3, limit: int = 50):
 async def get_rules(active_only: bool = False):
     """Список ML-правил (правила класифікації Gemini)."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 

@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timezone
 
 from core.config import DB_PATH
+from database.db_helpers import get_sqlite_connection
 from database.error_logger import log_error_to_db
 
 
@@ -40,7 +41,7 @@ def log_clearing_to_db(
         clearing_telemetry = {}
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 

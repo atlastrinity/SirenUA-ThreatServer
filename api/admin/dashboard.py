@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import APIRouter, HTTPException
 
 from core.config import DB_PATH
+from database.analytics_db import get_sqlite_connection
 
 router = APIRouter()
 
@@ -34,7 +35,7 @@ async def get_admin_dashboard_stats():
     tz_modifier = f"'{offset_hours:+d} hours'"
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 

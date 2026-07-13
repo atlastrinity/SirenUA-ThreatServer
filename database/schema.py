@@ -6,11 +6,12 @@ Creates all SQLite tables, indexes, and seeds mock data in dev mode.
 import sqlite3
 
 from core.config import DB_PATH, IS_LIVE_MODE
+from database.db_helpers import get_sqlite_connection
 
 
 def init_analytics_db():
     """Create all analytics tables and indexes. Seeds mock data in non-live mode."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_sqlite_connection(DB_PATH)
     cursor = conn.cursor()
 
     # --- threat_history ---

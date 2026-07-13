@@ -3,13 +3,12 @@ Threat Event Logging (SQLite + Firestore).
 Functions: log_threat_to_db, log_threat_to_firestore, flush_history_batch, validate_prediction_on_alarm.
 """
 
-import sqlite3
 import json
 import time
 from datetime import datetime, timezone
 
 from core.config import DB_PATH
-from database.db_helpers import get_db, is_duplicate_event
+from database.db_helpers import get_db, is_duplicate_event, get_sqlite_connection
 from database.error_logger import log_error_to_db
 
 # Firestore history batch buffer — collects writes during batch mode for one flush
@@ -29,7 +28,7 @@ def log_threat_to_db(
 ):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
@@ -196,7 +195,7 @@ def flush_history_batch():
 def validate_prediction_on_alarm(region: str):
     """Marks predictive paired_events as 'confirmed' when official alarm activates."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE paired_events 
