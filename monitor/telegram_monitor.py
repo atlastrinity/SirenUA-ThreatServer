@@ -909,12 +909,12 @@ class TelegramThreatMonitor:
                     elif eta_seconds < 900:
                         eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
                     elif eta_seconds < 3600:
-                        eta_str = f"~{eta_seconds // 60} хв"
+                        eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 5} хв"
                     else:
                         h = eta_seconds // 3600
                         m = (eta_seconds % 3600) // 60
                         if m > 0:
-                            eta_str = f"~{h} год {m} хв"
+                            eta_str = f"~{h} год {m}-{m + 10} хв"
                         else:
                             eta_str = f"~{h} год"
                 
