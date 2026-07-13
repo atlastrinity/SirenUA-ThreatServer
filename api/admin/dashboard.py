@@ -54,7 +54,7 @@ async def get_admin_dashboard_stats():
                 SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                 SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
                 SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
-                SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN pe.lifecycle_status = 'active' AND pe.prediction_accuracy IS NULL THEN 1 ELSE 0 END) as active,
                 COUNT(*) as total
             FROM paired_events pe
             JOIN threat_history th ON pe.threat_event_id = th.id
