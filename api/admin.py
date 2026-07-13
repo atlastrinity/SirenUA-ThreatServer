@@ -340,11 +340,11 @@ async def get_admin_chronology(region: str = None, days: int = 7, threat_type: s
                 else:
                     event["match_type"] = "official"
             elif event.get("prediction_accuracy") == "confirmed":
-                event["match_type"] = "match"
+                event["match_type"] = "confirmed"
             elif event.get("prediction_accuracy") == "mitigated":
                 event["match_type"] = "mitigated"
             elif event.get("prediction_accuracy") == "overestimated":
-                event["match_type"] = "mismatch"
+                event["match_type"] = "overestimated"
             elif event.get("lifecycle_status") == "active":
                 event["match_type"] = "active"
             else:
@@ -420,19 +420,25 @@ async def get_admin_dashboard_stats():
         cursor = conn.cursor()
 
         # Total events (7d) excluding official alarms to match accuracy breakdown
-        cursor.execute("SELECT COUNT(*) as c FROM paired_events WHERE created_at >= datetime('now', '-7 days') AND threat_type != 'official_alarm'")
+        cursor.execute("""
+            SELECT COUNT(*) as c 
+            FROM paired_events pe
+            JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
+        """)
         total_7d = cursor.fetchone()["c"]
 
         # Accuracy breakdown (7d)
         cursor.execute("""
             SELECT
-                SUM(CASE WHEN prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
-                SUM(CASE WHEN prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
-                SUM(CASE WHEN prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
-                SUM(CASE WHEN lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+                SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
+                SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
+                SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
                 COUNT(*) as total
-            FROM paired_events
-            WHERE created_at >= datetime('now', '-7 days') AND threat_type != 'official_alarm'
+            FROM paired_events pe
+            JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
         """)
         acc = dict(cursor.fetchone())
 
@@ -459,7 +465,7 @@ async def get_admin_dashboard_stats():
                 AND th_alarm.threat_level = 'high'
                 AND ABS(strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)) < 1800
                 AND strftime('%s', th_alarm.timestamp) >= strftime('%s', th_ai.timestamp)
-            WHERE pe.created_at >= datetime('now', '-7 days')
+            WHERE th_ai.timestamp >= datetime('now', '-7 days')
                 AND pe.was_predictive = 1
                 AND pe.threat_type != 'official_alarm'
         """)
@@ -468,19 +474,21 @@ async def get_admin_dashboard_stats():
 
         # Threats by type (7d)
         cursor.execute("""
-            SELECT threat_type, COUNT(*) as count
-            FROM paired_events
-            WHERE created_at >= datetime('now', '-7 days') AND threat_type != 'official_alarm'
-            GROUP BY threat_type ORDER BY count DESC
+            SELECT pe.threat_type, COUNT(*) as count
+            FROM paired_events pe
+            JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
+            GROUP BY pe.threat_type ORDER BY count DESC
         """)
         by_type = [dict(r) for r in cursor.fetchall()]
 
         # Top regions (7d)
         cursor.execute("""
-            SELECT region, COUNT(*) as count
-            FROM paired_events
-            WHERE created_at >= datetime('now', '-7 days') AND threat_type != 'official_alarm'
-            GROUP BY region ORDER BY count DESC LIMIT 10
+            SELECT pe.region, COUNT(*) as count
+            FROM paired_events pe
+            JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
+            GROUP BY pe.region ORDER BY count DESC LIMIT 10
         """)
         top_regions = [dict(r) for r in cursor.fetchall()]
 
@@ -490,7 +498,7 @@ async def get_admin_dashboard_stats():
                    COUNT(*) as count
             FROM paired_events pe
             JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE pe.created_at >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
+            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
             GROUP BY hour ORDER BY hour
         """)
         hourly = [dict(r) for r in cursor.fetchall()]
@@ -711,6 +719,15 @@ async def get_admin_chronology_v2(
 
             correlated_events.append(ev)
 
+        # Aggregate stats (unfiltered for period)
+        stats = {
+            "confirmed": sum(1 for e in correlated_events if e["match_type"] == "confirmed"),
+            "mitigated": sum(1 for e in correlated_events if e["match_type"] == "mitigated"),
+            "overestimated": sum(1 for e in correlated_events if e["match_type"] == "overestimated"),
+            "active": sum(1 for e in correlated_events if e["match_type"] == "active"),
+            "cleared": sum(1 for e in correlated_events if e["match_type"] == "cleared"),
+        }
+
         # Apply match_filter
         if match_filter:
             if match_filter == "match":
@@ -721,15 +738,6 @@ async def get_admin_chronology_v2(
                 correlated_events = [e for e in correlated_events if e["match_type"] == "overestimated"]
             elif match_filter == "active":
                 correlated_events = [e for e in correlated_events if e["match_type"] == "active"]
-
-        # Aggregate stats
-        stats = {
-            "confirmed": sum(1 for e in correlated_events if e["match_type"] == "confirmed"),
-            "mitigated": sum(1 for e in correlated_events if e["match_type"] == "mitigated"),
-            "overestimated": sum(1 for e in correlated_events if e["match_type"] == "overestimated"),
-            "active": sum(1 for e in correlated_events if e["match_type"] == "active"),
-            "cleared": sum(1 for e in correlated_events if e["match_type"] == "cleared"),
-        }
 
         # Time delta distribution (for histogram)
         deltas = [e["time_delta_seconds"] for e in correlated_events if e["time_delta_seconds"] is not None]
