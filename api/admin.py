@@ -286,7 +286,7 @@ async def get_admin_chronology(region: str = None, days: int = 7, threat_type: s
         # Daily aggregation
         daily_agg_query = f'''
             SELECT date(datetime(th.timestamp, {tz_modifier})) as day,
-                   COUNT(*) as total_events,
+                   SUM(CASE WHEN th.threat_type != 'official_alarm' THEN 1 ELSE 0 END) as total_events,
                    SUM(CASE WHEN pe.lifecycle_status = 'cleared' OR (th.threat_type = 'official_alarm' AND tc.id IS NOT NULL) THEN 1 ELSE 0 END) as cleared,
                    SUM(CASE WHEN pe.lifecycle_status = 'active' OR (th.threat_type = 'official_alarm' AND tc.id IS NULL) THEN 1 ELSE 0 END) as active,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
@@ -419,8 +419,8 @@ async def get_admin_dashboard_stats():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        # Total events (7d)
-        cursor.execute("SELECT COUNT(*) as c FROM paired_events WHERE created_at >= datetime('now', '-7 days')")
+        # Total events (7d) excluding official alarms to match accuracy breakdown
+        cursor.execute("SELECT COUNT(*) as c FROM paired_events WHERE created_at >= datetime('now', '-7 days') AND threat_type != 'official_alarm'")
         total_7d = cursor.fetchone()["c"]
 
         # Accuracy breakdown (7d)
