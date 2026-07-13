@@ -34,7 +34,7 @@ def log_error_to_db(
             error_type = "firebase_error"
         elif "telegram" in error_msg_l or "telethon" in error_msg_l:
             error_type = "telegram_error"
-        elif "gemini" in error_msg_l or "generativeai" in error_msg_l or "aiplatform" in error_msg_l:
+        elif "gemini" in error_msg_l or "generativeai" in error_msg_l or "aiplatform" in error_msg_l or source == "gemini" or source == "analyzer":
             error_type = "gemini_api_error"
         elif "json" in error_msg_l or "decode" in error_msg_l or "parse" in error_msg_l:
             error_type = "json_parse_error"
