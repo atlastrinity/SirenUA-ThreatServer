@@ -98,15 +98,16 @@ async def get_rules(active_only: bool = False):
 async def rebuild_rules():
     """Перебудовує правила класифікації з поточної бази даних (Gemini)."""
     try:
-        from core.globals import threat_manager
-        if threat_manager is None:
-            raise HTTPException(status_code=503, detail="ThreatManager не ініціалізовано")
-        if not hasattr(threat_manager, 'rebuild_rules'):
-            raise HTTPException(status_code=501, detail="ThreatManager не підтримує rebuild_rules")
-        result = await threat_manager.rebuild_rules()
-        return {"status": "ok", "result": result}
-    except HTTPException:
-        raise
+        from analyzer.gemini_analyzer import GeminiThreatAnalyzer
+        from database.error_logger import log_error_to_db, log_rule_audit_to_db
+        import asyncio
+
+        analyzer = GeminiThreatAnalyzer(error_callback=log_error_to_db, rule_audit_callback=log_rule_audit_to_db)
+        
+        loop = asyncio.get_event_loop()
+        rules_updated = await loop.run_in_executor(None, analyzer.run_rules_learner)
+        
+        return {"status": "ok", "rules_updated": rules_updated}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
