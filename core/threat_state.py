@@ -438,6 +438,102 @@ class MockThreatManager:
             except Exception as e:
                 print(f"⚠️ Помилка завантаження стану загроз: {e}")
 
+    def set_scenario(self, scenario: str):
+        """Встановлює попередньо визначений сценарій для тестування з інтелектуальним оновленням та чергою."""
+        new_threats = {}
+        
+        # Format of value: (level, threat_type, detail, confidence, eta, is_predictive)
+        if scenario == "mig_takeoff":
+            for r in ALL_REGIONS:
+                new_threats[r] = (
+                    "high", 
+                    "mig31k", 
+                    "Зафіксовано зліт винищувача МіГ-31К ПКС РФ.\nТип: Кінджал\nНапрямок запуску: Північ\nШвидкість руху: ~3000 км/год\nВисота польоту: надвисока\nОчікуваний час: ~10 хв",
+                    95,
+                    "~10 хв",
+                    False
+                )
+        elif scenario == "shaheds_south":
+            south_regions = [
+                "Одеська область", "Миколаївська область",
+                "Херсонська область", "Запорізька область",
+                "Дніпропетровська область", "Кіровоградська область",
+            ]
+            for r in south_regions:
+                new_threats[r] = (
+                    "medium", 
+                    "shahed", 
+                    "Виявлено групу БпЛА 'Shahed' з південного напрямку.\nВідстань: ~120 км\nШвидкість руху: ~180 км/год\nКількість цілей: ~5-7\nОчікуваний час: ~45 хв\nПатерн підтверджений аналітикою",
+                    82,
+                    "~45 хв",
+                    True
+                )
+        elif scenario == "cruise_missiles_west":
+            west_regions = [
+                "Київська область", "м. Київ", "Житомирська область",
+                "Хмельницька область", "Вінницька область",
+                "Львівська область", "Рівненська область",
+            ]
+            for r in west_regions:
+                new_threats[r] = (
+                    "high", 
+                    "cruise_missile", 
+                    "Крилаті ракети Х-101 прямують у західні області.\nВідстань до цілі: ~250 км\nКількість цілей: 4\nТип: Х-101\nШвидкість руху: ~850 км/год\nВисота польоту: середня\nОчікуваний час: ~20 хв\nПатерн підтверджений аналітикою",
+                    88,
+                    "~20 хв",
+                    True
+                )
+        elif scenario == "massive_attack":
+            for r in ALL_REGIONS:
+                new_threats[r] = (
+                    "critical", 
+                    "tu95", 
+                    "Масований ракетний удар! Зафіксовано пуски з 6х Ту-95МС.\nВідстань до цілі: ~400 км\nКількість цілей: 12+\nТип: Х-101/Х-555\nШвидкість руху: ~850 км/год\nОчікуваний час: ~30-40 хв",
+                    98,
+                    "~30-40 хв",
+                    False
+                )
+        elif scenario == "ballistic_kharkiv":
+            new_threats["Харківська область"] = (
+                "critical", 
+                "ballistic", 
+                "Загроза застосування балістичного озброєння з Бєлгорода!\nВідстань до цілі: ~40 км\nТип: Іскандер-М\nШвидкість руху: ~3600 км/год\nОчікуваний час: ~2 хв",
+                92,
+                "~2 хв",
+                False
+            )
+            new_threats["Сумська область"] = (
+                "medium", 
+                "ballistic", 
+                "Можлива балістична загроза з прикордонних районів РФ.\nОчікуваний час: ~3 хв",
+                70,
+                "~3 хв",
+                True
+            )
+        
+        self._batch_mode = True
+        try:
+            for region in ALL_REGIONS:
+                old_state = self.threats[region]
+                if region in new_threats:
+                    level, t_type, detail, confidence, eta, is_predictive = new_threats[region]
+                    self.set_threat(
+                        region=region,
+                        level=level,
+                        threat_type=t_type,
+                        detail=detail,
+                        confidence=confidence,
+                        eta=eta,
+                        is_predictive=is_predictive,
+                        is_test=True
+                    )
+                else:
+                    if old_state.level != "none":
+                        self.clear_threat(region)
+        finally:
+            self._batch_mode = False
+            self.flush_fcm_batch()
+
     def set_threat(self, region: str, level: str,
                    threat_type: Optional[str] = None,
                    detail: Optional[str] = None,
