@@ -54,7 +54,7 @@ fcm_worker_task = None
 
 def _log_error(source: str, message: str, endpoint: str = None, context: str = None, error_type: str = None):
     try:
-        from database.analytics_db import log_error_to_db
+        from database.error_logger import log_error_to_db
         log_error_to_db(source, message, endpoint, context, error_type)
     except Exception as err:
         logger.error(f"Internal error logger failure: {err}")
