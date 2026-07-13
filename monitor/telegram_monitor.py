@@ -412,11 +412,40 @@ class TelegramThreatMonitor:
                     ad_eff = f" | ППО: {clearing_telemetry['air_defense_effectiveness']}"
                 print(f"🟢 [Gemini] Зняття загрози: {region} (тип: {res_type}{pred_str}{ad_eff})")
 
+    def _get_threat_type_delay_and_eta(self, threat_type: Optional[str], is_regex: bool = False) -> tuple[int, str]:
+        """Returns the default auto-clear delay and default ETA string for a given threat type."""
+        regex_map = {
+            "mig31k": (2700, "~20-40 хв"),
+            "ballistic": (1800, "~2-5 хв"),
+            "shahed": (10800, "+1-2 год"),
+            "cruise_missile": (3600, "+15-30 хв"),
+            "tu95": (5400, "~30-90 хв"),
+            "iskander": (1800, "~2-5 хв"),
+            "artillery": (1800, "~0-5 хв")
+        }
+        
+        default_map = {
+            "mig31k": (1800, "~40 хв"),
+            "ballistic": (600, "~15 хв"),
+            "kab": (1200, "~25 хв"),
+            "shahed": (10800, "~200 хв"),
+            "cruise_missile": (2700, "~55 хв"),
+            "tu95": (5400, "~110 хв"),
+            "iskander": (1200, "~25 хв"),
+            "artillery": (1800, "~10 хв")
+        }
+        
+        mapping = regex_map if is_regex else default_map
+        if threat_type in mapping:
+            return mapping[threat_type]
+            
+        return 3600, ""
+
     def _calculate_auto_clear_delay(self, item: dict, telemetry: Optional[dict], threat_type: Optional[str]) -> tuple[int, Optional[str], Optional[int]]:
         """Calculates dynamic/default auto-clear delay in seconds, ETA string, and ETA seconds."""
         gemini_eta = item.get("eta", "")
-        delay = 3600  # default 1 hour
-        eta_str = gemini_eta if gemini_eta else ""
+        delay, default_eta = self._get_threat_type_delay_and_eta(threat_type)
+        eta_str = gemini_eta if gemini_eta else default_eta
         eta_seconds = None
         
         telemetry_delay = None
@@ -426,7 +455,7 @@ class TelegramThreatMonitor:
             if t_speed and t_distance and t_speed > 0:
                 eta_seconds = int((t_distance / t_speed) * 3600)
                 
-                if not eta_str:
+                if not gemini_eta:
                     buffer_minutes = 5
                     if eta_seconds > 1800:
                         buffer_minutes = 10
@@ -440,38 +469,6 @@ class TelegramThreatMonitor:
         
         if telemetry_delay:
             delay = telemetry_delay
-        elif threat_type == "mig31k":
-            delay = 1800
-            if not eta_str:
-                eta_str = "~40 хв"
-        elif threat_type == "ballistic":
-            delay = 600
-            if not eta_str:
-                eta_str = "~15 хв"
-        elif threat_type == "kab":
-            delay = 1200
-            if not eta_str:
-                eta_str = "~25 хв"
-        elif threat_type == "shahed":
-            delay = 10800
-            if not eta_str:
-                eta_str = "~200 хв"
-        elif threat_type == "cruise_missile":
-            delay = 2700
-            if not eta_str:
-                eta_str = "~55 хв"
-        elif threat_type == "tu95":
-            delay = 5400
-            if not eta_str:
-                eta_str = "~110 хв"
-        elif threat_type == "iskander":
-            delay = 1200
-            if not eta_str:
-                eta_str = "~25 хв"
-        elif threat_type == "artillery":
-            delay = 1800
-            if not eta_str:
-                eta_str = "~10 хв"
                 
         return delay, eta_str or None, eta_seconds
 
@@ -1207,29 +1204,7 @@ class TelegramThreatMonitor:
     def _apply_regex_threat(self, region: str, level: str, threat_type: str, detail_text: str, is_pred: bool, is_test: bool, set_regions: dict):
         """Helper to set threat and auto-clear delay in regex processing."""
         # Determine dynamic auto-clear delay and ETA based on threat type
-        delay = 3600
-        eta_str = ""
-        if threat_type == "mig31k":
-            delay = 2700
-            eta_str = "~20-40 хв"
-        elif threat_type == "ballistic":
-            delay = 1800
-            eta_str = "~2-5 хв"
-        elif threat_type == "shahed":
-            delay = 10800
-            eta_str = "+1-2 год"
-        elif threat_type == "cruise_missile":
-            delay = 3600
-            eta_str = "+15-30 хв"
-        elif threat_type == "tu95":
-            delay = 5400
-            eta_str = "~30-90 хв"
-        elif threat_type == "iskander":
-            delay = 1800
-            eta_str = "~2-5 хв"
-        elif threat_type == "artillery":
-            delay = 1800
-            eta_str = "~0-5 хв"
+        delay, eta_str = self._get_threat_type_delay_and_eta(threat_type, is_regex=True)
             
         # Default confidence scores for regex fallback (no AI)
         regex_confidence = 75  # Base confidence for regex
@@ -1527,27 +1502,11 @@ class TelegramThreatMonitor:
                     if not since_str:
                         continue
                     is_pred = getattr(threat, "is_predictive", False)
-                    delay = 3600
                     if is_pred:
                         pred_eta = getattr(threat, "eta_seconds", None) or 1800
                         delay = pred_eta + 300  # ETA + 5 minutes grace period
                     else:
-                        if t_type == "mig31k":
-                            delay = 1800
-                        elif t_type == "ballistic":
-                            delay = 600
-                        elif t_type == "kab":
-                            delay = 1200
-                        elif t_type == "shahed":
-                            delay = 10800
-                        elif t_type == "cruise_missile":
-                            delay = 2700
-                        elif t_type == "tu95":
-                            delay = 5400
-                        elif t_type == "iskander":
-                            delay = 1200
-                        elif t_type == "artillery":
-                            delay = 1800
+                        delay, _ = self._get_threat_type_delay_and_eta(t_type)
                             
                     try:
                         since_str_normalized = since_str.replace("Z", "+00:00")
