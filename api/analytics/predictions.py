@@ -93,8 +93,6 @@ async def get_region_history(region: str, limit: int = 50):
         docs = (
             db.collection("sirenua_history")
             .where("region", "==", region)
-            .order_by("timestamp", direction="DESCENDING")
-            .limit(limit)
             .stream()
         )
 
@@ -103,6 +101,10 @@ async def get_region_history(region: str, limit: int = 50):
             data = doc.to_dict()
             data["id"] = doc.id
             history.append(data)
+
+        # Sort in memory by timestamp descending
+        history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        history = history[:limit]
 
         return {"region": region, "count": len(history), "history": history}
     except Exception as e:
