@@ -351,6 +351,243 @@ class TelegramThreatMonitor:
 
 
 
+    def _handle_gemini_clearing(self, item: dict, confidence: Optional[int], threat_type: Optional[str], is_test: bool):
+        """Helper to process clearing actions from Gemini analysis."""
+        clearing_telemetry = item.get("clearing_telemetry", {})
+        targets = item.get("target_regions", [])
+        source_channel = item.get("source_channel", "AI")
+        text = item.get("text", "")
+        
+        if not targets:
+            # Global clearing — all regions
+            self.threat_manager.clear_all()
+            # Log clearing for each previously active region
+            for r_name in self.threat_manager.threats.keys():
+                from database.analytics_db import log_clearing_to_db
+                log_clearing_to_db(
+                    region=r_name,
+                    clearing_telemetry=clearing_telemetry,
+                    source_channel=source_channel,
+                    message_text=text,
+                    clearing_confidence=confidence,
+                    was_predictive=False
+                )
+            res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
+            print(f"🟢 [Gemini] Зняття загрози для ВСІХ областей (тип: {res_type})")
+        else:
+            for tgt in targets:
+                if isinstance(tgt, dict):
+                    region = tgt.get("name")
+                    was_pred = tgt.get("is_predictive", False)
+                else:
+                    region = tgt
+                    was_pred = False
+                
+                if not region:
+                    continue
+                
+                # Log clearing BEFORE clearing the threat (to capture original state)
+                from database.analytics_db import log_clearing_to_db
+                log_clearing_to_db(
+                    region=region,
+                    clearing_telemetry=clearing_telemetry,
+                    source_channel=source_channel,
+                    message_text=text,
+                    clearing_confidence=confidence,
+                    was_predictive=was_pred
+                )
+                
+                clearing_gid = clearing_telemetry.get("linked_group_id") if clearing_telemetry else None
+                self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type, group_id=clearing_gid)
+                self._cancel_clear_tasks(region, threat_type=threat_type, group_id=clearing_gid)
+                
+                # Enhanced clearing log
+                res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
+                pred_str = ""
+                if was_pred and clearing_telemetry:
+                    pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "unknown")
+                    pred_str = f" | предикція: {pred_hint}"
+                ad_eff = ""
+                if clearing_telemetry and clearing_telemetry.get("air_defense_effectiveness", "unknown") != "unknown":
+                    ad_eff = f" | ППО: {clearing_telemetry['air_defense_effectiveness']}"
+                print(f"🟢 [Gemini] Зняття загрози: {region} (тип: {res_type}{pred_str}{ad_eff})")
+
+    def _calculate_auto_clear_delay(self, item: dict, telemetry: Optional[dict], threat_type: Optional[str]) -> tuple[int, Optional[str], Optional[int]]:
+        """Calculates dynamic/default auto-clear delay in seconds, ETA string, and ETA seconds."""
+        gemini_eta = item.get("eta", "")
+        delay = 3600  # default 1 hour
+        eta_str = gemini_eta if gemini_eta else ""
+        eta_seconds = None
+        
+        telemetry_delay = None
+        if telemetry and isinstance(telemetry, dict):
+            t_speed = telemetry.get("speed_kmh")
+            t_distance = telemetry.get("distance_to_target_km")
+            if t_speed and t_distance and t_speed > 0:
+                eta_seconds = int((t_distance / t_speed) * 3600)
+                
+                if not eta_str:
+                    buffer_minutes = 5
+                    if eta_seconds > 1800:
+                        buffer_minutes = 10
+                    if threat_type == "shahed":
+                        buffer_minutes = 20
+                    eta_minutes = int(eta_seconds / 60) + buffer_minutes
+                    eta_str = f"~{eta_minutes} хв"
+                
+                telemetry_delay = int(eta_seconds * 1.5)
+                telemetry_delay = max(300, min(telemetry_delay, 14400))  # clamp 5min-4hours
+        
+        if telemetry_delay:
+            delay = telemetry_delay
+        elif threat_type == "mig31k":
+            delay = 1800
+            if not eta_str:
+                eta_str = "~40 хв"
+        elif threat_type == "ballistic":
+            delay = 600
+            if not eta_str:
+                eta_str = "~15 хв"
+        elif threat_type == "kab":
+            delay = 1200
+            if not eta_str:
+                eta_str = "~25 хв"
+        elif threat_type == "shahed":
+            delay = 10800
+            if not eta_str:
+                eta_str = "~200 хв"
+        elif threat_type == "cruise_missile":
+            delay = 2700
+            if not eta_str:
+                eta_str = "~55 хв"
+        elif threat_type == "tu95":
+            delay = 5400
+            if not eta_str:
+                eta_str = "~110 хв"
+        elif threat_type == "iskander":
+            delay = 1200
+            if not eta_str:
+                eta_str = "~25 хв"
+        elif threat_type == "artillery":
+            delay = 1800
+            if not eta_str:
+                eta_str = "~10 хв"
+                
+        return delay, eta_str or None, eta_seconds
+
+    def _format_telemetry_info(self, telemetry: dict) -> list[str]:
+        """Formats the telemetry dict to Ukrainian user-friendly text lines."""
+        telemetry_info = []
+        if not telemetry or not isinstance(telemetry, dict):
+            return telemetry_info
+            
+        distance = telemetry.get("distance_to_target_km")
+        if distance:
+            telemetry_info.append(f"Відстань до цілі: ~{distance:.0f} км")
+            
+        target_count = telemetry.get("target_count")
+        if target_count:
+            telemetry_info.append(f"Кількість цілей: {target_count}")
+            
+        launch_origin = telemetry.get("launch_origin")
+        if launch_origin and launch_origin.lower() != "unknown":
+            telemetry_info.append(f"Напрямок запуску: {launch_origin}")
+                
+        weapon_subtype = telemetry.get("weapon_subtype")
+        if weapon_subtype and weapon_subtype.lower() != "unknown":
+            telemetry_info.append(f"Тип: {weapon_subtype}")
+                
+        speed = telemetry.get("speed_kmh")
+        if speed:
+            telemetry_info.append(f"Швидкість руху: ~{speed} км/год")
+                
+        alt = telemetry.get("altitude_category")
+        if alt and alt.lower() != "unknown":
+            alt_mapping = {"low": "мала", "medium": "середня", "high": "велика"}
+            alt_ukr = alt_mapping.get(alt.lower(), alt)
+            telemetry_info.append(f"Висота польоту: {alt_ukr}")
+            
+        return telemetry_info
+
+    def _apply_single_gemini_threat(self, item: dict, adjusted_level: str, threat_type: Optional[str], confidence: Optional[int], telemetry: Optional[dict], rules_applied: list, is_test: bool):
+        """Processes and sets a single threat event item."""
+        target_regions = item.get("target_regions", [])
+        group_id = telemetry.get("group_id") if telemetry else None
+        text = item.get("text", "")
+        
+        for tgt in target_regions:
+            if isinstance(tgt, dict):
+                region = tgt.get("name")
+                is_pred = tgt.get("is_predictive", False)
+            else:
+                region = tgt
+                is_pred = False
+            
+            if not region or region not in ALL_REGIONS:
+                continue
+            
+            region_confidence = confidence
+            if is_pred and region_confidence is not None:
+                region_confidence = max(0, region_confidence - 20)
+            
+            delay, eta_str, eta_seconds = self._calculate_auto_clear_delay(item, telemetry, threat_type)
+            
+            detail = clean_user_facing_threat_detail(text)
+            telemetry_info = self._format_telemetry_info(telemetry)
+            if telemetry_info:
+                detail += "\n" + "\n".join(telemetry_info)
+            
+            if is_pred:
+                detail += f"\n⚠️ Ціль може прямувати через область."
+                if eta_str:
+                    detail += f" Очікуваний час: {eta_str}"
+            elif eta_str:
+                detail += f"\n(Очікуваний час: {eta_str})"
+
+            self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
+                                           confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
+                                           is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
+                                           eta_seconds=eta_seconds)
+            self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
+            
+            if is_pred:
+                grace_period = 300
+                eta_sec = eta_seconds
+                if eta_sec is None:
+                    eta_defaults = {
+                        "mig31k": 1200,
+                        "ballistic": 180,
+                        "kab": 600,
+                        "shahed": 5400,
+                        "cruise_missile": 1200,
+                        "tu95": 3600,
+                        "iskander": 180,
+                        "artillery": 120,
+                    }
+                    eta_sec = eta_defaults.get(threat_type, 1800)
+                
+                reeval_delay = eta_sec + grace_period
+                self._schedule_predictive_reevaluation(region, reeval_delay, threat_type, group_id)
+            else:
+                self._cancel_reevaluation_task(region, threat_type, group_id)
+            
+            conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
+            telem_str = ""
+            if telemetry and isinstance(telemetry, dict):
+                parts = []
+                if telemetry.get("group_id"):
+                    parts.append(f"група: {telemetry['group_id']}")
+                if telemetry.get("speed_kmh"):
+                    parts.append(f"швидкість: {telemetry['speed_kmh']} км/год")
+                if telemetry.get("engagement_status") and telemetry["engagement_status"] != "unknown":
+                    parts.append(f"статус: {telemetry['engagement_status']}")
+                if telemetry.get("target_count"):
+                    parts.append(f"цілей: {telemetry['target_count']}")
+                if parts:
+                    telem_str = f" | {', '.join(parts)}"
+            
+            print(f"🔴 [Gemini] Встановлено загрозу ({adjusted_level}) для: {region}{conf_str}{telem_str}")
+
     async def _apply_gemini_analysis(self, results, is_test: bool = False):
         """Applies Gemini AI analysis results with confidence-based filtering, level adjustment, and telemetry enrichment."""
         for item in results:
@@ -362,289 +599,43 @@ class TelegramThreatMonitor:
             if threat_type:
                 threat_type = threat_type.lower().strip()
             is_clear = item.get("is_clear", False)
-            source_channel = item.get("source_channel", "AI")
             text = item.get("text", "")
             confidence = item.get("confidence_score")
-            telemetry = item.get("telemetry")  # Extract telemetry block
-            group_id = None
-            if telemetry and isinstance(telemetry, dict):
-                group_id = telemetry.get("group_id")
+            telemetry = item.get("telemetry")
             rules_applied = item.get("rules_applied", [])
             
-            # Validate confidence as int
             if confidence is not None:
                 try:
                     confidence = int(confidence)
                 except (ValueError, TypeError):
                     confidence = None
             
-            # Обробка відбою з clearing_telemetry
             if is_clear:
-                clearing_telemetry = item.get("clearing_telemetry", {})
-                targets = item.get("target_regions", [])
-                source_channel = item.get("source_channel", "AI")
-                text = item.get("text", "")
-                
-                if not targets:
-                    # Global clearing — all regions
-                    self.threat_manager.clear_all()
-                    # Log clearing for each previously active region
-                    for r_name, r_state in self.threat_manager.threats.items():
-                        if r_state.level != "none" or True:  # Log for all since we just cleared
-                            from database.analytics_db import log_clearing_to_db
-                            log_clearing_to_db(
-                                region=r_name,
-                                clearing_telemetry=clearing_telemetry,
-                                source_channel=source_channel,
-                                message_text=text,
-                                clearing_confidence=confidence,
-                                was_predictive=False
-                            )
-                    res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
-                    print(f"🟢 [Gemini] Зняття загрози для ВСІХ областей (тип: {res_type})")
-                else:
-                    for tgt in targets:
-                        if isinstance(tgt, dict):
-                            region = tgt.get("name")
-                            was_pred = tgt.get("is_predictive", False)
-                        else:
-                            region = tgt
-                            was_pred = False
-                        
-                        if not region:
-                            continue
-                        
-                        # Log clearing BEFORE clearing the threat (to capture original state)
-                        from database.analytics_db import log_clearing_to_db
-                        log_clearing_to_db(
-                            region=region,
-                            clearing_telemetry=clearing_telemetry,
-                            source_channel=source_channel,
-                            message_text=text,
-                            clearing_confidence=confidence,
-                            was_predictive=was_pred
-                        )
-                        
-                        clearing_gid = clearing_telemetry.get("linked_group_id") if clearing_telemetry else None
-                        self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type, group_id=clearing_gid)
-                        self._cancel_clear_tasks(region, threat_type=threat_type, group_id=clearing_gid)
-                        
-                        # Enhanced clearing log
-                        res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
-                        pred_str = ""
-                        if was_pred and clearing_telemetry:
-                            pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "unknown")
-                            pred_str = f" | предикція: {pred_hint}"
-                        ad_eff = ""
-                        if clearing_telemetry and clearing_telemetry.get("air_defense_effectiveness", "unknown") != "unknown":
-                            ad_eff = f" | ППО: {clearing_telemetry['air_defense_effectiveness']}"
-                        print(f"🟢 [Gemini] Зняття загрози: {region} (тип: {res_type}{pred_str}{ad_eff})")
+                self._handle_gemini_clearing(item, confidence, threat_type, is_test)
                 continue
 
             if level == "none":
                 continue
 
-            # Фільтрація за порогом довіри ШІ (мінімум 40%)
             if confidence is not None and confidence < 40:
                 print(f"⚠️ [Gemini] Загроза відхилена (довіра {confidence}% < 40%): {text[:60]}...")
                 continue
                 
-            # Коригування рівня загрози на основі довіри
             adjusted_level = level
             if confidence is not None:
                 if confidence >= 85:
-                    # Висока довіра — зберігаємо оригінальний рівень
                     adjusted_level = level
                 elif confidence >= 60:
-                    # Середня довіра — знижуємо на один рівень
                     level_downgrade = {"critical": "high", "high": "medium", "medium": "low", "low": "low"}
                     adjusted_level = level_downgrade.get(level, level)
                 else:
-                    # Низька довіра (40-59%) — встановлюємо low
                     adjusted_level = "low"
                     
                 if adjusted_level != level:
                     print(f"📥 [Gemini] Рівень знижено {level} → {adjusted_level} (довіра {confidence}%)")
 
-            target_regions = item.get("target_regions", [])
-            for tgt in target_regions:
-                if isinstance(tgt, dict):
-                    region = tgt.get("name")
-                    is_pred = tgt.get("is_predictive", False)
-                else:
-                    region = tgt
-                    is_pred = False
-                
-                if not region or region not in ALL_REGIONS:
-                    continue
-                
-                # Знижуємо довіру для предиктивних регіонів
-                region_confidence = confidence
-                if is_pred and region_confidence is not None:
-                    region_confidence = max(0, region_confidence - 20)
-                
-                # ETA: prefer Gemini's AI-provided ETA, fallback to heuristic
-                gemini_eta = item.get("eta", "")
-                
-                # --- Dynamic auto-clear delay based on telemetry ---
-                delay = 3600  # default 1 hour
-                eta_str = gemini_eta if gemini_eta else ""
-                
-                # Try to calculate delay from telemetry speed + distance
-                telemetry_delay = None
-                eta_seconds = None
-                if telemetry and isinstance(telemetry, dict):
-                    t_speed = telemetry.get("speed_kmh")
-                    t_distance = telemetry.get("distance_to_target_km")
-                    if t_speed and t_distance and t_speed > 0:
-                        # Calculate ETA in seconds: distance/speed * 3600
-                        eta_seconds = int((t_distance / t_speed) * 3600)
-                        
-                        # Generate dynamic ETA string if not provided by Gemini
-                        if not eta_str:
-                            buffer_minutes = 5
-                            if eta_seconds > 1800:
-                                buffer_minutes = 10
-                            if threat_type == "shahed":
-                                buffer_minutes = 20
-                            eta_minutes = int(eta_seconds / 60) + buffer_minutes
-                            eta_str = f"~{eta_minutes} хв"
-                        
-                        # Calculate delay with 50% buffer
-                        telemetry_delay = int(eta_seconds * 1.5)
-                        telemetry_delay = max(300, min(telemetry_delay, 14400))  # clamp 5min-4hours
-                
-                if telemetry_delay:
-                    delay = telemetry_delay
-                elif threat_type == "mig31k":
-                    delay = 1800  # 30 хв
-                    if not eta_str:
-                        eta_str = "~40 хв"
-                elif threat_type == "ballistic":
-                    delay = 600   # 10 хв
-                    if not eta_str:
-                        eta_str = "~15 хв"
-                elif threat_type == "kab":
-                    delay = 1200  # 20 хв
-                    if not eta_str:
-                        eta_str = "~25 хв"
-                elif threat_type == "shahed":
-                    delay = 10800  # 3 години
-                    if not eta_str:
-                        eta_str = "~200 хв"
-                elif threat_type == "cruise_missile":
-                    delay = 2700  # 45 хв
-                    if not eta_str:
-                        eta_str = "~55 хв"
-                elif threat_type == "tu95":
-                    delay = 5400  # 1.5 год
-                    if not eta_str:
-                        eta_str = "~110 хв"
-                elif threat_type == "iskander":
-                    delay = 1200  # 20 хв
-                    if not eta_str:
-                        eta_str = "~25 хв"
-                elif threat_type == "artillery":
-                    delay = 1800  # 30 хв
-                    if not eta_str:
-                        eta_str = "~10 хв"
-                    
-                detail = clean_user_facing_threat_detail(text)
-                
-                # Append telemetry details in a readable format if available
-                telemetry_info = []
-                if telemetry and isinstance(telemetry, dict):
-                    # 1. Distance
-                    distance = telemetry.get("distance_to_target_km")
-                    if distance:
-                        telemetry_info.append(f"Відстань до цілі: ~{distance:.0f} км")
-                    
-                    # 2. Target Count (Кількість цілей)
-                    target_count = telemetry.get("target_count")
-                    if target_count:
-                        telemetry_info.append(f"Кількість цілей: {target_count}")
-                    
-                    # 3. Launch Origin (Район запуску)
-                    launch_origin = telemetry.get("launch_origin")
-                    if launch_origin and launch_origin.lower() != "unknown":
-                        telemetry_info.append(f"Напрямок запуску: {launch_origin}")
-                        
-                    # 4. Weapon Subtype (Конкретна модель)
-                    weapon_subtype = telemetry.get("weapon_subtype")
-                    if weapon_subtype and weapon_subtype.lower() != "unknown":
-                        telemetry_info.append(f"Тип: {weapon_subtype}")
-                        
-                    # 5. Speed (Швидкість)
-                    speed = telemetry.get("speed_kmh")
-                    if speed:
-                        telemetry_info.append(f"Швидкість руху: ~{speed} км/год")
-                        
-                    # 6. Altitude (Висота)
-                    alt = telemetry.get("altitude_category")
-                    if alt and alt.lower() != "unknown":
-                        alt_mapping = {"low": "мала", "medium": "середня", "high": "велика"}
-                        alt_ukr = alt_mapping.get(alt.lower(), alt)
-                        telemetry_info.append(f"Висота польоту: {alt_ukr}")
-                
-                if telemetry_info:
-                    detail += "\n" + "\n".join(telemetry_info)
-                
-                if is_pred:
-                    detail += f"\n⚠️ Ціль може прямувати через область."
-                    if eta_str:
-                        detail += f" Очікуваний час: {eta_str}"
-                elif eta_str:
-                    detail += f"\n(Очікуваний час: {eta_str})"
+            self._apply_single_gemini_threat(item, adjusted_level, threat_type, confidence, telemetry, rules_applied, is_test)
 
-                self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
-                                               confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
-                                               is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
-                                               eta_seconds=eta_seconds)
-                self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
-                
-                if is_pred:
-                    # Determine reevaluation delay (ETA in seconds + grace period)
-                    grace_period = 300  # 5 minutes
-                    eta_sec = eta_seconds
-                    if eta_sec is None:
-                        # Fallback default ETA times in seconds
-                        eta_defaults = {
-                            "mig31k": 1200,      # 20 mins
-                            "ballistic": 180,    # 3 mins
-                            "kab": 600,          # 10 mins
-                            "shahed": 5400,      # 1.5 hours
-                            "cruise_missile": 1200, # 20 mins
-                            "tu95": 3600,        # 1 hour
-                            "iskander": 180,     # 3 mins
-                            "artillery": 120,    # 2 mins
-                        }
-                        eta_sec = eta_defaults.get(threat_type, 1800)
-                    
-                    reeval_delay = eta_sec + grace_period
-                    self._schedule_predictive_reevaluation(region, reeval_delay, threat_type, group_id)
-                else:
-                    self._cancel_reevaluation_task(region, threat_type, group_id)
-                
-                # Enhanced logging with telemetry info
-                conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
-                telem_str = ""
-                if telemetry and isinstance(telemetry, dict):
-                    parts = []
-                    if telemetry.get("group_id"):
-                        parts.append(f"група: {telemetry['group_id']}")
-                    if telemetry.get("speed_kmh"):
-                        parts.append(f"швидкість: {telemetry['speed_kmh']} км/год")
-                    if telemetry.get("engagement_status") and telemetry["engagement_status"] != "unknown":
-                        parts.append(f"статус: {telemetry['engagement_status']}")
-                    if telemetry.get("target_count"):
-                        parts.append(f"цілей: {telemetry['target_count']}")
-                    if parts:
-                        telem_str = f" | {', '.join(parts)}"
-                
-                print(f"🔴 [Gemini] Встановлено загрозу ({adjusted_level}) для: {region}{conf_str}{telem_str}")
-
-        # === PREDICTIVE PROPAGATION ENGINE ===
-        # After all Gemini-set threats, propagate predictions to adjacent regions
         await self._propagate_predictive_threats()
 
 
@@ -756,186 +747,194 @@ class TelegramThreatMonitor:
                 continue
             
             for adj_region in adjacent:
-                # Skip if already has active (non-predictive) threat
-                adj_state = self.threat_manager.threats.get(adj_region)
-                if not adj_state:
+                pred_dict = self._evaluate_prediction_candidate(
+                    source_region, state, adj_region, telemetry, bearing, speed, path_boost_regions
+                )
+                if not pred_dict:
                     continue
-                if adj_state.level != "none" and not adj_state.is_predictive:
-                    continue  # Already red — skip
-                
-                # Calculate direction alignment score (0.0 - 1.0)
-                direction_score = 0.5  # Neutral if no bearing
-                if bearing is not None and source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
-                    src_coords = self.REGION_CENTROIDS[source_region]
-                    adj_coords = self.REGION_CENTROIDS[adj_region]
-                    
-                    # Calculate bearing from source to adjacent
-                    dlat = adj_coords[0] - src_coords[0]
-                    dlon = adj_coords[1] - src_coords[1]
-                    adj_bearing = math.degrees(math.atan2(dlon, dlat)) % 360
-                    
-                    # Angular difference (0-180)
-                    diff = abs(bearing - adj_bearing)
-                    if diff > 180:
-                        diff = 360 - diff
-                    
-                    # Convert to score: 0° diff = 1.0, 90° diff = 0.3, 180° diff = 0.0
-                    direction_score = max(0.0, 1.0 - (diff / 180.0))
-                    # Boost forward-aligned regions
-                    if diff < 45:
-                        direction_score = min(1.0, direction_score * 1.3)
-                
-                # Skip if direction is completely wrong (>120° off course)
-                if bearing is not None and direction_score < 0.2:
-                    continue
-                
-                # Calculate distance and ETA
-                eta_seconds = None
-                distance_km = None
-                if source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
-                    src = self.REGION_CENTROIDS[source_region]
-                    
-                    # If target region has a specific final target city, use its exact coordinates!
-                    target_coords = None
-                    if telemetry and telemetry.get("final_target_cities"):
-                        for city in telemetry["final_target_cities"]:
-                            if self._city_to_region(city) == adj_region:
-                                target_coords = self._get_city_coordinates(city, telemetry)
-                                if target_coords:
-                                    break
-                    
-                    adj = target_coords if target_coords else self.REGION_CENTROIDS[adj_region]
-                    
-                    # Approximate distance in km (Haversine simplified)
-                    dlat = abs(src[0] - adj[0]) * 111
-                    dlon = abs(src[1] - adj[1]) * 111 * math.cos(math.radians((src[0] + adj[0]) / 2))
-                    distance_km = math.sqrt(dlat**2 + dlon**2)
-                    if speed and speed > 0:
-                        eta_seconds = int((distance_km / speed) * 3600)
-                
-                # Check historical patterns (known SHAHED routes)
-                route_boost = 0.0
-                
-                # Apply massive boost if region is on the path to a known final target
-                if adj_region in path_boost_regions:
-                    route_boost = 0.8
-                else:
-                    for route_name, route_regions in SHAHED_ROUTES.items():
-                        if source_region in route_regions and adj_region in route_regions:
-                            src_idx = route_regions.index(source_region)
-                            adj_idx = route_regions.index(adj_region)
-                            if adj_idx > src_idx:  # Forward in the route
-                                route_boost = 0.25
-                                break
-                
-                # Check DB for historical patterns
-                db_boost = self._get_historical_route_score(source_region, adj_region)
-                
-                # Calculate final prediction score
-                base_score = direction_score * 0.5 + 0.2  # 20-70% base from direction
-                
-                # Threat type weight (slow = more predictable trajectory)
-                type_weight = {"shahed": 0.15, "cruise_missile": 0.08, "mig31k": 0.05, "ballistic": 0.0, "kab": 0.02, "tu95": 0.10, "iskander": 0.0, "artillery": 0.01}
-                base_score += type_weight.get(threat_type, 0.05)
-                
-                # Apply boosts
-                total_score = min(1.0, base_score + route_boost + db_boost)
-                
-                # Threshold: only predict if score >= 0.4
-                if total_score < 0.4:
-                    continue
-                
-                # --- DIFFERENTIATED CONFIDENCE CALCULATION ---
-                # Non-linear base confidence from total_score
-                if total_score >= 0.85:
-                    base_conf = 75
-                elif total_score >= 0.70:
-                    base_conf = 65
-                elif total_score >= 0.55:
-                    base_conf = 55
-                elif total_score >= 0.45:
-                    base_conf = 45
-                else:
-                    base_conf = 35
-                
-                # Distance modifier (closer = higher confidence)
-                dist_mod = 0
-                if distance_km is not None:
-                    if distance_km < 80:
-                        dist_mod = 8
-                    elif distance_km < 150:
-                        dist_mod = 4
-                    elif distance_km < 250:
-                        dist_mod = 0
-                    elif distance_km < 400:
-                        dist_mod = -4
-                    else:
-                        dist_mod = -8
-                
-                # Route history modifier (known route = higher confidence)
-                route_mod = int(route_boost * 12)  # 0-9
-                
-                # DB pattern modifier
-                db_mod = int(db_boost * 8)  # 0-1
-                
-                # Time-of-day modifier
-                time_mod = self._get_time_of_day_modifier(threat_type)
-                
-                # Learned rules correction
-                rules_correction = 0
-                try:
-                    corrections = self.analyzer.load_confidence_corrections()
-                    if adj_region in corrections:
-                        rules_correction = corrections[adj_region].get(threat_type, 0)
-                except Exception:
-                    pass
-                
-                # Final confidence with all modifiers
-                raw_confidence = base_conf + dist_mod + route_mod + db_mod + time_mod + rules_correction
-                confidence = max(25, min(80, raw_confidence))
-                
-                # Ensure uniqueness: add small pseudo-random offset based on region name hash
-                region_hash_offset = (hash(adj_region) % 5) - 2  # -2 to +2
-                confidence = max(25, min(80, confidence + region_hash_offset))
-                
-                # Generate ETA string
-                eta_str = ""
-                if eta_seconds:
-                    if eta_seconds < 300:
-                        eta_str = "~2-5 хв"
-                    elif eta_seconds < 900:
-                        eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
-                    elif eta_seconds < 3600:
-                        eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 5} хв"
-                    else:
-                        h = eta_seconds // 3600
-                        m = (eta_seconds % 3600) // 60
-                        if m > 0:
-                            eta_str = f"~{h} год {m}-{m + 10} хв"
-                        else:
-                            eta_str = f"~{h} год"
                 
                 # Keep the best prediction for each region
-                if adj_region not in predictions or predictions[adj_region]["score"] < total_score:
-                    predictions[adj_region] = {
-                        "score": total_score,
-                        "source_region": source_region,
-                        "threat_type": threat_type,
-                        "eta_str": eta_str,
-                        "eta_seconds": eta_seconds,
-                        "direction_score": direction_score,
-                        "distance_km": distance_km,
-                        "route_boost": route_boost,
-                        "db_boost": db_boost,
-                        "confidence": confidence,
-                        "source_level": state.level,
-                        "is_test": state.is_test,
-                    }
+                if adj_region not in predictions or predictions[adj_region]["score"] < pred_dict["score"]:
+                    predictions[adj_region] = pred_dict
         
         # Apply predictions
+        self._apply_predictions(predictions)
+
+    def _format_prediction_eta_str(self, eta_seconds: Optional[int]) -> str:
+        """Helper to format prediction ETA seconds into Ukrainian readable text."""
+        if not eta_seconds:
+            return ""
+        if eta_seconds < 300:
+            return "~2-5 хв"
+        elif eta_seconds < 900:
+            return f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
+        elif eta_seconds < 3600:
+            return f"~{eta_seconds // 60}-{eta_seconds // 60 + 5} хв"
+        else:
+            h = eta_seconds // 3600
+            m = (eta_seconds % 3600) // 60
+            if m > 0:
+                return f"~{h} год {m}-{m + 10} хв"
+            else:
+                return f"~{h} год"
+
+    def _evaluate_prediction_candidate(
+        self,
+        source_region: str,
+        state,
+        adj_region: str,
+        telemetry: Optional[dict],
+        bearing: Optional[float],
+        speed: float,
+        path_boost_regions: set
+    ) -> Optional[dict]:
+        """Evaluates prediction score and confidence from source_region to adj_region."""
+        import math
+        # Skip if already has active (non-predictive) threat
+        adj_state = self.threat_manager.threats.get(adj_region)
+        if not adj_state or (adj_state.level != "none" and not adj_state.is_predictive):
+            return None
+
+        # Calculate direction alignment score (0.0 - 1.0)
+        direction_score = 0.5  # Neutral if no bearing
+        if bearing is not None and source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
+            src_coords = self.REGION_CENTROIDS[source_region]
+            adj_coords = self.REGION_CENTROIDS[adj_region]
+            
+            dlat = adj_coords[0] - src_coords[0]
+            dlon = adj_coords[1] - src_coords[1]
+            adj_bearing = math.degrees(math.atan2(dlon, dlat)) % 360
+            
+            diff = abs(bearing - adj_bearing)
+            if diff > 180:
+                diff = 360 - diff
+            
+            direction_score = max(0.0, 1.0 - (diff / 180.0))
+            if diff < 45:
+                direction_score = min(1.0, direction_score * 1.3)
+        
+        # Skip if direction is completely wrong (>120° off course)
+        if bearing is not None and direction_score < 0.2:
+            return None
+        
+        # Calculate distance and ETA
+        eta_seconds = None
+        distance_km = None
+        if source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
+            src = self.REGION_CENTROIDS[source_region]
+            
+            # If target region has a specific final target city, use its exact coordinates!
+            target_coords = None
+            if telemetry and telemetry.get("final_target_cities"):
+                for city in telemetry["final_target_cities"]:
+                    if self._city_to_region(city) == adj_region:
+                        target_coords = self._get_city_coordinates(city, telemetry)
+                        if target_coords:
+                            break
+            
+            adj = target_coords if target_coords else self.REGION_CENTROIDS[adj_region]
+            
+            dlat = abs(src[0] - adj[0]) * 111
+            dlon = abs(src[1] - adj[1]) * 111 * math.cos(math.radians((src[0] + adj[0]) / 2))
+            distance_km = math.sqrt(dlat**2 + dlon**2)
+            if speed and speed > 0:
+                eta_seconds = int((distance_km / speed) * 3600)
+        
+        # Check historical patterns (known SHAHED routes)
+        route_boost = 0.0
+        if adj_region in path_boost_regions:
+            route_boost = 0.8
+        else:
+            for route_name, route_regions in SHAHED_ROUTES.items():
+                if source_region in route_regions and adj_region in route_regions:
+                    src_idx = route_regions.index(source_region)
+                    adj_idx = route_regions.index(adj_region)
+                    if adj_idx > src_idx:
+                        route_boost = 0.25
+                        break
+        
+        # Check DB for historical patterns
+        db_boost = self._get_historical_route_score(source_region, adj_region)
+        
+        # Calculate final prediction score
+        base_score = direction_score * 0.5 + 0.2  # 20-70% base from direction
+        
+        # Threat type weight (slow = more predictable trajectory)
+        type_weight = {"shahed": 0.15, "cruise_missile": 0.08, "mig31k": 0.05, "ballistic": 0.0, "kab": 0.02, "tu95": 0.10, "iskander": 0.0, "artillery": 0.01}
+        base_score += type_weight.get(state.threat_type, 0.05)
+        
+        # Apply boosts
+        total_score = min(1.0, base_score + route_boost + db_boost)
+        if total_score < 0.4:
+            return None
+        
+        # Base confidence from total_score
+        if total_score >= 0.85:
+            base_conf = 75
+        elif total_score >= 0.70:
+            base_conf = 65
+        elif total_score >= 0.55:
+            base_conf = 55
+        elif total_score >= 0.45:
+            base_conf = 45
+        else:
+            base_conf = 35
+        
+        # Distance modifier
+        dist_mod = 0
+        if distance_km is not None:
+            if distance_km < 80:
+                dist_mod = 8
+            elif distance_km < 150:
+                dist_mod = 4
+            elif distance_km < 250:
+                dist_mod = 0
+            elif distance_km < 400:
+                dist_mod = -4
+            else:
+                dist_mod = -8
+        
+        route_mod = int(route_boost * 12)
+        db_mod = int(db_boost * 8)
+        time_mod = self._get_time_of_day_modifier(state.threat_type)
+        
+        # Learned rules correction
+        rules_correction = 0
+        try:
+            corrections = self.analyzer.load_confidence_corrections()
+            if adj_region in corrections:
+                rules_correction = corrections[adj_region].get(state.threat_type, 0)
+        except Exception:
+            pass
+        
+        raw_confidence = base_conf + dist_mod + route_mod + db_mod + time_mod + rules_correction
+        confidence = max(25, min(80, raw_confidence))
+        
+        # Ensure uniqueness: add small pseudo-random offset based on region name hash
+        region_hash_offset = (hash(adj_region) % 5) - 2
+        confidence = max(25, min(80, confidence + region_hash_offset))
+        
+        eta_str = self._format_prediction_eta_str(eta_seconds)
+        
+        return {
+            "score": total_score,
+            "source_region": source_region,
+            "threat_type": state.threat_type,
+            "eta_str": eta_str,
+            "eta_seconds": eta_seconds,
+            "direction_score": direction_score,
+            "distance_km": distance_km,
+            "route_boost": route_boost,
+            "db_boost": db_boost,
+            "confidence": confidence,
+            "source_level": state.level,
+            "is_test": state.is_test,
+        }
+
+    def _apply_predictions(self, predictions: dict):
+        """Applies evaluated predictions to threat manager."""
         predictions_applied = 0
         for region, pred in predictions.items():
-            # Determine threat level for predictive zone
             pred_level = "low"
             if pred["score"] >= 0.75:
                 pred_level = "medium"
@@ -973,7 +972,7 @@ class TelegramThreatMonitor:
                 eta=pred["eta_str"],
                 is_predictive=True,
                 is_test=pred.get("is_test", False),
-                telemetry={"group_id": pred_gid},  # Pass group_id inside telemetry for precise deduplication
+                telemetry={"group_id": pred_gid},
                 eta_seconds=pred.get("eta_seconds")
             )
             self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"], group_id=pred_gid)

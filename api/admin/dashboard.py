@@ -3,11 +3,9 @@ Admin Dashboard API.
 Aggregated statistics for the admin dashboard.
 """
 
-import sqlite3
 from fastapi import APIRouter, HTTPException
-
-from core.config import DB_PATH, get_kyiv_tz_offset
-from database.analytics_db import get_sqlite_connection
+from core.config import get_kyiv_tz_offset
+from database.db_helpers import execute_query_as_dicts
 
 router = APIRouter()
 
@@ -19,21 +17,18 @@ async def get_admin_dashboard_stats():
     tz_modifier = f"'{offset_hours:+d} hours'"
 
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         # Total events (7d) excluding official alarms to match accuracy breakdown
-        cursor.execute("""
+        total_query = """
             SELECT COUNT(*) as c 
             FROM paired_events pe
             JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
-        """)
-        total_7d = cursor.fetchone()["c"]
+        """
+        total_rows = execute_query_as_dicts(total_query)
+        total_7d = total_rows[0]["c"] if total_rows else 0
 
         # Accuracy breakdown (7d)
-        cursor.execute("""
+        accuracy_query = """
             SELECT
                 SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                 SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
@@ -43,8 +38,9 @@ async def get_admin_dashboard_stats():
             FROM paired_events pe
             JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
-        """)
-        acc = dict(cursor.fetchone())
+        """
+        accuracy_rows = execute_query_as_dicts(accuracy_query)
+        acc = accuracy_rows[0] if accuracy_rows else {"confirmed": 0, "mitigated": 0, "overestimated": 0, "active": 0, "total": 0}
 
         # AI accuracy percentage
         evaluated = (acc["confirmed"] or 0) + (acc["mitigated"] or 0) + (acc["overestimated"] or 0)
@@ -54,11 +50,12 @@ async def get_admin_dashboard_stats():
             accuracy_pct = 0
 
         # Active threats right now
-        cursor.execute("SELECT COUNT(*) as c FROM paired_events WHERE lifecycle_status = 'active'")
-        active_now = cursor.fetchone()["c"]
+        active_query = "SELECT COUNT(*) as c FROM paired_events WHERE lifecycle_status = 'active'"
+        active_rows = execute_query_as_dicts(active_query)
+        active_now = active_rows[0]["c"] if active_rows else 0
 
         # Average response time (how early AI detected before alarm)
-        cursor.execute("""
+        avg_query = """
             SELECT AVG(
                 strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)
             ) as avg_delta
@@ -72,46 +69,46 @@ async def get_admin_dashboard_stats():
             WHERE th_ai.timestamp >= datetime('now', '-7 days')
                 AND pe.was_predictive = 1
                 AND pe.threat_type != 'official_alarm'
-        """)
-        avg_row = cursor.fetchone()
-        avg_early_seconds = round(avg_row["avg_delta"]) if avg_row and avg_row["avg_delta"] else None
+        """
+        avg_rows = execute_query_as_dicts(avg_query)
+        avg_row = avg_rows[0] if avg_rows else None
+        avg_early_seconds = round(avg_row["avg_delta"]) if avg_row and avg_row["avg_delta"] is not None else None
 
         # Threats by type (7d)
-        cursor.execute("""
+        type_query = """
             SELECT pe.threat_type, COUNT(*) as count
             FROM paired_events pe
             JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
             GROUP BY pe.threat_type ORDER BY count DESC
-        """)
-        by_type = [dict(r) for r in cursor.fetchall()]
+        """
+        by_type = execute_query_as_dicts(type_query)
 
         # Top regions (7d)
-        cursor.execute("""
+        regions_query = """
             SELECT pe.region, COUNT(*) as count
             FROM paired_events pe
             JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
             GROUP BY pe.region ORDER BY count DESC LIMIT 10
-        """)
-        top_regions = [dict(r) for r in cursor.fetchall()]
+        """
+        top_regions = execute_query_as_dicts(regions_query)
 
         # Hourly distribution (7d) — UTC to Kyiv
-        cursor.execute(f"""
+        hourly_query = f"""
             SELECT CAST(strftime('%H', datetime(th.timestamp, {tz_modifier})) AS INTEGER) as hour,
                    COUNT(*) as count
             FROM paired_events pe
             JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
             GROUP BY hour ORDER BY hour
-        """)
-        hourly = [dict(r) for r in cursor.fetchall()]
+        """
+        hourly = execute_query_as_dicts(hourly_query)
 
         # Errors count (24h)
-        cursor.execute("SELECT COUNT(*) as c FROM error_log WHERE timestamp >= datetime('now', '-1 day')")
-        errors_24h = cursor.fetchone()["c"]
-
-        conn.close()
+        errors_query = "SELECT COUNT(*) as c FROM error_log WHERE timestamp >= datetime('now', '-1 day')"
+        errors_rows = execute_query_as_dicts(errors_query)
+        errors_24h = errors_rows[0]["c"] if errors_rows else 0
 
         return {
             "total_events_7d": total_7d,

@@ -3,13 +3,12 @@ Admin Chronology API.
 Endpoints for threat chronology (v1 and v2 with AI correlation).
 """
 
-import sqlite3
 from datetime import datetime as dt_cls
 from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 
-from core.config import DB_PATH, get_kyiv_tz_offset
-from database.analytics_db import get_sqlite_connection
+from core.config import get_kyiv_tz_offset
+from database.db_helpers import execute_query_as_dicts
 
 router = APIRouter()
 
@@ -42,9 +41,6 @@ async def get_admin_chronology(
     tz_modifier = f"'{offset_hours:+d} hours'"
 
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
         day_filter = f'-{days} days'
 
         query = '''
@@ -79,8 +75,7 @@ async def get_admin_chronology(
             query = _apply_prediction_accuracy_filter(query, prediction_accuracy)
 
         query += " ORDER BY th.timestamp DESC LIMIT 500"
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
+        rows = execute_query_as_dicts(query, params)
 
         # Daily aggregation
         daily_agg_query = f'''
@@ -111,9 +106,7 @@ async def get_admin_chronology(
             daily_agg_query = _apply_prediction_accuracy_filter(daily_agg_query, prediction_accuracy)
 
         daily_agg_query += " GROUP BY day ORDER BY day"
-        cursor.execute(daily_agg_query, agg_params)
-        daily_stats = [dict(r) for r in cursor.fetchall()]
-        conn.close()
+        daily_stats = execute_query_as_dicts(daily_agg_query, agg_params)
 
         events = []
         for row in rows:
@@ -158,10 +151,6 @@ async def get_admin_chronology_v2(
     tz_modifier = f"'{offset_hours:+d} hours'"
 
     try:
-        conn = get_sqlite_connection(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
         # Date filter
         if date_from and date_to:
             date_clause = "AND th_ai.timestamp BETWEEN ? AND ?"
@@ -215,8 +204,7 @@ async def get_admin_chronology_v2(
             ORDER BY th_ai.timestamp DESC
         """
         params = date_params + extra_params
-        cursor.execute(query, params)
-        ai_events = [dict(r) for r in cursor.fetchall()]
+        ai_events = execute_query_as_dicts(query, params)
 
         # Get all official alarm timestamps for correlation
         alarm_query = f"""
@@ -227,8 +215,7 @@ async def get_admin_chronology_v2(
             {date_clause.replace('th_ai.timestamp', 'timestamp')}
             ORDER BY timestamp
         """
-        cursor.execute(alarm_query, date_params)
-        alarm_rows = cursor.fetchall()
+        alarm_rows = execute_query_as_dicts(alarm_query, date_params)
 
         # Build alarm lookup: region -> [(timestamp_epoch, ts_str)]
         alarm_by_region = {}
@@ -363,27 +350,24 @@ async def get_admin_chronology_v2(
             FROM paired_events pe
             JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
             WHERE pe.threat_type != 'official_alarm'
-            {date_clause.replace('th_ai.timestamp', 'th_ai.timestamp')}
+            {date_clause}
             {where_extra}
             GROUP BY day ORDER BY day
         """
         agg_params = date_params + extra_params
-        cursor.execute(daily_agg_query, agg_params)
-        daily_stats = [dict(r) for r in cursor.fetchall()]
+        daily_stats = execute_query_as_dicts(daily_agg_query, agg_params)
 
         # Threat type breakdown for charts
-        cursor.execute(f"""
+        type_breakdown_query = f"""
             SELECT pe.threat_type, pe.prediction_accuracy, COUNT(*) as count
             FROM paired_events pe
             JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
             WHERE pe.threat_type != 'official_alarm'
-            {date_clause.replace('th_ai.timestamp', 'th_ai.timestamp')}
+            {date_clause}
             {where_extra}
             GROUP BY pe.threat_type, pe.prediction_accuracy
-        """, date_params + extra_params)
-        type_breakdown = [dict(r) for r in cursor.fetchall()]
-
-        conn.close()
+        """
+        type_breakdown = execute_query_as_dicts(type_breakdown_query, date_params + extra_params)
 
         return {
             "total": total_period,
