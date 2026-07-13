@@ -5,7 +5,7 @@ Endpoints for Gemini rules audit history and threat history seeding.
 
 from fastapi import APIRouter, HTTPException
 
-from database.db_helpers import get_db, get_sqlite_connection, execute_query_as_dicts
+from database.db_helpers import get_db, execute_query_as_dicts
 
 router = APIRouter()
 

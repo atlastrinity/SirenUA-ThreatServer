@@ -3,11 +3,10 @@ Admin Errors API.
 Endpoints for error log listing and aggregated error statistics.
 """
 
-import sqlite3
 from fastapi import APIRouter, HTTPException
 
-from core.config import DB_PATH, get_kyiv_tz_offset
-from database.db_helpers import get_sqlite_connection, execute_query_as_dicts
+from core.config import get_kyiv_tz_offset
+from database.db_helpers import execute_query_as_dicts
 
 router = APIRouter()
 

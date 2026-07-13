@@ -7,7 +7,7 @@ import json
 from fastapi import APIRouter, HTTPException
 
 from core.config import DB_PATH
-from database.db_helpers import get_sqlite_connection, execute_query_as_dicts
+from database.db_helpers import execute_query_as_dicts
 
 router = APIRouter()
 

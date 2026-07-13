@@ -4,7 +4,7 @@ import re
 import sqlite3
 import sys
 import time
-from typing import Optional
+from typing import Optional, Tuple
 from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
@@ -1089,26 +1089,11 @@ class TelegramThreatMonitor:
         cleared_all = False
 
         for segment in segments:
-            is_seg_clear = any(re.search(kw, segment, re.IGNORECASE) for kw in CLEAR_KEYWORDS)
+            is_seg_clear, is_cleared_all = self._handle_regex_clearing(text, segment, is_test, cleared_regions)
+            if is_cleared_all:
+                cleared_all = True
             
             if is_seg_clear:
-                seg_regions = self._extract_regions(segment)
-                if seg_regions:
-                    for region in seg_regions:
-                        self.threat_manager.clear_threat(region)
-                        self._cancel_clear_tasks(region)
-                        cleared_regions.add(region)
-                else:
-                    # If it says 'clear' but names no regions, it might be a general clear.
-                    # We only clear all if the entire message contains no other region mentions
-                    if not self._extract_regions(text):
-                        self.threat_manager.clear_all(only_test=is_test)
-                        cleared_all = True
-                    else:
-                        if "област" in segment or "всіх" in segment or not seg_regions:
-                            self.threat_manager.clear_all(only_test=is_test)
-                            cleared_all = True
-                
                 # Reset context on clear
                 context_level = None
                 context_type = None
@@ -1136,25 +1121,7 @@ class TelegramThreatMonitor:
                     regions = list(ALL_REGIONS)
             
             # Extract Vector Context (Predictive routing)
-            predictive_regions = set()
-            
-            # If we have regions in context from previous segment, maybe this is a vector
-            if context_regions and regions and not level:
-                # previous segment had regions, current segment has new regions
-                source_region = context_regions[-1]
-                target_region = regions[0]
-                path = self._find_path(source_region, target_region)
-                if len(path) > 2:
-                    for r in path[1:-1]:
-                        predictive_regions.add(r)
-            
-            # Also check if multiple regions are in the same segment
-            if len(regions) >= 2:
-                for i in range(len(regions) - 1):
-                    path = self._find_path(regions[i], regions[i+1])
-                    if len(path) > 2:
-                        for r in path[1:-1]:
-                            predictive_regions.add(r)
+            predictive_regions = self._extract_regex_predictive_regions(regions, context_regions, level)
 
             # Update context_regions
             if regions:
@@ -1175,58 +1142,8 @@ class TelegramThreatMonitor:
             # Set threat for the detected regions
             if level and final_regions:
                 for region in final_regions:
-                    # Determine dynamic auto-clear delay and ETA based on threat type
-                    delay = 3600
-                    eta_str = ""
-                    if threat_type == "mig31k":
-                        delay = 2700
-                        eta_str = "~20-40 хв"
-                    elif threat_type == "ballistic":
-                        delay = 1800
-                        eta_str = "~2-5 хв"
-                    elif threat_type == "shahed":
-                        delay = 10800
-                        eta_str = "+1-2 год"
-                    elif threat_type == "cruise_missile":
-                        delay = 3600
-                        eta_str = "+15-30 хв"
-                    elif threat_type == "tu95":
-                        delay = 5400
-                        eta_str = "~30-90 хв"
-                    elif threat_type == "iskander":
-                        delay = 1800
-                        eta_str = "~2-5 хв"
-                    elif threat_type == "artillery":
-                        delay = 1800
-                        eta_str = "~0-5 хв"
-                        
                     is_pred = region in predictive_regions
-                    
-                    # Default confidence scores for regex fallback (no AI)
-                    regex_confidence = 75  # Base confidence for regex
-                    if level == "critical":
-                        regex_confidence = 90
-                    elif level == "high":
-                        regex_confidence = 80
-                    elif level == "medium":
-                        regex_confidence = 65
-                    elif level == "low":
-                        regex_confidence = 50
-                    if is_pred:
-                        regex_confidence = max(0, regex_confidence - 20)
-                    
-                    detail = self._build_region_detail(detail_text, region, threat_type)
-                    detail = clean_user_facing_threat_detail(detail)
-                    if is_pred:
-                        detail += f" ⚠️ Ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Ціль може прямувати через область."
-                    elif eta_str:
-                        detail += f" (Очікуваний час: {eta_str})"
-
-                    self.threat_manager.set_threat(region, level, threat_type, detail,
-                                                  confidence=regex_confidence, eta=eta_str, is_predictive=is_pred,
-                                                  is_test=is_test)
-                    self._schedule_auto_clear(region, delay)
-                    set_regions[region] = level
+                    self._apply_regex_threat(region, level, threat_type, detail_text, is_pred, is_test, set_regions)
 
         # Print consolidated status update for the logs
         if cleared_all:
@@ -1239,6 +1156,106 @@ class TelegramThreatMonitor:
                 matching = [r for r, l in set_regions.items() if l == lvl]
                 if matching:
                     print(f"🔴 [{channel}] Рівень {lvl.upper()} встановлено для {len(matching)} областей: {', '.join(matching)}")
+
+    def _handle_regex_clearing(self, text: str, segment: str, is_test: bool, cleared_regions: set) -> Tuple[bool, bool]:
+        """Handles clearing logic in regex processing. Returns (is_seg_clear, cleared_all)."""
+        is_seg_clear = any(re.search(kw, segment, re.IGNORECASE) for kw in CLEAR_KEYWORDS)
+        cleared_all = False
+        if is_seg_clear:
+            seg_regions = self._extract_regions(segment)
+            if seg_regions:
+                for region in seg_regions:
+                    self.threat_manager.clear_threat(region)
+                    self._cancel_clear_tasks(region)
+                    cleared_regions.add(region)
+            else:
+                # If it says 'clear' but names no regions, it might be a general clear.
+                # We only clear all if the entire message contains no other region mentions
+                if not self._extract_regions(text):
+                    self.threat_manager.clear_all(only_test=is_test)
+                    cleared_all = True
+                else:
+                    if "област" in segment or "всіх" in segment or not seg_regions:
+                        self.threat_manager.clear_all(only_test=is_test)
+                        cleared_all = True
+        return is_seg_clear, cleared_all
+
+    def _extract_regex_predictive_regions(self, regions: list, context_regions: list, level: Optional[str]) -> set:
+        """Helper to extract predictive routing regions for regex processing."""
+        predictive_regions = set()
+        
+        # If we have regions in context from previous segment, maybe this is a vector
+        if context_regions and regions and not level:
+            # previous segment had regions, current segment has new regions
+            source_region = context_regions[-1]
+            target_region = regions[0]
+            path = self._find_path(source_region, target_region)
+            if len(path) > 2:
+                for r in path[1:-1]:
+                    predictive_regions.add(r)
+        
+        # Also check if multiple regions are in the same segment
+        if len(regions) >= 2:
+            for i in range(len(regions) - 1):
+                path = self._find_path(regions[i], regions[i+1])
+                if len(path) > 2:
+                    for r in path[1:-1]:
+                        predictive_regions.add(r)
+                        
+        return predictive_regions
+
+    def _apply_regex_threat(self, region: str, level: str, threat_type: str, detail_text: str, is_pred: bool, is_test: bool, set_regions: dict):
+        """Helper to set threat and auto-clear delay in regex processing."""
+        # Determine dynamic auto-clear delay and ETA based on threat type
+        delay = 3600
+        eta_str = ""
+        if threat_type == "mig31k":
+            delay = 2700
+            eta_str = "~20-40 хв"
+        elif threat_type == "ballistic":
+            delay = 1800
+            eta_str = "~2-5 хв"
+        elif threat_type == "shahed":
+            delay = 10800
+            eta_str = "+1-2 год"
+        elif threat_type == "cruise_missile":
+            delay = 3600
+            eta_str = "+15-30 хв"
+        elif threat_type == "tu95":
+            delay = 5400
+            eta_str = "~30-90 хв"
+        elif threat_type == "iskander":
+            delay = 1800
+            eta_str = "~2-5 хв"
+        elif threat_type == "artillery":
+            delay = 1800
+            eta_str = "~0-5 хв"
+            
+        # Default confidence scores for regex fallback (no AI)
+        regex_confidence = 75  # Base confidence for regex
+        if level == "critical":
+            regex_confidence = 90
+        elif level == "high":
+            regex_confidence = 80
+        elif level == "medium":
+            regex_confidence = 65
+        elif level == "low":
+            regex_confidence = 50
+        if is_pred:
+            regex_confidence = max(0, regex_confidence - 20)
+        
+        detail = self._build_region_detail(detail_text, region, threat_type)
+        detail = clean_user_facing_threat_detail(detail)
+        if is_pred:
+            detail += f" ⚠️ Ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Ціль може прямувати через область."
+        elif eta_str:
+            detail += f" (Очікуваний час: {eta_str})"
+
+        self.threat_manager.set_threat(region, level, threat_type, detail,
+                                      confidence=regex_confidence, eta=eta_str, is_predictive=is_pred,
+                                      is_test=is_test)
+        self._schedule_auto_clear(region, delay)
+        set_regions[region] = level
 
     def _build_region_detail(self, text: str, region: str, threat_type: str) -> str:
         prefix = THREAT_TYPES.get(threat_type, "Загроза")

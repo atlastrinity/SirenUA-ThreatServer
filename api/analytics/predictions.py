@@ -3,13 +3,11 @@ Analytics Predictions & Rules API.
 Endpoints: ML predictions, Gemini rules management, region history.
 """
 
-import sqlite3
 import json
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timezone
 
-from core.config import DB_PATH
-from database.db_helpers import get_db, get_sqlite_connection, execute_query_as_dicts
+from database.db_helpers import get_db, execute_query_as_dicts
 
 router = APIRouter()
 
