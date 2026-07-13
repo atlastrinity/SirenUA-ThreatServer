@@ -229,9 +229,8 @@ async def get_admin_chronology_v2(
             {date_clause}
             {where_extra}
             ORDER BY th_ai.timestamp DESC
-            LIMIT ?
         """
-        params = date_params + extra_params + [min(limit, 500)]
+        params = date_params + extra_params
         cursor.execute(query, params)
         ai_events = [dict(r) for r in cursor.fetchall()]
 
@@ -337,6 +336,7 @@ async def get_admin_chronology_v2(
             correlated_events.append(ev)
 
         # Aggregate stats (unfiltered for period)
+        total_period = len(correlated_events)
         stats = {
             "confirmed": sum(1 for e in correlated_events if e["match_type"] == "confirmed"),
             "mitigated": sum(1 for e in correlated_events if e["match_type"] == "mitigated"),
@@ -356,8 +356,11 @@ async def get_admin_chronology_v2(
             elif match_filter == "active":
                 correlated_events = [e for e in correlated_events if e["match_type"] == "active"]
 
+        # Slice to requested limit
+        sliced_events = correlated_events[:limit]
+
         # Time delta distribution (for histogram)
-        deltas = [e["time_delta_seconds"] for e in correlated_events if e["time_delta_seconds"] is not None]
+        deltas = [e["time_delta_seconds"] for e in sliced_events if e["time_delta_seconds"] is not None]
         delta_buckets = {}
         for d in deltas:
             bucket = (d // 60) * 60
@@ -399,9 +402,9 @@ async def get_admin_chronology_v2(
         conn.close()
 
         return {
-            "total": len(correlated_events),
+            "total": total_period,
             "stats": stats,
-            "events": correlated_events,
+            "events": sliced_events,
             "daily_stats": daily_stats,
             "delta_distribution": delta_buckets,
             "type_breakdown": type_breakdown
