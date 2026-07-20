@@ -100,8 +100,35 @@ class ThreatState:
 
     def __init__(self):
         self.active_threats: list[SingleThreat] = []
-        self.is_active: bool = False  # Офіційна тривога (alerts.in.ua)
+        self._is_official_active: bool = False
         self.is_test: bool = False
+
+    @property
+    def is_active(self) -> bool:
+        """Повертає True якщо активна офіційна тривога АБО якщо ціль вже в межах області (ETA = 0)."""
+        if self._is_official_active:
+            return True
+        
+        # Перевіряємо, чи є активні підтверджені загрози, які вже прилетіли ("в області")
+        for t in self.active_threats:
+            if not t.is_predictive and not t.is_test:
+                if t.eta == "в області":
+                    return True
+                if t.eta_seconds is not None and t.eta_seconds > 0:
+                    try:
+                        from datetime import datetime, timezone
+                        since_str = t.since.replace("Z", "+00:00")
+                        since_dt = datetime.fromisoformat(since_str)
+                        elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
+                        if elapsed >= t.eta_seconds:
+                            return True
+                    except Exception:
+                        pass
+        return False
+
+    @is_active.setter
+    def is_active(self, value: bool):
+        self._is_official_active = value
 
     @property
     def level(self) -> str:
@@ -142,6 +169,7 @@ class ThreatState:
 
     def clear(self):
         self.active_threats.clear()
+        self._is_official_active = False
         self.is_test = False
 
     def clear_by_group_id(self, group_id: str) -> Optional[SingleThreat]:

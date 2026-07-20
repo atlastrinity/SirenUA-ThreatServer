@@ -48,6 +48,45 @@ def clean_user_facing_threat_detail(text: str) -> str:
     text = re.sub(r' +', ' ', text).strip()
     return text
 
+def parse_eta_seconds(eta_str: str) -> Optional[int]:
+    if not eta_str:
+        return None
+    # Remove tilde, plus, spaces
+    clean = eta_str.replace("~", "").replace("+", "").strip().lower()
+    # Handle "в області"
+    if "в області" in clean:
+        return 0
+    # Check minutes
+    if "хв" in clean:
+        val = clean.replace("хв", "").strip()
+        if "-" in val:
+            parts = val.split("-")
+            try:
+                # Use max of the range to be safe
+                return int(float(parts[1].strip()) * 60)
+            except (ValueError, IndexError):
+                pass
+        else:
+            try:
+                return int(float(val) * 60)
+            except ValueError:
+                pass
+    # Check hours
+    elif "год" in clean:
+        val = clean.replace("год", "").strip()
+        if "-" in val:
+            parts = val.split("-")
+            try:
+                return int(float(parts[1].strip()) * 3600)
+            except (ValueError, IndexError):
+                pass
+        else:
+            try:
+                return int(float(val) * 3600)
+            except ValueError:
+                pass
+    return None
+
 class TelegramThreatMonitor:
     def __init__(self, threat_manager):
         self.threat_manager = threat_manager
@@ -476,6 +515,9 @@ class TelegramThreatMonitor:
         
         if telemetry_delay:
             delay = telemetry_delay
+
+        if eta_seconds is None and eta_str:
+            eta_seconds = parse_eta_seconds(eta_str)
                 
         return delay, eta_str or None, eta_seconds
 
@@ -553,6 +595,24 @@ class TelegramThreatMonitor:
                                            is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
                                            eta_seconds=eta_seconds)
             self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
+            
+            # Schedule ETA-based alarm escalation for confirmed (non-predictive) threats
+            if not is_pred and not is_test:
+                eta_sec = eta_seconds
+                if eta_sec is None:
+                    eta_defaults = {
+                        "mig31k": 1200,
+                        "ballistic": 180,
+                        "kab": 600,
+                        "shahed": 5400,
+                        "cruise_missile": 1200,
+                        "tu95": 3600,
+                        "iskander": 180,
+                        "artillery": 120,
+                    }
+                    eta_sec = eta_defaults.get(threat_type, 1800)
+                if eta_sec and eta_sec > 0:
+                    self._schedule_eta_escalation(region, eta_sec, adjusted_level, threat_type, group_id)
             
             if is_pred:
                 grace_period = 300
@@ -1486,6 +1546,85 @@ class TelegramThreatMonitor:
             group_id
         )
 
+    def _schedule_eta_escalation(self, region: str, eta_seconds: float, current_level: str, threat_type: str = None, group_id: str = None):
+        """
+        Schedules a task to escalate the threat level and activate the air alarm 
+        once the ETA expires for a confirmed threat.
+        """
+        key = (region, threat_type, group_id)
+        if not hasattr(self, '_eta_escalation_tasks'):
+            self._eta_escalation_tasks = {}
+        self._schedule_task_helper(
+            self._eta_escalation_tasks,
+            key,
+            eta_seconds,
+            self._execute_eta_escalation_callback,
+            "ETA-Escalation",
+            region,
+            threat_type,
+            group_id,
+            current_level
+        )
+        print(f"⏱️  [ETA-Escalation] Заплановано активацію тривоги для {region} (тип: {threat_type}, ETA: {int(eta_seconds)} сек)")
+
+    def _execute_eta_escalation_callback(self, region: str, threat_type: str, group_id: str, original_level: str):
+        """
+        Fires when ETA expires for a confirmed threat.
+        Escalates to critical and marks the official alarm as active.
+        Does nothing if the threat was already cleared or the alarm is already on.
+        """
+        state = self.threat_manager.threats.get(region)
+        if not state or state.level == "none":
+            print(f"⚠️  [ETA-Escalation] Загроза для {region} вже знята — ескалацію скасовано.")
+            return
+
+        # Check backing field _is_official_active to avoid is_active property evaluated to True
+        is_official = getattr(state, "_is_official_active", False)
+        if is_official:
+            print(f"ℹ️  [ETA-Escalation] Офіційна тривога для {region} вже активна — пропускаємо.")
+            return
+
+        # Make sure the threat that triggered this escalation still exists
+        matching_threat = None
+        for t in state.active_threats:
+            if t.threat_type == threat_type and not t.is_predictive and not t.is_test:
+                if group_id is None or t.group_id == group_id:
+                    matching_threat = t
+                    break
+
+        if not matching_threat:
+            print(f"⚠️  [ETA-Escalation] Активна загроза для {region} (тип: {threat_type}) не знайдена — ескалацію скасовано.")
+            return
+
+        # 1. Escalate threat level to critical
+        threat_types_no_escalate = {"artillery"}  # artillery doesn't benefit from alarm
+        if threat_type not in threat_types_no_escalate:
+            from core.regions import get_ukrainian_threat_type
+            threat_ukr = get_ukrainian_threat_type(threat_type) if threat_type else "БПЛА/ракета"
+            escalated_detail = (
+                f"⚠️ {threat_ukr} вже в МЕЖАХ ОБЛАСТІ! "
+                "Негайно прямуйте до укриття!"
+            )
+            self.threat_manager.set_threat(
+                region=region,
+                level="critical",
+                threat_type=threat_type,
+                detail=escalated_detail,
+                confidence=95,
+                eta="в області",
+                is_predictive=False,
+                is_test=False,
+                telemetry={"group_id": group_id} if group_id else None,
+            )
+            print(f"🔴 [ETA-Escalation] Рівень підвищено до CRITICAL для {region} (тип: {threat_type}) — ціль в МЕЖАХ ОБЛАСТІ")
+
+        # 2. Activate the official alarm flag (since it entered the region, we treat it as active)
+        changed = self.threat_manager.set_alarm_active(region, True)
+        if changed:
+            print(f"🚨 [ETA-Escalation] Офіційну тривогу активовано для {region} (ETA-тригер)")
+        else:
+            print(f"ℹ️  [ETA-Escalation] Тривога для {region} вже була активна або регіон не знайдено.")
+
     def _schedule_initial_auto_clears(self):
         from datetime import datetime, timezone
         for region, state in self.threat_manager.threats.items():
@@ -1524,6 +1663,21 @@ class TelegramThreatMonitor:
                             else:
                                 self._schedule_auto_clear(region, remaining, threat_type=t_type, group_id=t_gid)
                                 print(f"⏳ Заплановано автозняття загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
+                                
+                                # Re-arm ETA escalation if ETA hasn't fired yet
+                                eta_sec = getattr(threat, "eta_seconds", None)
+                                is_official = getattr(state, "_is_official_active", False)
+                                if eta_sec and eta_sec > 0 and not is_official and not threat.is_test:
+                                    since_str_n = since_str.replace("Z", "+00:00")
+                                    since_dt2 = datetime.fromisoformat(since_str_n)
+                                    elapsed2 = (datetime.now(timezone.utc) - since_dt2).total_seconds()
+                                    eta_remaining = eta_sec - elapsed2
+                                    if eta_remaining > 0:
+                                        self._schedule_eta_escalation(region, eta_remaining, threat.level, t_type, t_gid)
+                                    else:
+                                        # ETA already expired while offline — escalate immediately
+                                        self._execute_eta_escalation_callback(region, t_type, t_gid, threat.level)
+                                        print(f"🚨 [ETA-Escalation] ETA для {region} (тип: {t_type}) вже минув під час офлайну — миттєва ескалація.")
                     except Exception as e:
                         print(f"⚠️ Помилка відновлення таймерів для {region}: {e}")
                         if is_pred:
