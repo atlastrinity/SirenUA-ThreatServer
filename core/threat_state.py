@@ -762,7 +762,8 @@ class MockThreatManager:
             }
 
         if not self.threats[region].is_test:
-            has_changed = (self.threats[region].is_active != is_active)
+            current_official = getattr(self.threats[region], "_is_official_active", False)
+            has_changed = (current_official != is_active)
             self.threats[region].is_active = is_active
             if has_changed:
                 self.save_real_threats_to_db()
