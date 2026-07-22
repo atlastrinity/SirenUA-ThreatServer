@@ -33,7 +33,7 @@ def _classify_error_type(error_msg: str, source: str) -> str:
     if "sqlite" in error_msg_l or "database" in error_msg_l or "query" in error_msg_l or "locked" in error_msg_l:
         return "database_error"
     if "not found" in error_msg_l or "404" in error_msg:
-        return "database_error"
+        return "not_found"
     if "validate" in error_msg_l or "missing field" in error_msg_l or "pydantic" in error_msg_l or "valueerror" in error_msg_l:
         return "validation_error"
     if "connection" in error_msg_l or "connectionerror" in error_msg_l or "socket" in error_msg_l or "network" in error_msg_l or "http" in error_msg_l:

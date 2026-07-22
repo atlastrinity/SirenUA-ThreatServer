@@ -47,7 +47,7 @@ def register_exception_handlers(app: FastAPI):
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-        if exc.status_code >= 400:
+        if exc.status_code >= 500 or exc.status_code in [401, 403, 429]:
             safe_run_task(asyncio.to_thread(
                 log_error_to_db,
                 "server",
