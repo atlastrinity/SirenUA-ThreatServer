@@ -363,7 +363,7 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
     _send_fcm_notification_sync(region, level, threat_type, detail, play_sound, confidence, eta, is_official_alarm, is_test)
 
 def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False, is_test: bool = False):
-    if not HAS_FIREBASE:
+    if not HAS_FIREBASE or not firebase_admin._apps:
         return
 
     mapped_type = threat_type if threat_type else ("official_alarm" if is_official_alarm else None)

@@ -248,21 +248,40 @@ MANDATORY fields:
             
         return False
 
-    def build_rules_context(self) -> str:
-        """Load learned rules from DB and format them as context for Gemini prompt.
+    def build_rules_context(self, target_regions: Optional[List[str]] = None) -> str:
+        """Load learned rules from DB filtered by target/source region cluster.
         Only feeds active rules with solid evidence (>= 3 events) and high accuracy (>= 60%)."""
         try:
+            from core.regions import get_expanded_region_cluster
             conn = get_sqlite_connection(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT rule_type, rule_text, evidence_count, accuracy_score
-                FROM gemini_rules
-                WHERE is_active = 1 AND evidence_count >= 3 AND accuracy_score >= 0.60
-                ORDER BY evidence_count DESC, accuracy_score DESC
-                LIMIT 25
-            ''')
+            if target_regions:
+                expanded = get_expanded_region_cluster(target_regions)
+                placeholders = ",".join(["?"] * len(expanded))
+                query = f'''
+                    SELECT rule_type, rule_text, evidence_count, accuracy_score, source_region, target_region
+                    FROM gemini_rules
+                    WHERE is_active = 1 AND evidence_count >= 3 AND accuracy_score >= 0.60
+                      AND (
+                          source_region IN ({placeholders})
+                          OR target_region IN ({placeholders})
+                          OR (source_region IS NULL AND target_region IS NULL)
+                      )
+                    ORDER BY evidence_count DESC, accuracy_score DESC
+                    LIMIT 10
+                '''
+                params = list(expanded) * 2
+                cursor.execute(query, params)
+            else:
+                cursor.execute('''
+                    SELECT rule_type, rule_text, evidence_count, accuracy_score, source_region, target_region
+                    FROM gemini_rules
+                    WHERE is_active = 1 AND evidence_count >= 3 AND accuracy_score >= 0.60
+                    ORDER BY evidence_count DESC, accuracy_score DESC
+                    LIMIT 10
+                ''')
             rules = cursor.fetchall()
             conn.close()
             
@@ -601,8 +620,19 @@ MANDATORY fields:
 
         prompt = self.system_prompt + f"\n\nПОТОЧНИЙ КИЇВСЬКИЙ ЧАС: {current_time_kyiv}\n\n"
         
-        # Inject learned rules
-        rules_ctx = self.build_rules_context()
+        # Extract regions from incoming messages for smart rule filtering
+        detected_regions = set()
+        from core.regions import ALL_REGIONS
+        for msg in messages:
+            text_lower = msg.get("text", "").lower()
+            for r_name, r_info in ALL_REGIONS.items():
+                for kw in r_info.get("keywords", []):
+                    if kw in text_lower:
+                        detected_regions.add(r_name)
+                        break
+
+        # Inject learned rules filtered by detected region cluster
+        rules_ctx = self.build_rules_context(target_regions=list(detected_regions) if detected_regions else None)
         if rules_ctx:
             prompt += rules_ctx + "\n"
         

@@ -268,6 +268,9 @@ async def run_tests():
 
     print("\n🎉 ВСІ ТЕСТИ ПРОЙДЕНО УСПІШНО! Логіка та парсер працюють ідеально!")
     print("==================================================")
+    threat_manager.clear_all()
+    threat_manager.save_to_file()
+    print("🧹 Тестовий стан успішно очищено з threats_state.json!")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())

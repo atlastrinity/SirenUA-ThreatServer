@@ -33,6 +33,30 @@ THREAT_TYPES = {
     "kab": "Керовані авіабомби (КАБ)",
 }
 
+import re
+
+def sanitize_threat_consistency(level: str, detail: Optional[str], is_predictive: bool, eta: Optional[str]) -> tuple[str, Optional[str], bool, Optional[str], bool]:
+    """
+    Гарантує абсолютну узгодженість між статусом загрози та текстом деталізації.
+    Фундаментальне правило: Офіційна сирена (Червона область) ставиться ТІЛЬКИ державними джерелами.
+    Предиктивна/неофіційна загроза не може самовільно ставати 'Червоною' чи стверджувати 'в області'.
+    """
+    if not detail:
+        detail = ""
+    
+    if is_predictive:
+        if eta == "в області":
+            eta = "~15-30 хв"
+        clean_detail = detail
+        for p in ["в області", "в межах області", "у межах області", "в повітряному просторі"]:
+            clean_detail = re.sub(re.escape(p), "у напрямку області", clean_detail, flags=re.IGNORECASE)
+        detail = clean_detail
+        if level == "critical":
+            level = "high"
+        
+    return level, detail, is_predictive, eta, False
+
+
 class SingleThreat:
     """Одна конкретна загроза з унікальним ідентифікатором."""
 
@@ -43,12 +67,15 @@ class SingleThreat:
                  eta: Optional[str] = None, is_predictive: bool = False,
                  is_test: bool = False, group_id: Optional[str] = None,
                  paired_event_id: Optional[int] = None,
-                 eta_seconds: Optional[int] = None):
+                 eta_seconds: Optional[int] = None,
+                 transit_from: Optional[str] = None):
+        level, detail, is_predictive, eta, _ = sanitize_threat_consistency(level, detail, is_predictive, eta)
         self.threat_id: str = group_id or f"t_{uuid.uuid4().hex[:12]}"
         self.level: str = level
         self.threat_type: Optional[str] = threat_type
         self.detail: Optional[str] = detail
         self.since: str = datetime.now(timezone.utc).isoformat()
+        self.last_updated_at: str = datetime.now(timezone.utc).isoformat()
         self.eta: Optional[str] = eta
         self.eta_seconds: Optional[int] = eta_seconds  # ETA в секундах для точного розрахунку
         self.confidence: Optional[int] = confidence
@@ -56,6 +83,16 @@ class SingleThreat:
         self.is_test: bool = is_test
         self.group_id: Optional[str] = group_id
         self.paired_event_id: Optional[int] = paired_event_id
+        self.transit_from: Optional[str] = transit_from
+
+    def apply_confidence_decay(self, amount: int = 10) -> int:
+        """Зменшує рівень довіри (confidence) при відсутності нових підтверджень."""
+        if self.confidence is None:
+            self.confidence = 50
+        self.confidence = max(0, self.confidence - amount)
+        if self.confidence < 30 and self.level in ["high", "medium"]:
+            self.level = "low"
+        return self.confidence
 
     def to_dict(self) -> dict:
         return {
@@ -64,6 +101,7 @@ class SingleThreat:
             "type": self.threat_type,
             "detail": self.detail,
             "since": self.since,
+            "last_updated_at": self.last_updated_at,
             "confidence": self.confidence,
             "eta": self.eta,
             "eta_seconds": self.eta_seconds,
@@ -71,6 +109,7 @@ class SingleThreat:
             "is_test": self.is_test,
             "group_id": self.group_id,
             "paired_event_id": self.paired_event_id,
+            "transit_from": self.transit_from,
         }
 
     @classmethod
@@ -87,9 +126,11 @@ class SingleThreat:
             group_id=data.get("group_id"),
             paired_event_id=data.get("paired_event_id"),
             eta_seconds=data.get("eta_seconds"),
+            transit_from=data.get("transit_from"),
         )
         t.threat_id = data.get("threat_id", t.threat_id)
         t.since = data.get("since", t.since)
+        t.last_updated_at = data.get("last_updated_at", t.last_updated_at)
         return t
 
 

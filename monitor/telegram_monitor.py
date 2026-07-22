@@ -134,6 +134,9 @@ class TelegramThreatMonitor:
         # Запускаємо фоновий таск самонавчання правил (кожні 6 годин)
         self._rules_learner_task = asyncio.create_task(self._rules_learner_loop())
         
+        # Запускаємо фоновий цикл загасання довіри
+        self._decay_task = asyncio.create_task(self._confidence_decay_loop())
+        
         # 1. Try to load from environment variable (StringSession) - best for Render production
         session_string = os.environ.get("TELEGRAM_SESSION_STRING")
         if session_string:
@@ -590,14 +593,22 @@ class TelegramThreatMonitor:
             elif eta_str:
                 detail += f"\n(Очікуваний час: {eta_str})"
 
+            # Cross-Region Transit Handshake check
+            launch_origin = telemetry.get("launch_origin") if telemetry else None
+            if launch_origin:
+                for reg in ALL_REGIONS:
+                    if reg in launch_origin or launch_origin in reg:
+                        self._handle_cross_region_transit(reg, region, threat_type, group_id)
+                        break
+
             self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
                                            confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
                                            is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
                                            eta_seconds=eta_seconds)
             self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
             
-            # Schedule ETA-based alarm escalation for confirmed (non-predictive) threats
-            if not is_pred and not is_test:
+            # Schedule ETA-based alarm escalation for all non-test threats (including predictive)
+            if not is_test:
                 eta_sec = eta_seconds
                 if eta_sec is None:
                     eta_defaults = {
@@ -1569,25 +1580,23 @@ class TelegramThreatMonitor:
 
     def _execute_eta_escalation_callback(self, region: str, threat_type: str, group_id: str, original_level: str):
         """
-        Fires when ETA expires for a confirmed threat.
-        Escalates to critical and marks the official alarm as active.
-        Does nothing if the threat was already cleared or the alarm is already on.
+        Fires when ETA expires for a threat.
+        If the official state alarm is NOT active, triggers Gemini re-evaluation for predictive threats.
+        Never forces critical red or fake alarms on unconfirmed threats.
         """
         state = self.threat_manager.threats.get(region)
         if not state or state.level == "none":
             print(f"⚠️  [ETA-Escalation] Загроза для {region} вже знята — ескалацію скасовано.")
             return
 
-        # Check backing field _is_official_active to avoid is_active property evaluated to True
         is_official = getattr(state, "_is_official_active", False)
         if is_official:
             print(f"ℹ️  [ETA-Escalation] Офіційна тривога для {region} вже активна — пропускаємо.")
             return
 
-        # Make sure the threat that triggered this escalation still exists
         matching_threat = None
         for t in state.active_threats:
-            if t.threat_type == threat_type and not t.is_predictive and not t.is_test:
+            if t.threat_type == threat_type and not t.is_test:
                 if group_id is None or t.group_id == group_id:
                     matching_threat = t
                     break
@@ -1596,34 +1605,8 @@ class TelegramThreatMonitor:
             print(f"⚠️  [ETA-Escalation] Активна загроза для {region} (тип: {threat_type}) не знайдена — ескалацію скасовано.")
             return
 
-        # 1. Escalate threat level to critical
-        threat_types_no_escalate = {"artillery"}  # artillery doesn't benefit from alarm
-        if threat_type not in threat_types_no_escalate:
-            from core.regions import get_ukrainian_threat_type
-            threat_ukr = get_ukrainian_threat_type(threat_type) if threat_type else "БПЛА/ракета"
-            escalated_detail = (
-                f"⚠️ {threat_ukr} вже в МЕЖАХ ОБЛАСТІ! "
-                "Негайно прямуйте до укриття!"
-            )
-            self.threat_manager.set_threat(
-                region=region,
-                level="critical",
-                threat_type=threat_type,
-                detail=escalated_detail,
-                confidence=95,
-                eta="в області",
-                is_predictive=False,
-                is_test=False,
-                telemetry={"group_id": group_id} if group_id else None,
-            )
-            print(f"🔴 [ETA-Escalation] Рівень підвищено до CRITICAL для {region} (тип: {threat_type}) — ціль в МЕЖАХ ОБЛАСТІ")
-
-        # 2. Activate the official alarm flag (since it entered the region, we treat it as active)
-        changed = self.threat_manager.set_alarm_active(region, True)
-        if changed:
-            print(f"🚨 [ETA-Escalation] Офіційну тривогу активовано для {region} (ETA-тригер)")
-        else:
-            print(f"ℹ️  [ETA-Escalation] Тривога для {region} вже була активна або регіон не знайдено.")
+        print(f"⏳ [ETA-Escalation] Час ETA для загрози {region} минув, але офіційної тривоги немає. Запускаємо переоцінку...")
+        self._schedule_predictive_reevaluation(region, 0.0, threat_type, group_id)
 
     def _schedule_initial_auto_clears(self):
         from datetime import datetime, timezone
@@ -1742,3 +1725,123 @@ class TelegramThreatMonitor:
         if self.analyzer and hasattr(self.analyzer, 'run_rules_learner'):
             return self.analyzer.run_rules_learner()
         return 0
+
+    async def _confidence_decay_loop(self):
+        """
+        Фоновий цикл загасання довіри (Confidence Decay).
+        Кожні 60 секунд перевіряє загрози. Якщо загроза не оновлювалася > 10 хвилин,
+        зменшує confidence на 10%. Якщо confidence < 20%, виконує авто-очищення (lost_contact).
+        """
+        while self.is_running:
+            try:
+                await asyncio.sleep(60)
+                self._apply_confidence_decay_step()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"⚠️  [Confidence Decay] Помилка в циклі загасання: {e}")
+
+    def _apply_confidence_decay_step(self):
+        """Виконує один крок перевірки та зменшення довіри загроз."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        
+        for region, state in list(self.threat_manager.threats.items()):
+            if state.level == "none" or not state.active_threats:
+                continue
+                
+            for threat in list(state.active_threats):
+                updated_str = getattr(threat, "last_updated_at", None) or threat.since
+                if not updated_str:
+                    continue
+                    
+                try:
+                    dt_updated = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+                    idle_seconds = (now - dt_updated).total_seconds()
+                except Exception:
+                    continue
+                    
+                if idle_seconds >= 600:
+                    old_conf = threat.confidence or 50
+                    new_conf = threat.apply_confidence_decay(10)
+                    print(f"📉 [Confidence Decay] {region} ({threat.threat_type}): confidence {old_conf}% -> {new_conf}% (немає оновлень {int(idle_seconds/60)} хв)")
+                    
+                    if new_conf < 20:
+                        print(f"🧹 [Confidence Decay] {region} ({threat.threat_type}): confidence < 20% -> авто-зняття (lost_contact)")
+                        clearing_telemetry = {
+                            "linked_group_id": threat.group_id,
+                            "resolution_type": "lost_contact",
+                            "prediction_accuracy_hint": "overestimated",
+                            "damage_assessment": "none",
+                            "impact_confirmed": False,
+                            "clearing_context_tags": ["confidence_decay", "lost_contact"]
+                        }
+                        try:
+                            from database.analytics_db import log_clearing_to_db
+                            log_clearing_to_db(
+                                region=region,
+                                clearing_telemetry=clearing_telemetry,
+                                source_channel="ConfidenceDecay",
+                                message_text="[Decay] Втрачено контакт з ціллю (відсутні оновлення понад 15 хв).",
+                                clearing_confidence=new_conf,
+                                was_predictive=threat.is_predictive
+                            )
+                        except Exception:
+                            pass
+                        self.threat_manager.clear_threat(
+                            region,
+                            clearing_telemetry=clearing_telemetry,
+                            threat_type=threat.threat_type,
+                            group_id=threat.group_id
+                        )
+
+    def _handle_cross_region_transit(self, source_region: str, target_region: str, threat_type: str, group_id: str = None):
+        """
+        Автоматично обробляє транзит загрози із source_region у target_region.
+        Знімає/знижує загрозу у source_region (passed_through) і передає у target_region.
+        """
+        from core.regions import ALL_REGIONS
+        if not source_region or source_region not in ALL_REGIONS:
+            return
+        if not target_region or target_region not in ALL_REGIONS or source_region == target_region:
+            return
+
+        source_state = self.threat_manager.threats.get(source_region)
+        if not source_state or source_state.level == "none":
+            return
+
+        matching_threat = None
+        for t in source_state.active_threats:
+            if t.threat_type == threat_type:
+                if group_id is None or t.group_id == group_id:
+                    matching_threat = t
+                    break
+
+        if matching_threat:
+            print(f"🔄 [Cross-Region Transit] Ціль ({threat_type}) перейшла з {source_region} → {target_region}. Очищаємо {source_region}...")
+            clearing_telemetry = {
+                "linked_group_id": group_id or matching_threat.group_id,
+                "resolution_type": "passed_through",
+                "prediction_accuracy_hint": "confirmed",
+                "damage_assessment": "none",
+                "impact_confirmed": False,
+                "clearing_context_tags": ["cross_region_transit", f"to_{target_region}"]
+            }
+            try:
+                from database.analytics_db import log_clearing_to_db
+                log_clearing_to_db(
+                    region=source_region,
+                    clearing_telemetry=clearing_telemetry,
+                    source_channel="CrossRegionTransit",
+                    message_text=f"[Транзит] Ціль перейшла в {target_region}.",
+                    clearing_confidence=matching_threat.confidence,
+                    was_predictive=matching_threat.is_predictive
+                )
+            except Exception:
+                pass
+            self.threat_manager.clear_threat(
+                source_region,
+                clearing_telemetry=clearing_telemetry,
+                threat_type=threat_type,
+                group_id=group_id or matching_threat.group_id
+            )

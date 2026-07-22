@@ -58,8 +58,9 @@ async def poll_aerial_alerts():
                     else:
                         logger.warning(f"Помилка опитування тривог (URL: {url}): HTTP статус {response.status}")
         except Exception as e:
-            logger.error(f"Помилка під час опитування тривог (URL: {url}): {e}")
-            log_error_to_db("server", str(e), endpoint="poll_aerial_alerts", context=f"url={url}")
+            err_msg = str(e) or repr(e) or type(e).__name__
+            logger.error(f"Помилка під час опитування тривог (URL: {url}): {err_msg}")
+            log_error_to_db("server", err_msg, endpoint="poll_aerial_alerts", context=f"url={url}")
 
         await asyncio.sleep(15.0 if token else 30.0)
 
