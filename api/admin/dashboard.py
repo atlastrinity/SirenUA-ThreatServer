@@ -50,7 +50,7 @@ async def get_admin_dashboard_stats():
             accuracy_pct = 0
 
         # Active threats right now
-        active_query = "SELECT COUNT(*) as c FROM paired_events WHERE lifecycle_status = 'active'"
+        active_query = "SELECT COUNT(*) as c FROM paired_events WHERE lifecycle_status = 'active' AND threat_type != 'official_alarm'"
         active_rows = execute_query_as_dicts(active_query)
         active_now = active_rows[0]["c"] if active_rows else 0
 

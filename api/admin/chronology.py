@@ -54,10 +54,10 @@ async def get_admin_chronology(
                    pe.gemini_group_id,
                    tc.timestamp as clearing_timestamp,
                    tc.resolution_type
-            FROM threat_history th
-            LEFT JOIN paired_events pe ON th.id = pe.threat_event_id
-            LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
-            WHERE th.timestamp >= datetime('now', ?)
+            FROM paired_events pe
+            JOIN threat_history th ON pe.threat_event_id = th.id
+            LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
+            WHERE th.timestamp >= datetime('now', ?) AND pe.threat_type != 'official_alarm'
         '''
         params = [day_filter]
 
@@ -81,17 +81,17 @@ async def get_admin_chronology(
         # Daily aggregation
         daily_agg_query = f'''
             SELECT date(datetime(th.timestamp, {tz_modifier})) as day,
-                   SUM(CASE WHEN th.threat_type != 'official_alarm' THEN 1 ELSE 0 END) as total_events,
-                   SUM(CASE WHEN pe.lifecycle_status = 'cleared' OR (th.threat_type = 'official_alarm' AND tc.id IS NOT NULL) THEN 1 ELSE 0 END) as cleared,
-                   SUM(CASE WHEN pe.lifecycle_status = 'active' OR (th.threat_type = 'official_alarm' AND tc.id IS NULL) THEN 1 ELSE 0 END) as active,
+                   COUNT(*) as total_events,
+                   SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
+                   SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
                    SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
-            FROM threat_history th
-            LEFT JOIN paired_events pe ON th.id = pe.threat_event_id
-            LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
-            WHERE th.timestamp >= datetime('now', ?)
+            FROM paired_events pe
+            JOIN threat_history th ON pe.threat_event_id = th.id
+            LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
+            WHERE th.timestamp >= datetime('now', ?) AND pe.threat_type != 'official_alarm'
         '''
         agg_params = [day_filter]
         if decoded_region:
