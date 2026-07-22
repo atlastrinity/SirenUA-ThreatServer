@@ -600,13 +600,28 @@ MANDATORY fields:
             return 0
 
     def _clean_and_parse_json(self, response_text: str) -> Any:
-        """Cleans markdown JSON fences from response text and parses it."""
+        """Cleans markdown JSON fences from response text and parses it with regex recovery fallback."""
+        import re
         result_text = response_text.strip()
-        if result_text.startswith("```json"):
+        if "```json" in result_text:
             result_text = result_text.split("```json", 1)[1]
-        if result_text.endswith("```"):
+        if "```" in result_text:
             result_text = result_text.rsplit("```", 1)[0]
-        return json.loads(result_text.strip())
+        result_text = result_text.strip()
+        
+        try:
+            return json.loads(result_text)
+        except json.JSONDecodeError:
+            # Resilient fallback: extract main array/object and fix trailing commas
+            match = re.search(r'(\[.*\]|\{.*\})', result_text, re.DOTALL)
+            if match:
+                clean = match.group(1)
+                clean = re.sub(r',\s*([\]\}])', r'\1', clean)
+                try:
+                    return json.loads(clean)
+                except Exception:
+                    pass
+            raise
 
     def _build_analysis_prompt(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> Tuple[str, Optional[str]]:
         """Helper to construct the prompt with Kyiv timezone, rules, and message payloads."""
