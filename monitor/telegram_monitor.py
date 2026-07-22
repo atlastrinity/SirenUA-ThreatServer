@@ -1200,7 +1200,7 @@ class TelegramThreatMonitor:
                     regions = list(ALL_REGIONS)
             
             # Extract Vector Context (Predictive routing)
-            predictive_regions = self._extract_regex_predictive_regions(regions, context_regions, level)
+            predictive_regions = self._extract_regex_predictive_regions(segment, regions, context_regions, level)
 
             # Update context_regions
             if regions:
@@ -1259,13 +1259,29 @@ class TelegramThreatMonitor:
                         cleared_all = True
         return is_seg_clear, cleared_all
 
-    def _extract_regex_predictive_regions(self, regions: list, context_regions: list, level: Optional[str]) -> set:
+    def _extract_regex_predictive_regions(self, segment: str, regions: list, context_regions: list, level: Optional[str]) -> set:
         """Helper to extract predictive routing regions for regex processing."""
         predictive_regions = set()
+        segment_lower = segment.lower() if segment else ""
         
-        # If we have regions in context from previous segment, maybe this is a vector
+        # 1. Detect regions following directional keywords ("у напрямку", "напрямком на", "вектор", "курсом на")
+        direction_keywords = ["напрямк", "вектор", "курсом", "прямує", "рух у", "рух на", "в бік", "у бік", "в напрям"]
+        has_direction = any(kw in segment_lower for kw in direction_keywords)
+        
+        if has_direction:
+            for kw in direction_keywords:
+                pos = segment_lower.find(kw)
+                if pos != -1:
+                    after_text = segment_lower[pos:]
+                    for r_name in regions:
+                        r_info = ALL_REGIONS.get(r_name, {})
+                        for r_kw in r_info.get("keywords", []):
+                            if re.search(re.escape(r_kw), after_text, re.IGNORECASE):
+                                predictive_regions.add(r_name)
+                                break
+
+        # 2. If we have regions in context from previous segment, maybe this is a vector
         if context_regions and regions and not level:
-            # previous segment had regions, current segment has new regions
             source_region = context_regions[-1]
             target_region = regions[0]
             path = self._find_path(source_region, target_region)
@@ -1273,7 +1289,7 @@ class TelegramThreatMonitor:
                 for r in path[1:-1]:
                     predictive_regions.add(r)
         
-        # Also check if multiple regions are in the same segment
+        # 3. Check intermediate path regions
         if len(regions) >= 2:
             for i in range(len(regions) - 1):
                 path = self._find_path(regions[i], regions[i+1])
