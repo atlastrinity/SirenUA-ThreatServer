@@ -48,6 +48,14 @@ def clean_user_facing_threat_detail(text: str) -> str:
     text = re.sub(r' +', ' ', text).strip()
     return text
 
+def sanitize_region_in_flight_text(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r'\bв\s+([А-Яа-яЄєІіЇїҐґ\s\-]+(?:області|областях|регіоні))', r'у напрямку \1', text, flags=re.IGNORECASE)
+    for p in ["в області", "в межах області", "у межах області", "в повітряному просторі"]:
+        text = re.sub(re.escape(p), "у напрямку області", text, flags=re.IGNORECASE)
+    return text
+
 def parse_eta_seconds(eta_str: str) -> Optional[int]:
     if not eta_str:
         return None
@@ -575,6 +583,11 @@ class TelegramThreatMonitor:
             if not region or region not in ALL_REGIONS:
                 continue
             
+            # If distance to target > 15 km, target is approaching/predictive
+            dist_km = telemetry.get("distance_to_target_km") if telemetry else None
+            if dist_km and dist_km > 15:
+                is_pred = True
+
             region_confidence = confidence
             if is_pred and region_confidence is not None:
                 region_confidence = max(0, region_confidence - 20)
@@ -582,6 +595,9 @@ class TelegramThreatMonitor:
             delay, eta_str, eta_seconds = self._calculate_auto_clear_delay(item, telemetry, threat_type)
             
             detail = clean_user_facing_threat_detail(text)
+            if is_pred:
+                detail = sanitize_region_in_flight_text(detail)
+
             telemetry_info = self._format_telemetry_info(telemetry)
             if telemetry_info:
                 detail += "\n" + "\n".join(telemetry_info)
