@@ -1,14 +1,68 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+
+# Caches and test outputs
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets
 .env
+.env.*
+!.env.example
+firebase-credentials.json
+google-services.json
+GoogleService-Info.plist
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Telegram Session files
 *.session
 *.session-journal
+
+# Logs & temporary files
 *.log
-firebase-credentials.json
+logs/
+tmp/
+temp/
+scratch/
+scratch_*.py
+
+# Databases & Runtime State files
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 threats_state.json
 real_threats_state.json
+
+# IDEs & System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
