@@ -35,6 +35,9 @@ except Exception:
 def clean_user_facing_threat_detail(text: str) -> str:
     if not text:
         return ""
+    # Strip raw markdown formatting (**text**, _text_)
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'_+', '', text)
     # Remove any brackets like [AI], [Telegram], [kpszsu], etc.
     text = re.sub(r'\[[A-Za-z0-9_.\-\s]+\]', '', text)
     # Remove Telegram handles like @monitoring_channel
@@ -44,6 +47,8 @@ def clean_user_facing_threat_detail(text: str) -> str:
     # Replace references to AI / ШІ with system
     text = re.sub(r'(?i)\bШІ\b', 'системи', text)
     text = re.sub(r'(?i)\bAI\b', 'системи', text)
+    # Deduplicate repeating warning emojis
+    text = re.sub(r'([‼️🔴⚠️])\1+', r'\1', text)
     # Clean up double spaces or leading/trailing whitespace
     text = re.sub(r' +', ' ', text).strip()
     return text
