@@ -180,7 +180,7 @@ def _correlate_single_event(ev: dict, alarm_by_region: dict) -> dict:
     pred_acc = ev.get("prediction_accuracy")
     lifecycle = ev.get("lifecycle_status")
 
-    if pred_acc == "confirmed" or (best_alarm and best_delta is not None and abs(best_delta) <= 1800):
+    if pred_acc == "confirmed":
         ev["match_type"] = "confirmed"
         if best_delta is not None:
             if best_delta > 0:
@@ -192,13 +192,17 @@ def _correlate_single_event(ev: dict, alarm_by_region: dict) -> dict:
             else:
                 ev["match_reason"] = "AI та офіційна тривога одночасно"
         else:
-            ev["match_reason"] = "Підтверджено через lifecycle"
+            ev["match_reason"] = "Підтверджено через результат"
     elif pred_acc == "mitigated":
         ev["match_type"] = "mitigated"
         ev["match_reason"] = "Загрозу нейтралізовано (ППО/РЕБ)"
     elif pred_acc == "overestimated":
         ev["match_type"] = "overestimated"
         ev["match_reason"] = "Тривога не підтверджена — AI переоцінив загрозу"
+    elif best_alarm and best_delta is not None and abs(best_delta) <= 1800:
+        ev["match_type"] = "confirmed"
+        mins = round(abs(best_delta) / 60)
+        ev["match_reason"] = f"Корельовано з офіційною тривогою ({mins} хв)"
     elif lifecycle == "active":
         ev["match_type"] = "active"
         ev["match_reason"] = "Загроза ще активна, очікуємо результат"
