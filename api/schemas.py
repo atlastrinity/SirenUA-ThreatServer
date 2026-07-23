@@ -11,6 +11,7 @@ class ThreatSetRequest(BaseModel):
     level: str  # none, low, medium, high, critical
     threat_type: Optional[str] = None
     detail: Optional[str] = None
+    is_predictive: bool = False
 
 
 class ShelterUploadItem(BaseModel):

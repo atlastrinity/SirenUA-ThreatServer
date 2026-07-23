@@ -59,6 +59,7 @@ async def set_mock_threat(request: ThreatSetRequest):
         level=request.level,
         threat_type=request.threat_type,
         detail=request.detail,
+        is_predictive=request.is_predictive,
         is_test=True,
     )
 
