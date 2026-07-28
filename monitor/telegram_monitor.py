@@ -588,9 +588,14 @@ class TelegramThreatMonitor:
             if not region or region not in ALL_REGIONS:
                 continue
             
-            # If distance to target > 15 km, target is approaching/predictive
+            # If distance to target > 15 km, target is approaching/predictive UNLESS text indicates active flight in region
             dist_km = telemetry.get("distance_to_target_km") if telemetry else None
-            if dist_km and dist_km > 15:
+            text_lower = text.lower()
+            is_active_flight = any(k in text_lower for k in ["через область", "переліт", "в повітряному просторі", "у повітряному просторі", "в області", "в межах області", "у межах області"])
+            
+            if is_active_flight:
+                is_pred = False
+            elif dist_km and dist_km > 15:
                 is_pred = True
 
             region_confidence = confidence
@@ -733,6 +738,36 @@ class TelegramThreatMonitor:
             self._apply_single_gemini_threat(item, adjusted_level, threat_type, confidence, telemetry, rules_applied, is_test)
 
         await self._propagate_predictive_threats()
+
+    def _handle_cross_region_transit(self, source_region: str, target_region: str, threat_type: Optional[str], group_id: Optional[str]):
+        """
+        Обробляє транзит загрози з одного регіону в інший (Cross-Region Transit Handshake).
+        Гарантує, що ціль, яка пролітає через простір території, виставляє активну загрозу (is_predictive = False).
+        """
+        if source_region == target_region:
+            return
+
+        print(f"✈️  [Transit Handshake] Переліт загрози ({threat_type or 'ціль'}): {source_region} ➔ {target_region}")
+
+        src_state = self.threat_manager.threats.get(source_region)
+        if src_state and src_state.level != "none":
+            source_genitive = get_genitive_region(source_region)
+            threat_type_ukr = get_ukrainian_threat_type(threat_type)
+            detail = f"🔴 Переліт цілі з {source_genitive} ({threat_type_ukr}) у повітряний простір области!"
+
+            self.threat_manager.set_threat(
+                region=target_region,
+                level=src_state.level if src_state.level != "none" else "high",
+                threat_type=threat_type,
+                detail=detail,
+                confidence=max(75, src_state.confidence or 80),
+                eta="в області",
+                is_predictive=False,
+                telemetry={"group_id": group_id} if group_id else None
+            )
+            tgt_state = self.threat_manager.threats.get(target_region)
+            if tgt_state:
+                tgt_state.is_active = True
 
 
     # --- Predictive Propagation Engine ---

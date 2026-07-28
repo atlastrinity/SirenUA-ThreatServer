@@ -38,12 +38,20 @@ import re
 def sanitize_threat_consistency(level: str, detail: Optional[str], is_predictive: bool, eta: Optional[str]) -> tuple[str, Optional[str], bool, Optional[str], bool]:
     """
     Гарантує абсолютну узгодженість між статусом загрози та текстом деталізації.
-    Фундаментальне правило: Офіційна сирена (Червона область) ставиться ТІЛЬКИ державними джерелами.
-    Предиктивна/неофіційна загроза не може самовільно ставати 'Червоною' чи стверджувати 'в області'.
+    Активний переліт через область або знаходження цілі у просторі області є підтвердженою загрозою (is_predictive = False).
     """
     if not detail:
         detail = ""
     
+    detail_lower = detail.lower()
+    # Якщо ціль активно пролітає через область або знаходиться у її просторі — це активний переліт!
+    is_active_flight = any(p in detail_lower for p in ["переліт", "через область", "в повітряному просторі", "у повітряному просторі", "в області", "в межах області", "у межах області"])
+    
+    if is_active_flight:
+        is_predictive = False
+        if level in ["low", "none"]:
+            level = "high"
+
     if is_predictive:
         if eta == "в області":
             eta = "~15-30 хв"
@@ -146,25 +154,12 @@ class ThreatState:
 
     @property
     def is_active(self) -> bool:
-        """Повертає True якщо активна офіційна тривога АБО якщо ціль вже в межах області (ETA = 0)."""
+        """Повертає True якщо активна офіційна тривога або є підтверджена висока/критична загроза (переліт через область)."""
         if self._is_official_active:
             return True
-        
-        # Перевіряємо, чи є активні підтверджені загрози, які вже прилетіли ("в області")
         for t in self.active_threats:
-            if not t.is_predictive and not t.is_test:
-                if t.eta == "в області":
-                    return True
-                if t.eta_seconds is not None and t.eta_seconds > 0:
-                    try:
-                        from datetime import datetime, timezone
-                        since_str = t.since.replace("Z", "+00:00")
-                        since_dt = datetime.fromisoformat(since_str)
-                        elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
-                        if elapsed >= t.eta_seconds:
-                            return True
-                    except Exception:
-                        pass
+            if not t.is_predictive and t.level in ["critical", "high"]:
+                return True
         return False
 
     @is_active.setter
@@ -634,6 +629,9 @@ class MockThreatManager:
             is_predictive, is_test, group_id=group_id,
             eta_seconds=eta_seconds
         )
+        
+        if level in ["critical", "high"] and not is_predictive:
+            self.threats[region]._is_official_active = True
         
         if has_changed:
             now = time.time()
