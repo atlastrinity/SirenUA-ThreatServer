@@ -3,6 +3,13 @@ SirenUA Threat Monitoring Server — Entry Point.
 Assembles the FastAPI app from core modules, registers middleware, routers, and health checks.
 """
 
+# Load .env BEFORE any core module imports (they read os.environ at import time)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import os
 import uvicorn
 from fastapi import FastAPI
