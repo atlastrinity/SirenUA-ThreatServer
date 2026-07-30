@@ -62,7 +62,7 @@ async def poll_aerial_alerts():
             logger.error(f"Помилка під час опитування тривог (URL: {url}): {err_msg}")
             log_error_to_db("server", err_msg, endpoint="poll_aerial_alerts", context=f"url={url}")
 
-        await asyncio.sleep(15.0 if token else 30.0)
+        await asyncio.sleep(15.0 if token else 10.0)
 
 
 @asynccontextmanager
