@@ -147,14 +147,17 @@ class ThreatState:
 
     DEDUP_WINDOW_SECONDS = 300
 
-    def __init__(self):
+    def __init__(self, region_name: str = ""):
+        self.region_name = region_name
         self.active_threats: list[SingleThreat] = []
-        self._is_official_active: bool = False
+        self._is_official_active: bool = (region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь"])
         self.is_test: bool = False
 
     @property
     def is_active(self) -> bool:
-        """Повертає True якщо активна офіційна тривога або є підтверджена висока/критична загроза (переліт через область)."""
+        """Повертає True якщо активна офіційна тривога, це АР Крим (постійно в червоній зоні) або є підтверджена висока/критична загроза."""
+        if self.region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь"]:
+            return True
         if self._is_official_active:
             return True
         for t in self.active_threats:
