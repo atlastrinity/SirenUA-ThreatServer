@@ -103,6 +103,13 @@ class SingleThreat:
         return self.confidence
 
     def to_dict(self) -> dict:
+        from core.regions import REGION_CENTER_COORDINATES
+        origin_lat = None
+        origin_lon = None
+        if self.transit_from and self.transit_from in REGION_CENTER_COORDINATES:
+            coords = REGION_CENTER_COORDINATES[self.transit_from]
+            origin_lat = coords[0]
+            origin_lon = coords[1]
         return {
             "threat_id": self.threat_id,
             "level": self.level,
@@ -118,6 +125,8 @@ class SingleThreat:
             "group_id": self.group_id,
             "paired_event_id": self.paired_event_id,
             "transit_from": self.transit_from,
+            "origin_latitude": origin_lat,
+            "origin_longitude": origin_lon,
         }
 
     @classmethod
