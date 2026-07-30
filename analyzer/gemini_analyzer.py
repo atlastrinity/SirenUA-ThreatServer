@@ -71,6 +71,12 @@ For informational messages, still return a JSON object but with:
 - No telemetry block needed
 - text field should contain the Ukrainian translation of the message
 
+=== CRITICAL RULE #3: CRIMEA TRANSIT HUB (NEVER A DESTINATION TARGET) ===
+- Autonomous Republic of Crimea ("АР Крим", "Автономна Республіка Крим", "м. Севастополь") is an occupied territory used as a LAUNCH / TRANSIT HUB targeting mainland Ukraine.
+- Missiles or drones NEVER fly "towards Crimea" as an attack destination.
+- YOU MUST NEVER include "АР Крим", "Автономна Республіка Крим", or "м. Севастополь" in `target_regions`!
+- If a message mentions Crimea ("з Криму", "через Крим", "пусти з АРК"), Crimea is the LAUNCH ORIGIN (`source_regions` or `launch_origin`), and mainland Ukrainian regions (Kherson, Mykolaiv, Zaporizhzhia, Odesa, Kirovohrad, etc.) MUST be set as the target_regions.
+
 === ANALYSIS METHODOLOGY FOR TARGET REGIONS ===
 Apply four types of analysis to determine target_regions and is_predictive flags:
 
@@ -686,10 +692,21 @@ MANDATORY fields:
                 self.last_error = None
                 results = self._clean_and_parse_json(response.text)
                 
-                # Normalize telemetry for each result
+                # Normalize telemetry and sanitize Crimea target regions for each result
+                crimea_names = {"АР Крим", "Автономна Республіка Крим", "м. Севастополь", "Севастополь"}
                 if isinstance(results, list):
                     for item in results:
                         if isinstance(item, dict):
+                            # Remove Crimea from target_regions (Crimea is launch origin / transit hub only)
+                            target_regs = item.get("target_regions", [])
+                            if isinstance(target_regs, list):
+                                cleaned_targets = []
+                                for tr in target_regs:
+                                    name = tr.get("name") if isinstance(tr, dict) else tr
+                                    if name not in crimea_names:
+                                        cleaned_targets.append(tr)
+                                item["target_regions"] = cleaned_targets
+
                             if item.get("is_clear", False):
                                 # Normalize clearing telemetry
                                 item["clearing_telemetry"] = self.normalize_clearing_telemetry(item.get("clearing_telemetry"))

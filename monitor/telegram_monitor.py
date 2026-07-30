@@ -585,7 +585,7 @@ class TelegramThreatMonitor:
                 region = tgt
                 is_pred = False
             
-            if not region or region not in ALL_REGIONS:
+            if not region or region not in ALL_REGIONS or region in {"АР Крим", "Автономна Республіка Крим", "м. Севастополь", "Севастополь"}:
                 continue
             
             # If distance to target > 15 km, target is approaching/predictive UNLESS text indicates active flight in region
@@ -1476,6 +1476,9 @@ class TelegramThreatMonitor:
             for r in east_regions:
                 found.add(r)
                 
+        # Crimea is an occupied launch origin / transit hub only, never a destination target region
+        crimea_names = {"АР Крим", "Автономна Республіка Крим", "м. Севастополь", "Севастополь"}
+        found = {r for r in found if r not in crimea_names}
         return list(found)
 
     def _cancel_matching_tasks(self, tasks_dict: dict, region: str, threat_type: str = None, group_id: str = None):

@@ -108,6 +108,7 @@ async def run_tests():
     
     assert "Херсонська область" in regions
     assert "Запорізька область" in regions
+    assert "АР Крим" not in regions, "Крим не може бути цільовою областю загрози!"
     assert all(lvl == "high" for lvl in levels)
     assert all(t == "ballistic" for t in types)
     print("--------------------------------------------------")
