@@ -53,11 +53,21 @@ def log_error_to_db(
     context: str = None,
     error_type: str = None,
 ):
-    """Log an error event to the error_log table with automatic type classification."""
+    """Log an error event to the error_log table with automatic type classification and print a structured error banner."""
     error_msg = str(message)
 
     if not error_type or error_type in ["general", "systemic"]:
         error_type = _classify_error_type(error_msg, source)
+
+    # Print high-visibility structured console error banner for quick diagnosis
+    print(f"\n🚨 ==================== [СИСТЕМНА ПОМИЛКА / ERROR DETECTED] ====================")
+    print(f"📍 Джерело: {source} | Тип: {error_type}")
+    if endpoint:
+        print(f"🔗 Ендпоінт/Функція: {endpoint}")
+    if context:
+        print(f"📂 Контекст: {context}")
+    print(f"💥 Опис помилки: {error_msg[:500]}")
+    print(f"================================================================================\n")
 
     try:
         execute_write(
