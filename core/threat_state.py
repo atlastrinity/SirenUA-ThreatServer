@@ -313,12 +313,15 @@ class ThreatState:
                    is_test: bool = False, group_id: Optional[str] = None,
                    eta_seconds: Optional[int] = None) -> bool:
         if level == "none":
-            self.clear()
+            if threat_type:
+                self.clear_by_type(threat_type)
+            else:
+                self.clear()
             return True
 
         self.is_test = is_test
 
-        # Дедуплікація: перевіряємо чи є вже така загроза
+        # Дедуплікація 1: Перевіряємо по group_id
         if group_id:
             for existing in self.active_threats:
                 if existing.group_id == group_id:
@@ -326,21 +329,13 @@ class ThreatState:
                         existing, level, detail, confidence, eta, eta_seconds, is_predictive
                     )
 
-        # Розумна дедуплікація за часовим вікном (якщо немає group_id)
-        now = time.time()
+        # Дедуплікація 2: Перевіряємо за типом загрози threat_type
+        # Якщо в області вже є активна загроза цього ж типу, оновлюємо її параметри без створення дублікатів
         for existing in self.active_threats:
-            if existing.threat_type == threat_type:
-                try:
-                    since_str = existing.since.replace("Z", "+00:00")
-                    since_dt = datetime.fromisoformat(since_str)
-                    elapsed = now - since_dt.timestamp()
-                    if elapsed < self.DEDUP_WINDOW_SECONDS:
-                        # Оновлюємо існуючу загрозу в рамках вікна
-                        return self._update_existing_threat(
-                            existing, level, detail, confidence, eta, eta_seconds, is_predictive
-                        )
-                except Exception:
-                    pass
+            if existing.threat_type == threat_type and existing.level != "none":
+                return self._update_existing_threat(
+                    existing, level, detail, confidence, eta, eta_seconds, is_predictive
+                )
 
         # Додаємо нову загрозу
         new_threat = SingleThreat(
