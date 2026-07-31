@@ -48,6 +48,8 @@ scratch_*.py
 *.db
 *.db-shm
 *.db-wal
+*.bak
+backups/
 *.sqlite
 *.sqlite3
 threats_state.json
