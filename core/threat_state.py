@@ -434,15 +434,59 @@ class MockThreatManager:
                 print(f"⚠️ Помилка збереження резервного копіювання реальних загроз у Firebase: {e}")
         self.save_real_threats_to_file()
 
-    def save_real_threats_to_file(self):
+    def _atomic_json_save(self, filepath: str, data: dict):
+        """Зберігає JSON атомарно через .tmp файл і створює резервну копію .bak та у директорії backups/."""
         try:
-            filepath = "real_threats_state.json"
-            if os.path.exists("threat_server"):
-                filepath = "threat_server/real_threats_state.json"
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(self.real_threats_backup, f, ensure_ascii=False, indent=2)
+            backup_dir = os.path.dirname(filepath)
+            backup_dir = os.path.join(backup_dir if backup_dir else ".", "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+
+            bak_path = filepath + ".bak"
+            tmp_path = filepath + ".tmp"
+
+            # Створюємо резервну копію існуючого файлу перед перезаписом
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                try:
+                    import shutil
+                    shutil.copy2(filepath, bak_path)
+                    base_name = os.path.basename(filepath)
+                    hist_path = os.path.join(backup_dir, f"{base_name}.bak")
+                    shutil.copy2(filepath, hist_path)
+                except Exception as b_err:
+                    print(f"⚠️ Не вдалося створити бекап {bak_path}: {b_err}")
+
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            os.replace(tmp_path, filepath)
         except Exception as e:
-            print(f"⚠️ Помилка збереження резервної копії реальних загроз у файл: {e}")
+            print(f"⚠️ Помилка атомарного збереження {filepath}: {e}")
+
+    def _atomic_json_load(self, filepath: str) -> Optional[dict]:
+        """Зчитує JSON з файлу. У разі пошкодження або відсутності відновлює стан з .bak або з backups/."""
+        candidates = [filepath, filepath + ".bak"]
+        backup_dir = os.path.join(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", "backups")
+        hist_path = os.path.join(backup_dir, f"{os.path.basename(filepath)}.bak")
+        candidates.append(hist_path)
+
+        for path in candidates:
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if data:
+                        if path != filepath:
+                            print(f"🔄 [Auto-Recovery] Відновлено JSON стан з резервної копії: {path}")
+                        return data
+                except (json.JSONDecodeError, OSError) as err:
+                    print(f"⚠️ Файл стану пошкоджено або нечитабельний ({path}): {err}")
+        return None
+
+    def save_real_threats_to_file(self):
+        filepath = "real_threats_state.json"
+        if os.path.exists("threat_server"):
+            filepath = "threat_server/real_threats_state.json"
+        self._atomic_json_save(filepath, self.real_threats_backup)
 
     def load_real_threats_from_db(self):
         db = get_db()
@@ -464,42 +508,31 @@ class MockThreatManager:
         filepath = "real_threats_state.json"
         if os.path.exists("threat_server"):
             filepath = "threat_server/real_threats_state.json"
-        if os.path.exists(filepath):
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    self.real_threats_backup = json.load(f)
-                print("💾 Завантажено резервну копію реальних загроз з файлу")
-            except Exception as e:
-                print(f"⚠️ Помилка завантаження резервної копії реальних загроз з файлу: {e}")
+        data = self._atomic_json_load(filepath)
+        if data:
+            self.real_threats_backup = data
+            print(f"💾 Завантажено резервну копію реальних загроз з {filepath}")
 
     def save_to_file(self):
-        try:
-            state_data = {
-                region: state.to_dict()
-                for region, state in self.threats.items()
-            }
-            filepath = "threats_state.json"
-            if os.path.exists("threat_server"):
-                filepath = "threat_server/threats_state.json"
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(state_data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"⚠️ Помилка збереження стану загроз: {e}")
+        state_data = {
+            region: state.to_dict()
+            for region, state in self.threats.items()
+        }
+        filepath = "threats_state.json"
+        if os.path.exists("threat_server"):
+            filepath = "threat_server/threats_state.json"
+        self._atomic_json_save(filepath, state_data)
 
     def load_from_file(self):
         filepath = "threats_state.json"
         if os.path.exists("threat_server"):
             filepath = "threat_server/threats_state.json"
-        if os.path.exists(filepath):
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    state_data = json.load(f)
-                for region, data in state_data.items():
-                    if region in self.threats:
-                        self.threats[region].load_from_dict(data)
-                print(f"💾 Завантажено збережений стан загроз з {filepath}")
-            except Exception as e:
-                print(f"⚠️ Помилка завантаження стану загроз: {e}")
+        state_data = self._atomic_json_load(filepath)
+        if state_data:
+            for region, data in state_data.items():
+                if region in self.threats:
+                    self.threats[region].load_from_dict(data)
+            print(f"💾 Завантажено збережений стан загроз з {filepath}")
 
     def set_scenario(self, scenario: str):
         """Встановлює попередньо визначений сценарій для тестування з інтелектуальним оновленням та чергою."""

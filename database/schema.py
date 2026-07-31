@@ -11,8 +11,16 @@ from database.db_helpers import get_sqlite_connection
 
 def init_analytics_db():
     """Create all analytics tables and indexes. Seeds mock data in non-live mode."""
-    conn = get_sqlite_connection(DB_PATH)
-    cursor = conn.cursor()
+    from database.db_helpers import local_sqlite_backup, local_sqlite_restore
+    try:
+        conn = get_sqlite_connection(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM sqlite_master LIMIT 1")
+    except (sqlite3.DatabaseError, sqlite3.OperationalError) as err:
+        print(f"⚠️ [DB Integrity Warning] База даних пошкоджена або нечитабельна ({err}). Запускаємо відновлення з бекапу...")
+        local_sqlite_restore(DB_PATH)
+        conn = get_sqlite_connection(DB_PATH)
+        cursor = conn.cursor()
 
     # --- threat_history ---
     cursor.execute('''

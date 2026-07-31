@@ -85,6 +85,68 @@ def get_db():
         _log_error("database_helpers", f"Помилка отримання Firestore клієнта: {e}", "get_db", error_type="firebase_error")
         return None
 
+def local_sqlite_backup(db_path: str = None) -> bool:
+    """
+    Створює повну локальну атомарну резервну копію SQLite БД (threat_analytics.db -> backups/threat_analytics_backup.db).
+    Використовує офіційний механізм sqlite3 backup API для 100% цілісності навіть під навантаженням.
+    """
+    if db_path is None:
+        db_path = DB_PATH
+    if not os.path.exists(db_path) or os.path.getsize(db_path) == 0:
+        return False
+        
+    try:
+        backup_dir = os.path.join(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        backup_path = os.path.join(backup_dir, "threat_analytics_backup.db")
+        latest_path = os.path.join(backup_dir, "threat_analytics_backup_latest.db")
+
+        src_conn = get_sqlite_connection(db_path)
+        dst_conn = sqlite3.connect(backup_path)
+        with dst_conn:
+            src_conn.backup(dst_conn)
+        dst_conn.close()
+        src_conn.close()
+
+        import shutil
+        shutil.copy2(backup_path, latest_path)
+        logger.info(f"💾 [Local DB Backup] Атомарний бекап SQLite збережено у {backup_path}")
+        return True
+    except Exception as e:
+        logger.error(f"⚠️ Помилка створення локального бекапу SQLite: {e}")
+        return False
+
+
+def local_sqlite_restore(db_path: str = None) -> bool:
+    """
+    Автоматично відновлює локальну SQLite БД з атомарного бекапу backups/threat_analytics_backup.db у разі пошкодження.
+    """
+    if db_path is None:
+        db_path = DB_PATH
+        
+    backup_dir = os.path.join(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", "backups")
+    latest_path = os.path.join(backup_dir, "threat_analytics_backup_latest.db")
+    backup_path = os.path.join(backup_dir, "threat_analytics_backup.db")
+
+    source_to_restore = None
+    if os.path.exists(latest_path) and os.path.getsize(latest_path) > 0:
+        source_to_restore = latest_path
+    elif os.path.exists(backup_path) and os.path.getsize(backup_path) > 0:
+        source_to_restore = backup_path
+
+    if not source_to_restore:
+        return False
+
+    try:
+        import shutil
+        shutil.copy2(source_to_restore, db_path)
+        logger.info(f"🔄 [Auto-Recovery] Успішно відновлено базу SQLite з резервної копії {source_to_restore}")
+        return True
+    except Exception as e:
+        logger.error(f"⚠️ Помилка відновлення SQLite з локального бекапу: {e}")
+        return False
+
+
 def backup_sqlite_to_firestore():
     """Стискає всю локальну базу даних SQLite та робить резервну копію у Firestore."""
         
