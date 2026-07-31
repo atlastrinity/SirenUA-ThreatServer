@@ -67,8 +67,9 @@ app.include_router(admin_router)
 # ---------------------------------------------------------------------------
 
 @app.get("/admin/analytics")
+@app.get("/admin/palantir")
 async def admin_analytics_page():
-    """Serve the Analytics Intelligence dashboard HTML page."""
+    """Serve the Palantir AI Analytics Intelligence dashboard HTML page."""
     html_path = os.path.join(os.path.dirname(__file__), "admin_analytics.html")
     if os.path.exists(html_path):
         return FileResponse(html_path, media_type="text/html")
