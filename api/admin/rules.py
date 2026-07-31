@@ -43,6 +43,27 @@ async def get_admin_rules_history(
     }
 
 
+@router.get("/api/admin/rules/by_region")
+async def get_admin_rules_by_region():
+    """Повертає Gemini правила, погруповані за кожною областю та регіональною групою."""
+    from database.db_helpers import execute_query_as_dicts
+    rules = execute_query_as_dicts(
+        "SELECT * FROM gemini_rules WHERE is_active = 1 ORDER BY target_region, source_region"
+    )
+    grouped = {}
+    for r in rules:
+        region_key = r.get("target_region") or r.get("source_region") or "Всі області"
+        if region_key not in grouped:
+            grouped[region_key] = []
+        grouped[region_key].append(r)
+
+    return {
+        "total_rules": len(rules),
+        "total_regions": len(grouped),
+        "grouped_rules": grouped
+    }
+
+
 @router.post("/api/admin/seed_history")
 async def seed_history():
     """Генерує початкову історію подій у Firestore для всіх областей."""

@@ -244,38 +244,48 @@ def _seed_mock_data(cursor: sqlite3.Cursor):
     cursor.execute("SELECT COUNT(*) as c FROM gemini_rules")
     if cursor.fetchone()[0] == 0:
         try:
-            cursor.execute("""
-                INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
-                VALUES ('route_pattern', 'Crimea', 'Zaporizhzhia', 'shahed', 'Детекція БПЛА типу Shahed з Криму в бік Запоріжжя', 0.85, 12, 1)
-            """)
-            cursor.execute("""
-                INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
-                VALUES ('confidence_correction', 'Kursk', 'Sumy', 'mig31k', 'Зліт МіГ-31К з Курська в бік Сум', 0.90, 8, 1)
-            """)
-            cursor.execute("""
-                INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
-                VALUES ('eta_math', 'Сумська область', 'Київська область', 'shahed', 'Математика дольоту [shahed] з Сумська область до Київська область: розрахований середній час ~115 хв (діапазон 100-130 хв)', 0.88, 14, 1)
-            """)
-            cursor.execute("""
-                INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
-                VALUES ('eta_math', 'Чорне море', 'Львівська область', 'cruise_missile', 'Математика дольоту [cruise_missile] з Чорне море до Львівська область: розрахований середній час ~45 хв', 0.92, 10, 1)
-            """)
-            cursor.execute("""
-                INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
-                VALUES ('eta_math', 'Бєлгородська обл. РФ', 'Харківська область', 'ballistic', 'Математика дольоту [ballistic] з Бєлгородська обл. РФ до Харківська область: екстрений час дольоту ~2-3 хв', 0.95, 20, 1)
-            """)
-            cursor.execute("""
-                INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
-                VALUES ('added', 'route_pattern', 'Детекція БПЛА типу Shahed з Криму в бік Запоріжжя', 'Crimea', 'Zaporizhzhia', 'shahed', 'Аналіз 12 аналогічних траєкторій за тиждень')
-            """)
-            cursor.execute("""
-                INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
-                VALUES ('added', 'confidence_correction', 'Зліт МіГ-31К з Курська в бік Сум', 'Kursk', 'Sumy', 'mig31k', 'Корекція рівня загрози на основі високої ймовірності ракетного удару')
-            """)
-            cursor.execute("""
-                INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
-                VALUES ('added', 'eta_math', 'Математика дольоту [shahed] з Сумська область до Київська область', 'Сумська область', 'Київська область', 'shahed', 'Аналіз розрахованого кінематичного часу дольоту')
-            """)
+            initial_rules = [
+                # Північний регіональний кластер (Сумська, Чернігівська, Київська, Житомирська)
+                ("route_pattern", "Курська обл. РФ", "Сумська область", "shahed", "Захід БпЛА Shahed з Курської області в напрямку Сумщини через Глухів/Конотоп", 0.90, 15, 1),
+                ("route_pattern", "Сумська область", "Чернігівська область", "shahed", "Транзит БпЛА Shahed із Сумщини на Чернігівщину в напрямку Бахмача/Ніжина", 0.88, 12, 1),
+                ("route_pattern", "Чернігівська область", "Київська область", "shahed", "Транзит БпЛА з Чернігівщини у бік Київщини через Вишгородський/Броварський райони", 0.92, 18, 1),
+                ("route_pattern", "Житомирська область", "Хмельницька область", "shahed", "Транзитний коридор БпЛА з Житомирщини на Хмельниччину в напрямку Старокостянтинова", 0.94, 22, 1),
+                ("eta_math", "Сумська область", "Київська область", "shahed", "Математика дольоту [shahed] з Сумська область до Київська область: розрахований середній час ~115 хв (діапазон 100-130 хв)", 0.88, 14, 1),
+                ("eta_math", "Курська обл. РФ", "Сумська область", "kab", "Математика дольоту [kab] з Курської обл. РФ до Сумська область: розрахований час ~5-10 хв", 0.95, 25, 1),
+
+                # Східний регіональний кластер (Харківська, Донецька, Луганська, Полтавська, Дніпропетровська)
+                ("route_pattern", "Бєлгородська обл. РФ", "Харківська область", "ballistic", "Балістичні пуски ЗРК С-300/Іскандер з Бєлгородської обл. по Харківській області", 0.96, 30, 1),
+                ("route_pattern", "Харківська область", "Полтавська область", "shahed", "Магістральний транзит БпЛА Shahed через Харківщину на Полтавщину у бік Кременчука/Полтави", 0.89, 14, 1),
+                ("route_pattern", "Донецька область", "Дніпропетровська область", "kab", "Застосування КАБ/УМПК з окупованої Донеччини по сходу Дніпропетровської області", 0.91, 16, 1),
+                ("eta_math", "Бєлгородська обл. РФ", "Харківська область", "ballistic", "Математика дольоту [ballistic] з Бєлгородська обл. РФ до Харківська область: екстрений час дольоту ~2-3 хв", 0.95, 20, 1),
+
+                # Південний регіональний кластер (Запорізька, Херсонська, Миколаївська, Одеська, АР Крим, Чорне море)
+                ("route_pattern", "Приморсько-Ахтарськ РФ", "Запорізька область", "shahed", "Запуск БпЛА Shahed з Азовського узбережжя через Запорізьку область", 0.91, 20, 1),
+                ("route_pattern", "АР Крим", "Миколаївська область", "shahed", "Транзит БпЛА Shahed з Криму через Херсонщину/Миколаївщину на Одещину", 0.93, 24, 1),
+                ("route_pattern", "Чорне море", "Одеська область", "cruise_missile", "Пуски крилатих ракет Калібр з акваторії Чорного моря у напрямку Одещини/Миколаївщини", 0.94, 19, 1),
+                ("eta_math", "АР Крим", "Одеська область", "shahed", "Математика дольоту [shahed] з АР Крим до Одеська область: розрахований час ~80-100 хв", 0.90, 16, 1),
+
+                # Західний регіональний кластер (Вінницька, Хмельницька, Тернопільська, Рівненська, Волинська, Львівська, Івано-Франківська, Закарпатська, Чернівецька)
+                ("route_pattern", "Вінницька область", "Хмельницька область", "cruise_missile", "Транзитний ракетний коридор через Вінниччину на Хмельниччину (Старокостянтинів)", 0.95, 28, 1),
+                ("route_pattern", "Хмельницька область", "Львівська область", "cruise_missile", "Захід крилатих ракет Х-101 через Хмельниччину/Тернопільщину на Львівщину", 0.92, 17, 1),
+                ("eta_math", "Чорне море", "Львівська область", "cruise_missile", "Математика дольоту [cruise_missile] з Чорне море до Львівська область: розрахований середній час ~45 хв", 0.92, 10, 1),
+                ("eta_math", "Київська область", "Рівненська область", "shahed", "Математика дольоту [shahed] з Київської області до Рівненська область: розрахований час ~75-90 хв", 0.87, 11, 1),
+
+                # Стратегічна та стратегічно-авіаційна небезпека (Всі області / МіГ-31К / Ту-95МС)
+                ("confidence_correction", "Саваслейка РФ", "м. Київ", "mig31k", "Зліт МіГ-31К з аеродрому Саваслейка: масштабування ракетної небезпеки на всі області", 0.96, 40, 1),
+                ("predictive_risk", "Каспійське море", "Всі області", "tu95", "Запуск Х-101/555 з бортів Ту-95МС: розрахунок часу входження в повітряний простір України", 0.93, 35, 1)
+            ]
+
+            for r in initial_rules:
+                cursor.execute("""
+                    INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, r)
+                cursor.execute("""
+                    INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
+                    VALUES ('added', ?, ?, ?, ?, ?, 'Регіональне правило завантажено під час ініціалізації')
+                """, (r[0], r[4], r[1], r[2], r[3]))
+
         except Exception as e:
             print(f"⚠️ Error seeding mock rules: {e}")
 

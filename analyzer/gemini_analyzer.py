@@ -312,14 +312,14 @@ MANDATORY fields:
                 query = f'''
                     SELECT rule_type, rule_text, evidence_count, accuracy_score, source_region, target_region
                     FROM gemini_rules
-                    WHERE is_active = 1 AND evidence_count >= 3 AND accuracy_score >= 0.60
+                    WHERE is_active = 1 AND evidence_count >= 1 AND accuracy_score >= 0.40
                       AND (
                           source_region IN ({placeholders})
                           OR target_region IN ({placeholders})
                           OR (source_region IS NULL AND target_region IS NULL)
                       )
                     ORDER BY evidence_count DESC, accuracy_score DESC
-                    LIMIT 10
+                    LIMIT 20
                 '''
                 params = list(expanded) * 2
                 cursor.execute(query, params)
@@ -327,9 +327,9 @@ MANDATORY fields:
                 cursor.execute('''
                     SELECT rule_type, rule_text, evidence_count, accuracy_score, source_region, target_region
                     FROM gemini_rules
-                    WHERE is_active = 1 AND evidence_count >= 3 AND accuracy_score >= 0.60
+                    WHERE is_active = 1 AND evidence_count >= 1 AND accuracy_score >= 0.40
                     ORDER BY evidence_count DESC, accuracy_score DESC
-                    LIMIT 10
+                    LIMIT 20
                 ''')
             rules = cursor.fetchall()
             conn.close()
