@@ -6,6 +6,13 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from database.db_helpers import get_sqlite_connection
+from core.threat_types import (
+    ALL_THREAT_TYPES, THREAT_TITLES, THREAT_SHORT_NAMES, RUSSIAN_AIRBASES,
+    THREAT_SHAHED, THREAT_CRUISE_MISSILE, THREAT_BALLISTIC, THREAT_MIG31K,
+    THREAT_KAB, THREAT_TU95, THREAT_TU22M3, THREAT_SU35, THREAT_ISKANDER,
+    THREAT_ARTILLERY, THREAT_ZIRCON, THREAT_MLRS, THREAT_FPV, THREAT_RECON,
+    THREAT_UNKNOWN, detect_threat_type_from_text, detect_launch_origin_from_text
+)
 
 class GeminiThreatAnalyzer:
     def __init__(self, error_callback=None, rule_audit_callback=None, db_path: str = "threat_analytics.db"):
