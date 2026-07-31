@@ -19,6 +19,9 @@ THREAT_TU22M3 = "tu22m3"
 THREAT_SU35 = "su35_su57"
 THREAT_ISKANDER = "iskander"
 THREAT_ARTILLERY = "artillery"
+THREAT_ZIRCON = "zircon"
+THREAT_MLRS = "mlrs"
+THREAT_FPV = "fpv"
 THREAT_RECON = "recon"
 THREAT_RECON_UAV = "recon_uav"
 THREAT_UNKNOWN = "unknown"
@@ -34,6 +37,9 @@ ALL_THREAT_TYPES: List[str] = [
     THREAT_SU35,
     THREAT_ISKANDER,
     THREAT_ARTILLERY,
+    THREAT_ZIRCON,
+    THREAT_MLRS,
+    THREAT_FPV,
     THREAT_RECON,
     THREAT_RECON_UAV,
     THREAT_UNKNOWN,
@@ -52,7 +58,10 @@ THREAT_TITLES: Dict[str, str] = {
     THREAT_TU22M3: "Ту-22М3 (ракети Х-22/Х-32)",
     THREAT_SU35: "Су-35/Су-57 (тактична авіація)",
     THREAT_ISKANDER: "Іскандер-М",
-    THREAT_ARTILLERY: "Артилерія / РСЗВ",
+    THREAT_ARTILLERY: "Артилерія",
+    THREAT_ZIRCON: "Гіперзвукова ракета 3M22 Циркон",
+    THREAT_MLRS: "РСЗВ (Торнадо-С / Град / Ураган)",
+    THREAT_FPV: "FPV дрон / Ланцет",
     THREAT_RECON: "Розвідувальний БПЛА",
     THREAT_RECON_UAV: "Розвідувальний БПЛА",
     THREAT_UNKNOWN: "Повітряна тривога",
@@ -72,6 +81,9 @@ THREAT_SHORT_NAMES: Dict[str, str] = {
     THREAT_SU35: "Су-35",
     THREAT_ISKANDER: "Іскандер-М",
     THREAT_ARTILLERY: "обстріл",
+    THREAT_ZIRCON: "Циркон",
+    THREAT_MLRS: "РСЗВ",
+    THREAT_FPV: "FPV-дрон",
     THREAT_RECON: "розвідник",
     THREAT_RECON_UAV: "розвідник",
     THREAT_UNKNOWN: "загроза",
@@ -91,6 +103,9 @@ DEFAULT_SPEEDS_KMH: Dict[str, float] = {
     THREAT_SU35: 950.0,            # ~900-1000 km/h (Kh-59/69 tactical)
     THREAT_ISKANDER: 5500.0,       # ~4500-7000 km/h
     THREAT_ARTILLERY: 1200.0,      # ~1000-2500 km/h
+    THREAT_ZIRCON: 11000.0,        # ~Mach 9 hypersonic (3M22 Zircon)
+    THREAT_MLRS: 2200.0,           # ~2000-2500 km/h MLRS rockets
+    THREAT_FPV: 140.0,             # ~120-150 km/h kamikaze drones
     THREAT_RECON: 120.0,           # ~100-140 km/h (Supercam/Orlan/Zala)
     THREAT_RECON_UAV: 120.0,
     THREAT_UNKNOWN: 300.0,
@@ -114,6 +129,9 @@ THREAT_AUTO_CLEAR_DELAYS: Dict[str, Tuple[int, int]] = {
     THREAT_SU35: (2700, 3600),             # 45 mins
     THREAT_ISKANDER: (1200, 1800),         # 20-30 mins
     THREAT_ARTILLERY: (1800, 1800),        # 30 mins
+    THREAT_ZIRCON: (600, 1200),            # 10-20 mins
+    THREAT_MLRS: (1200, 1800),             # 20-30 mins
+    THREAT_FPV: (1800, 1800),              # 30 mins
     THREAT_RECON: (3600, 3600),            # 60 mins
     THREAT_RECON_UAV: (3600, 3600),        # 60 mins
     THREAT_UNKNOWN: (3600, 3600),
@@ -130,6 +148,9 @@ THREAT_DEFAULT_ETAS: Dict[str, Tuple[str, str]] = {
     THREAT_SU35: ("~20 хв", "~5-15 хв"),
     THREAT_ISKANDER: ("~25 хв", "~2-5 хв"),
     THREAT_ARTILLERY: ("~10 хв", "~0-5 хв"),
+    THREAT_ZIRCON: ("~5 хв", "~1-3 хв"),
+    THREAT_MLRS: ("~10 хв", "~0-5 хв"),
+    THREAT_FPV: ("~20 хв", "~5-15 хв"),
     THREAT_RECON: ("~30 хв", "~15-30 хв"),
     THREAT_RECON_UAV: ("~30 хв", "~15-30 хв"),
     THREAT_UNKNOWN: ("~30 хв", "~30 хв"),
@@ -146,6 +167,9 @@ THREAT_PREDICTIVE_WEIGHTS: Dict[str, float] = {
     THREAT_SU35: 0.04,
     THREAT_ISKANDER: 0.0,
     THREAT_ARTILLERY: 0.01,
+    THREAT_ZIRCON: 0.0,
+    THREAT_MLRS: 0.01,
+    THREAT_FPV: 0.02,
     THREAT_RECON: 0.05,
     THREAT_RECON_UAV: 0.05,
     THREAT_UNKNOWN: 0.05,
@@ -162,6 +186,9 @@ THREAT_ETA_DEFAULTS_SECONDS: Dict[str, int] = {
     THREAT_SU35: 900,
     THREAT_ISKANDER: 180,
     THREAT_ARTILLERY: 120,
+    THREAT_ZIRCON: 120,
+    THREAT_MLRS: 180,
+    THREAT_FPV: 900,
     THREAT_RECON: 1800,
     THREAT_RECON_UAV: 1800,
     THREAT_UNKNOWN: 1800,
@@ -193,8 +220,17 @@ THREAT_KEYWORDS: Dict[str, List[str]] = {
     THREAT_CRUISE_MISSILE: [
         "ракет", "крилат", "калібр", "х-101", "х101", "х-55", "х55", "х-555", "х555", "х-59", "х59", "х-69", "х69"
     ],
+    THREAT_ZIRCON: [
+        "циркон", "zircon", "3м22", "3m22"
+    ],
     THREAT_ARTILLERY: [
-        "артобстріл", "артилері", "рсзв", "град", "ураган", "смерч", "обстріл", "міномет"
+        "артобстріл", "артилері", "обстріл", "міномет"
+    ],
+    THREAT_MLRS: [
+        "рсзв", "торнадо-с", "торнадо", "град", "ураган", "смерч", "солнцепек", "вільха"
+    ],
+    THREAT_FPV: [
+        "fpv", "фпв", "ланцет", "lancet", "куб", "барражир"
     ],
     THREAT_SU35: [
         "су-34", "су34", "су-35", "су35", "су-30", "су30", "су-57", "су57", "сушка", "сушки"
@@ -218,6 +254,12 @@ AIRBASE_MILLEROVO = "millerovo"
 AIRBASE_KURSK = "kursk"
 AIRBASE_BELGOROD = "belgorod"
 AIRBASE_MOZDOK = "mozdok"
+AIRBASE_BALTIMOR = "baltimor_voronezh"
+AIRBASE_HALINO = "halino_kursk"
+AIRBASE_DYAGILEVO = "dyagilevo_ryazan"
+AIRBASE_BELBEK = "belbek_crimea"
+AIRBASE_SAKY = "saky_crimea"
+AIRBASE_GVARDEYSKOYE = "gvardeyskoye_crimea"
 LAUNCH_HUB_CHAUDA = "chauda_crimea"
 LAUNCH_HUB_BLACK_SEA = "black_sea"
 LAUNCH_HUB_CASPIAN_SEA = "caspian_sea"
@@ -288,6 +330,42 @@ RUSSIAN_AIRBASES: Dict[str, Dict[str, Any]] = {
         "primary_threat": THREAT_TU22M3,
         "keywords": ["моздок", "mozdok"],
         "lat_lon": (43.78, 44.60),
+    },
+    AIRBASE_BALTIMOR: {
+        "title": "Аеродром Балтімор (Воронеж)",
+        "primary_threat": THREAT_SU35,
+        "keywords": ["балтімор", "балтимор", "baltimor"],
+        "lat_lon": (51.62, 39.15),
+    },
+    AIRBASE_HALINO: {
+        "title": "Аеродром Халіно (Курськ)",
+        "primary_threat": THREAT_SU35,
+        "keywords": ["халіно", "халино", "halino"],
+        "lat_lon": (51.75, 36.30),
+    },
+    AIRBASE_DYAGILEVO: {
+        "title": "Аеродром Дягілєво (Рязань)",
+        "primary_threat": THREAT_TU95,
+        "keywords": ["дягілєво", "дягилево", "dyagilevo"],
+        "lat_lon": (54.64, 39.57),
+    },
+    AIRBASE_BELBEK: {
+        "title": "Аеродром Бельбек (Севастополь, Крим)",
+        "primary_threat": THREAT_SU35,
+        "keywords": ["бельбек", "belbek"],
+        "lat_lon": (44.69, 33.57),
+    },
+    AIRBASE_SAKY: {
+        "title": "Аеродром Саки / Новофедорівка (Крим)",
+        "primary_threat": THREAT_SU35,
+        "keywords": ["саки", "новофедорівка", "новофедоровка", "saky"],
+        "lat_lon": (45.09, 33.59),
+    },
+    AIRBASE_GVARDEYSKOYE: {
+        "title": "Аеродром Гвардійське (Крим)",
+        "primary_threat": THREAT_SU35,
+        "keywords": ["гвардійське", "гвардейское", "gvardeyskoye"],
+        "lat_lon": (45.11, 33.97),
     },
     LAUNCH_HUB_CHAUDA: {
         "title": "Мис Чауда (АР Крим)",
