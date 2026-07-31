@@ -78,7 +78,8 @@ class SingleThreat:
                  is_test: bool = False, group_id: Optional[str] = None,
                  paired_event_id: Optional[int] = None,
                  eta_seconds: Optional[int] = None,
-                 transit_from: Optional[str] = None):
+                 transit_from: Optional[str] = None,
+                 telemetry: Optional[dict] = None):
         level, detail, is_predictive, eta, _ = sanitize_threat_consistency(level, detail, is_predictive, eta)
         self.threat_id: str = group_id or f"t_{uuid.uuid4().hex[:12]}"
         self.level: str = level
@@ -94,6 +95,7 @@ class SingleThreat:
         self.group_id: Optional[str] = group_id
         self.paired_event_id: Optional[int] = paired_event_id
         self.transit_from: Optional[str] = transit_from
+        self.telemetry: Optional[dict] = telemetry
 
     def apply_confidence_decay(self, amount: int = 10) -> int:
         """Зменшує рівень довіри (confidence) при відсутності нових підтверджень."""
@@ -108,10 +110,17 @@ class SingleThreat:
         from core.regions import REGION_CENTER_COORDINATES
         origin_lat = None
         origin_lon = None
-        if self.transit_from and self.transit_from in REGION_CENTER_COORDINATES:
+        
+        if self.telemetry and isinstance(self.telemetry, dict):
+            if self.telemetry.get("origin_latitude") is not None and self.telemetry.get("origin_longitude") is not None:
+                origin_lat = self.telemetry["origin_latitude"]
+                origin_lon = self.telemetry["origin_longitude"]
+
+        if origin_lat is None and self.transit_from and self.transit_from in REGION_CENTER_COORDINATES:
             coords = REGION_CENTER_COORDINATES[self.transit_from]
             origin_lat = coords[0]
             origin_lon = coords[1]
+
         return {
             "threat_id": self.threat_id,
             "level": self.level,
@@ -129,6 +138,7 @@ class SingleThreat:
             "transit_from": self.transit_from,
             "origin_latitude": origin_lat,
             "origin_longitude": origin_lon,
+            "telemetry": self.telemetry,
         }
 
     @classmethod
