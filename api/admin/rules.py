@@ -99,7 +99,7 @@ async def seed_history():
                         "telemetry": {
                             "source_reliability": "high",
                             "civilian_risk_level": "high" if template["threat_level"] == "high" else "moderate",
-                            "message_context_tags": ["rocket", "alert"] if template["threat_type"] != "shahed" else ["shahed", "drone"]
+                            "message_context_tags": ["rocket", "alert"] if template["threat_type"] != THREAT_SHAHED else ["shahed", "drone"]
                         }
                     }
                     clear_doc = {

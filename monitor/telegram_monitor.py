@@ -13,6 +13,11 @@ from core.threat_state import ThreatState
 from core.regions import ALL_REGIONS, get_genitive_region, get_ukrainian_threat_type
 from core.threat_types import (
     THREAT_TYPES,
+    THREAT_SHAHED,
+    THREAT_BALLISTIC,
+    THREAT_ISKANDER,
+    THREAT_CRUISE_MISSILE,
+    THREAT_KAB,
     DEFAULT_SPEEDS_KMH,
     THREAT_PREDICTIVE_WEIGHTS,
     THREAT_ETA_DEFAULTS_SECONDS,
@@ -1683,7 +1688,7 @@ class TelegramThreatMonitor:
         hour = datetime.now(kyiv_tz).hour
         
         # Shaheds predominantly attack at night (22:00-06:00)
-        if threat_type == "shahed":
+        if threat_type == THREAT_SHAHED:
             if 22 <= hour or hour < 6:
                 return 5  # Night shahed attack — boost
             elif 6 <= hour < 9:
@@ -1692,13 +1697,13 @@ class TelegramThreatMonitor:
                 return -3  # Daytime shahed — less likely
         
         # Ballistic and cruise missiles — any time, slight daytime bias
-        if threat_type in ("ballistic", "iskander", "cruise_missile"):
+        if threat_type in (THREAT_BALLISTIC, THREAT_ISKANDER, THREAT_CRUISE_MISSILE):
             if 5 <= hour < 8:
                 return 3  # Dawn attacks are historically common
             return 0
         
         # KABs — primarily daytime (requires visual targeting)
-        if threat_type == "kab":
+        if threat_type == THREAT_KAB:
             if 7 <= hour < 17:
                 return 3  # Daytime — prime KAB window
             else:
