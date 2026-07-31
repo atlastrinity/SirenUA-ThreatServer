@@ -14,7 +14,23 @@ from core.threat_types import THREAT_TYPES
 from database.db_helpers import execute_query_as_dicts, execute_write, get_sqlite_connection
 from core.config import DB_PATH
 
+import time
+
 router = APIRouter()
+
+# In-Memory High-Speed Cache for Palantir Intelligence
+_ANALYTICS_CACHE = {}
+_CACHE_TTL_SECONDS = 10.0
+
+def _get_cached(key: str):
+    if key in _ANALYTICS_CACHE:
+        val, timestamp = _ANALYTICS_CACHE[key]
+        if time.time() - timestamp < _CACHE_TTL_SECONDS:
+            return val
+    return None
+
+def _set_cached(key: str, data):
+    _ANALYTICS_CACHE[key] = (data, time.time())
 
 # Known Russian launch hubs with coordinates
 LAUNCH_HUBS = {
@@ -44,6 +60,10 @@ LAUNCH_HUBS = {
 @router.get("/api/admin/analytics/trajectory_heatmap")
 async def get_trajectory_heatmap(days: int = 30):
     """Теплова карта траєкторій: source_region → target_region з частотою та координатами."""
+    cache_key = f"trajectory_heatmap_{days}"
+    cached = _get_cached(cache_key)
+    if cached:
+        return cached
     try:
         # From gemini_rules: established route patterns
         rules_query = """

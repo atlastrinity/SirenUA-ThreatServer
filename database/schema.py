@@ -244,6 +244,11 @@ def init_analytics_db():
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_palantir_reports_date ON palantir_reports(report_date)')
 
+    # High-Performance Indexes for Trajectory & Telemetry Analysis
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_event_id ON telemetry_data(threat_event_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_origin ON telemetry_data(launch_origin)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_paired_event_id ON paired_events(threat_event_id)')
+
     # Seed mock data in dev mode
     if not IS_LIVE_MODE:
         _seed_mock_data(cursor)
