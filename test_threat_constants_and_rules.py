@@ -155,10 +155,33 @@ def test_trajectory_gap_stitching():
     assert "відновлено" in chernihiv_state.detail
     print("✅ Trajectory gap stitching successfully bridged Chernihiv region between Sumy and Kyiv!")
 
+def test_regional_rule_telemetry_and_metrics():
+    print("🧪 Test 6: Testing Regional Rule Telemetry & Metrics API...")
+    from analyzer.gemini_analyzer import GeminiThreatAnalyzer
+    from api.admin.rules import get_admin_rules_metrics_by_region
+    import asyncio
+
+    analyzer = GeminiThreatAnalyzer()
+    rules = [
+        {"rule_type": "route_pattern", "rule_text": "Захід БпЛА Shahed через Сумщину", "evidence_count": 15, "accuracy_score": 0.90, "target_region": "Сумська область"},
+        {"rule_type": "eta_math", "rule_text": "Математика дольоту Shahed з Сум до Києва", "evidence_count": 14, "accuracy_score": 0.88, "target_region": "Київська область"}
+    ]
+    analyzer.print_regional_rule_telemetry(["Сумська область", "Київська область"], rules)
+
+    metrics_res = asyncio.run(get_admin_rules_metrics_by_region())
+    assert metrics_res["status"] == "success"
+    assert "Сумська область" in metrics_res["region_metrics"]
+    sumy_m = metrics_res["region_metrics"]["Сумська область"]
+    assert "accuracy_gain_pct" in sumy_m
+    assert "eta_variance_minutes" in sumy_m
+    assert len(sumy_m["graph_time_series"]) == 8
+    print("✅ Regional Rule Telemetry & Metrics API successfully verified with dispersion graph data!")
+
 if __name__ == "__main__":
     test_threat_types_detection()
     test_airbases_detection()
     test_kinematics_calculations()
     test_rules_engine_learning()
     test_trajectory_gap_stitching()
-    print("\n🎉 ALL THREAT CONSTANTS, AIRBASES, RULES, AND TRAJECTORY STITCHING TESTS PASSED SUCCESSFULLY!")
+    test_regional_rule_telemetry_and_metrics()
+    print("\n🎉 ALL THREAT CONSTANTS, AIRBASES, RULES, GAP STITCHING, AND REGIONAL METRICS TESTS PASSED SUCCESSFULLY!")
