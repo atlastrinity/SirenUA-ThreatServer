@@ -8,7 +8,7 @@ from datetime import datetime
 from database.db_helpers import get_sqlite_connection
 
 class GeminiThreatAnalyzer:
-    def __init__(self, error_callback=None, rule_audit_callback=None):
+    def __init__(self, error_callback=None, rule_audit_callback=None, db_path: str = "threat_analytics.db"):
         # Configure Gemini
         keys_str = os.environ.get("GEMINI_API_KEYS", "")
         if keys_str:
@@ -31,7 +31,7 @@ class GeminiThreatAnalyzer:
             self.last_error = "API key missing"
             print("⚠️ GEMINI_API_KEYS is not set. GeminiAnalyzer will run in mock mode.")
 
-        self.db_path = "threat_analytics.db"
+        self.db_path = db_path
         self._error_callback = error_callback
         self._rule_audit_callback = rule_audit_callback
         self.system_prompt = """You are a specialized military AI threat analyst (SirenUA Threat Intelligence System).
@@ -106,15 +106,58 @@ PREDICTIVE REGION CONFIDENCE DIFFERENTIATION:
 - Region 3+ oblasts away or strategic target: confidence = 45-54%
 - You MUST decrease confidence proportionally with distance from threat source.
 
-=== THREAT TYPES AND EXPECTED ETA ===
-- shahed (UAV/drone): "~1-3 год" (speed ~150-180 km/h)
-- cruise_missile (Kh-101/Kalibr): "~15-40 хв" (speed ~800-900 km/h)
-- ballistic (ballistic missile): "~2-5 хв" (speed ~4500-7000 km/h)
-- mig31k (Kinzhal): "~20-40 хв" (speed ~2500 km/h)
-- kab (guided aerial bomb): "~5-15 хв" (speed ~300 km/h)
-- tu95 (strategic bomber takeoff/threat): "~30-90 хв" (speed ~800 km/h)
-- iskander (Iskander-M ballistic missile): "~2-5 хв" (speed ~4500-7000 km/h)
-- artillery (artillery shelling/MLRS): "~0-5 хв" (speed ~1000-2500 km/h)
+=== MATHEMATICAL FLIGHT KINEMATICS & ETA CALCULATIONS ===
+You MUST calculate the "eta" field dynamically using strict mathematical ballistics formulas based on distance and specific incoming object type:
+
+1. **shahed (UAV/drone / БПЛА)**:
+   - Cruising Speed: ~160 km/h (~2.67 km/min)
+   - Mathematical Formula: ETA (minutes) = Distance (km) / 2.67
+   - Expected Output Format: "~40-50 хв" or "~1-1.5 год"
+
+2. **cruise_missile (Kh-101/Kalibr / Крилата ракета)**:
+   - Cruising Speed: ~850 km/h (~14.1 km/min)
+   - Mathematical Formula: ETA (minutes) = Distance (km) / 14.1
+   - Expected Output Format: "~15-25 хв" or "~35-45 хв"
+
+3. **ballistic / iskander (Iskander-M / S-300 / Балістика)**:
+   - Cruising Speed: ~5000-7000 km/h (~90 km/min)
+   - Mathematical Formula: ETA (minutes) = 1.0 + (Distance (km) / 90)
+   - Emergency Flight Time: "~2-5 хв" (critical high priority alert)
+
+4. **mig31k (Kinzhal / Кинджал)**:
+   - Cruising Speed: ~2500 km/h from launch zone (~41.6 km/min)
+   - Mathematical Formula: ETA (minutes) = 2.0 + (Distance (km) / 41.6)
+   - Expected Output Format: "~10-15 хв" or "~20-30 хв"
+
+5. **kab (Guided Aerial Bomb / КАБ)**:
+   - Cruising Speed: ~350 km/h (~5.8 km/min)
+   - Mathematical Formula: ETA (minutes) = Distance (km) / 5.8
+   - Tactical Short Range: "~5-12 хв"
+
+6. **tu95 (Strategic Bomber Takeoff/Launch Threat)**:
+   - Missile Flight Speed: ~800 km/h after launch (~13.3 km/min)
+   - Mathematical Formula: ETA (minutes) = 30 + (Distance (km) / 13.3)
+   - Early Notice: "~40-80 хв"
+
+7. **tu22m3 (Strategic Supersonic Bomber / Ракети Х-22/Х-32)**:
+   - Missile Speed: ~4200 km/h (~70 km/min)
+   - Mathematical Formula: ETA (minutes) = 1.0 + (Distance (km) / 70)
+   - High Speed Supersonic Flight: "~3-10 хв"
+
+8. **su35_su57 (Tactical Aviation Launch / Ракети Х-59/69)**:
+   - Cruising Speed: ~950 km/h (~15.8 km/min)
+   - Mathematical Formula: ETA (minutes) = Distance (km) / 15.8
+   - Short Range Tactical: "~5-15 хв"
+
+9. **artillery (Artillery/MLRS Shelling / РСЗВ)**:
+   - Flight Time: "~0-5 хв" (instant tactical threat)
+
+10. **recon (Reconnaissance Drone / Розвідка Zala/Supercam/Orlan)**:
+   - Cruising Speed: ~120 km/h (~2.0 km/min)
+   - Tactical Observation: "~15-30 хв"
+
+RULE PRIORITIZATION FOR ETA:
+If empirical rules under "НАБУТІ ЗНАННЯ" contain specific `[Математика дольоту]` rules (e.g. `[Математика дольоту] shahed з Сумська до Київська: ~105 хв`), you MUST prioritize those empirical values over general mathematical estimates!
 
 
 === THREAT CONFIRMATION AND CLEARING ===
@@ -155,7 +198,7 @@ Telemetry parameters:
 - altitude_category (string): "low" (UAV <500m), "medium" (cruise 50-100m), "high" (ballistic/strategic >10000m), "unknown".
 - heading_degrees (int|null): Heading in degrees (0=north, 90=east, 180=south, 270=west). null if unknown.
 - distance_to_target_km (float|null): Estimated distance to nearest major city. null if impossible.
-- launch_origin (string|null): Launch location. Examples: "Чорне море", "Каспійське море", "окупований Крим", "Бєлгородська обл. РФ". null if unknown.
+- launch_origin (string|null): Launch location / airfield. Examples: "Аеродром Саваслейка", "Аеродром Оленья", "Аеродром Енгельс", "Аеродром Шайковка", "Приморсько-Ахтарськ", "Єйськ", "Бєлгород", "Чорне море", "Каспійське море", "Чауда (Крим)". null if unknown.
 - weapon_subtype (string|null): Specific weapon variant. Examples: "Shahed-136", "Х-101", "Калібр", "Іскандер-М", "Кинджал", "КАБ-500". null if unknown.
 - engagement_status (string): "launched", "approaching", "in_transit", "overhead", "intercepted", "impact", "missed", "lost", "unknown".
 - air_defense_active (bool): true if air defense engagement reported. false by default.
@@ -179,7 +222,7 @@ FOR ACTIVE THREATS (is_clear: false):
   "source_channel": "channel name",
   "text": "original text in Ukrainian",
   "threat_level": "none" | "low" | "medium" | "high" | "critical",
-  "threat_type": "shahed" | "ballistic" | "mig31k" | "kab" | "cruise_missile" | "tu95" | "iskander" | "artillery" | null,
+  "threat_type": "shahed" | "ballistic" | "mig31k" | "kab" | "cruise_missile" | "tu95" | "tu22m3" | "su35_su57" | "iskander" | "artillery" | "recon" | null,
   "source_regions": ["Сумська область"],
   "target_regions": [{"name": "Київська область", "is_predictive": false}, {"name": "Чернігівська область", "is_predictive": true}],
   "is_clear": false,
@@ -301,7 +344,8 @@ MANDATORY fields:
                     "confidence_correction": "Корекція довіри",
                     "time_pattern": "Часовий патерн",
                     "false_positive": "Хибний позитив",
-                    "weapon_profile": "Профіль зброї"
+                    "weapon_profile": "Профіль зброї",
+                    "eta_math": "Математика дольоту"
                 }.get(rule["rule_type"], rule["rule_type"])
                 
                 context += f"{i}. [{rule_type_label}] {rule['rule_text']} (доказів: {rule['evidence_count']}, точність: {rule['accuracy_score']:.0%})\n"
@@ -564,9 +608,87 @@ MANDATORY fields:
                     threat_type=threat_type, reason=f"total={data['total']}, hour={hour}")
         return rules_updated
 
+    def _learn_eta_math_patterns(self, cursor) -> int:
+        """Derives mathematical flight duration rules (eta_math) per threat object and region trajectory."""
+        rules_updated = 0
+        try:
+            cursor.execute('''
+                SELECT 
+                    pe1.region as source_region,
+                    pe2.region as target_region,
+                    pe1.threat_type,
+                    COUNT(*) as occurrence_count,
+                    AVG(ABS(strftime('%s', pe2.created_at) - strftime('%s', pe1.created_at))) / 60.0 as avg_eta_minutes,
+                    MIN(ABS(strftime('%s', pe2.created_at) - strftime('%s', pe1.created_at))) / 60.0 as min_eta_minutes,
+                    MAX(ABS(strftime('%s', pe2.created_at) - strftime('%s', pe1.created_at))) / 60.0 as max_eta_minutes,
+                    AVG(CASE WHEN pe2.prediction_accuracy IN ('confirmed', 'mitigated', 'partially_confirmed') THEN 1.0 ELSE 0.3 END) as accuracy
+                FROM paired_events pe1
+                JOIN paired_events pe2 ON pe1.gemini_group_id = pe2.gemini_group_id
+                    AND pe1.region != pe2.region
+                    AND pe2.was_predictive = 1
+                    AND ABS(strftime('%s', pe1.created_at) - strftime('%s', pe2.created_at)) BETWEEN 60 AND 14400
+                WHERE pe1.lifecycle_status = 'cleared'
+                    AND pe1.created_at >= datetime('now', '-30 days')
+                GROUP BY pe1.region, pe2.region, pe1.threat_type
+                HAVING occurrence_count >= 3 AND accuracy >= 0.55
+            ''')
+            
+            for row in cursor.fetchall():
+                avg_min = max(1, int(round(row["avg_eta_minutes"])))
+                min_min = max(1, int(round(row["min_eta_minutes"])))
+                max_min = max(min_min, int(round(row["max_eta_minutes"])))
+                threat_type = row["threat_type"]
+                source = row["source_region"]
+                target = row["target_region"]
+                count = row["occurrence_count"]
+                acc = round(row["accuracy"], 2)
+
+                if avg_min < 60:
+                    eta_str = f"~{avg_min} хв (діапазон {min_min}-{max_min} хв)"
+                else:
+                    h_val = round(avg_min / 60.0, 1)
+                    eta_str = f"~{h_val} год"
+
+                rule_text = (f"Математика дольоту [{threat_type}] з {source} до {target}: "
+                             f"розрахований середній час {eta_str} (підтверджено {count} раз, точність {acc:.0%})")
+                
+                rule_json = json.dumps({
+                    "source": source,
+                    "target": target,
+                    "threat_type": threat_type,
+                    "avg_eta_minutes": avg_min,
+                    "min_eta_minutes": min_min,
+                    "max_eta_minutes": max_min,
+                    "eta_str": eta_str,
+                    "accuracy": acc,
+                    "count": count
+                }, ensure_ascii=False)
+
+                cursor.execute('''
+                    DELETE FROM gemini_rules 
+                    WHERE rule_type = 'eta_math' 
+                      AND source_region = ? AND target_region = ? AND threat_type = ?
+                ''', (source, target, threat_type))
+
+                cursor.execute('''
+                    INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type,
+                        rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('eta_math', ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                ''', (source, target, threat_type, rule_text, rule_json, count, acc))
+
+                rules_updated += 1
+                if self._rule_audit_callback:
+                    self._rule_audit_callback("added", rule_type="eta_math", rule_text=rule_text,
+                        source_region=source, target_region=target, threat_type=threat_type,
+                        reason=f"avg_eta={avg_min}min, count={count}, accuracy={acc:.2f}")
+
+        except Exception as e:
+            print(f"⚠️ [Rules Engine] Помилка навчання математики дольоту: {e}")
+        return rules_updated
+
     def run_rules_learner(self) -> int:
         """Central Rules Learner engine. Analyzes historical paired events,
-        derives route/time/confidence rules, and performs rule decay (aging out old patterns)."""
+        derives route/time/confidence/eta rules, and performs rule decay (aging out old patterns)."""
         try:
             conn = get_sqlite_connection(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -580,6 +702,7 @@ MANDATORY fields:
             rules_updated += self._learn_route_patterns(cursor)
             rules_updated += self._learn_confidence_corrections(cursor)
             rules_updated += self._learn_time_patterns(cursor)
+            rules_updated += self._learn_eta_math_patterns(cursor)
             
             # 3. Clean up stale active paired events
             cursor.execute('''

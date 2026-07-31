@@ -227,12 +227,28 @@ def _seed_mock_data(cursor: sqlite3.Cursor):
                 VALUES ('confidence_correction', 'Kursk', 'Sumy', 'mig31k', 'Зліт МіГ-31К з Курська в бік Сум', 0.90, 8, 1)
             """)
             cursor.execute("""
+                INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
+                VALUES ('eta_math', 'Сумська область', 'Київська область', 'shahed', 'Математика дольоту [shahed] з Сумська область до Київська область: розрахований середній час ~115 хв (діапазон 100-130 хв)', 0.88, 14, 1)
+            """)
+            cursor.execute("""
+                INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
+                VALUES ('eta_math', 'Чорне море', 'Львівська область', 'cruise_missile', 'Математика дольоту [cruise_missile] з Чорне море до Львівська область: розрахований середній час ~45 хв', 0.92, 10, 1)
+            """)
+            cursor.execute("""
+                INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type, rule_text, accuracy_score, evidence_count, is_active)
+                VALUES ('eta_math', 'Бєлгородська обл. РФ', 'Харківська область', 'ballistic', 'Математика дольоту [ballistic] з Бєлгородська обл. РФ до Харківська область: екстрений час дольоту ~2-3 хв', 0.95, 20, 1)
+            """)
+            cursor.execute("""
                 INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
                 VALUES ('added', 'route_pattern', 'Детекція БПЛА типу Shahed з Криму в бік Запоріжжя', 'Crimea', 'Zaporizhzhia', 'shahed', 'Аналіз 12 аналогічних траєкторій за тиждень')
             """)
             cursor.execute("""
                 INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
                 VALUES ('added', 'confidence_correction', 'Зліт МіГ-31К з Курська в бік Сум', 'Kursk', 'Sumy', 'mig31k', 'Корекція рівня загрози на основі високої ймовірності ракетного удару')
+            """)
+            cursor.execute("""
+                INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason)
+                VALUES ('added', 'eta_math', 'Математика дольоту [shahed] з Сумська область до Київська область', 'Сумська область', 'Київська область', 'shahed', 'Аналіз розрахованого кінематичного часу дольоту')
             """)
         except Exception as e:
             print(f"⚠️ Error seeding mock rules: {e}")

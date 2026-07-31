@@ -11,7 +11,17 @@ from bs4 import BeautifulSoup
 
 from core.threat_state import ThreatState
 from core.regions import ALL_REGIONS, get_genitive_region, get_ukrainian_threat_type
-from core.threat_state import THREAT_TYPES
+from core.threat_types import (
+    THREAT_TYPES,
+    DEFAULT_SPEEDS_KMH,
+    THREAT_PREDICTIVE_WEIGHTS,
+    THREAT_ETA_DEFAULTS_SECONDS,
+    get_threat_delay_and_eta,
+    get_threat_speed,
+    format_eta_seconds_to_str,
+    calculate_kinematic_eta,
+    detect_threat_type_from_text,
+)
 from core.topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
 from analyzer.gemini_analyzer import GeminiThreatAnalyzer
 from core.config import (
@@ -476,32 +486,7 @@ class TelegramThreatMonitor:
 
     def _get_threat_type_delay_and_eta(self, threat_type: Optional[str], is_regex: bool = False) -> tuple[int, str]:
         """Returns the default auto-clear delay and default ETA string for a given threat type."""
-        regex_map = {
-            "mig31k": (2700, "~20-40 хв"),
-            "ballistic": (1800, "~2-5 хв"),
-            "shahed": (10800, "+1-2 год"),
-            "cruise_missile": (3600, "+15-30 хв"),
-            "tu95": (5400, "~30-90 хв"),
-            "iskander": (1800, "~2-5 хв"),
-            "artillery": (1800, "~0-5 хв")
-        }
-        
-        default_map = {
-            "mig31k": (1800, "~40 хв"),
-            "ballistic": (600, "~15 хв"),
-            "kab": (1200, "~25 хв"),
-            "shahed": (10800, "~200 хв"),
-            "cruise_missile": (2700, "~55 хв"),
-            "tu95": (5400, "~110 хв"),
-            "iskander": (1200, "~25 хв"),
-            "artillery": (1800, "~10 хв")
-        }
-        
-        mapping = regex_map if is_regex else default_map
-        if threat_type in mapping:
-            return mapping[threat_type]
-            
-        return 3600, ""
+        return get_threat_delay_and_eta(threat_type, is_regex)
 
     def _calculate_auto_clear_delay(self, item: dict, telemetry: Optional[dict], threat_type: Optional[str]) -> tuple[int, Optional[str], Optional[int]]:
         """Calculates dynamic/default auto-clear delay in seconds, ETA string, and ETA seconds."""
@@ -637,17 +622,7 @@ class TelegramThreatMonitor:
             if not is_test:
                 eta_sec = eta_seconds
                 if eta_sec is None:
-                    eta_defaults = {
-                        "mig31k": 1200,
-                        "ballistic": 180,
-                        "kab": 600,
-                        "shahed": 5400,
-                        "cruise_missile": 1200,
-                        "tu95": 3600,
-                        "iskander": 180,
-                        "artillery": 120,
-                    }
-                    eta_sec = eta_defaults.get(threat_type, 1800)
+                    eta_sec = THREAT_ETA_DEFAULTS_SECONDS.get(threat_type, 1800)
                 if eta_sec and eta_sec > 0:
                     self._schedule_eta_escalation(region, eta_sec, adjusted_level, threat_type, group_id)
             
@@ -655,17 +630,7 @@ class TelegramThreatMonitor:
                 grace_period = 300
                 eta_sec = eta_seconds
                 if eta_sec is None:
-                    eta_defaults = {
-                        "mig31k": 1200,
-                        "ballistic": 180,
-                        "kab": 600,
-                        "shahed": 5400,
-                        "cruise_missile": 1200,
-                        "tu95": 3600,
-                        "iskander": 180,
-                        "artillery": 120,
-                    }
-                    eta_sec = eta_defaults.get(threat_type, 1800)
+                    eta_sec = THREAT_ETA_DEFAULTS_SECONDS.get(threat_type, 1800)
                 
                 reeval_delay = eta_sec + grace_period
                 self._schedule_predictive_reevaluation(region, reeval_delay, threat_type, group_id)
@@ -852,13 +817,7 @@ class TelegramThreatMonitor:
             if telemetry and telemetry.get("speed_kmh"):
                 speed = telemetry["speed_kmh"]
             else:
-                # Default speeds by threat type
-                speed_defaults = {
-                    "shahed": 165, "cruise_missile": 850, "ballistic": 4000,
-                    "mig31k": 2500, "kab": 300, "tu95": 800, "iskander": 4500,
-                    "artillery": 1200,
-                }
-                speed = speed_defaults.get(threat_type, 300)
+                speed = get_threat_speed(threat_type)
                 
             # Pathfinding to final target cities
             path_boost_regions = set()
@@ -893,21 +852,7 @@ class TelegramThreatMonitor:
 
     def _format_prediction_eta_str(self, eta_seconds: Optional[int]) -> str:
         """Helper to format prediction ETA seconds into Ukrainian readable text."""
-        if not eta_seconds:
-            return ""
-        if eta_seconds < 300:
-            return "~2-5 хв"
-        elif eta_seconds < 900:
-            return f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
-        elif eta_seconds < 3600:
-            return f"~{eta_seconds // 60}-{eta_seconds // 60 + 5} хв"
-        else:
-            h = eta_seconds // 3600
-            m = (eta_seconds % 3600) // 60
-            if m > 0:
-                return f"~{h} год {m}-{m + 10} хв"
-            else:
-                return f"~{h} год"
+        return format_eta_seconds_to_str(eta_seconds)
 
     def _calc_direction_score(self, source_region: str, adj_region: str, bearing: Optional[float]) -> float:
         import math
@@ -968,8 +913,7 @@ class TelegramThreatMonitor:
 
     def _calc_total_score(self, direction_score: float, route_boost: float, db_boost: float, threat_type: str) -> float:
         base_score = direction_score * 0.5 + 0.2
-        type_weight = {"shahed": 0.15, "cruise_missile": 0.08, "mig31k": 0.05, "ballistic": 0.0, "kab": 0.02, "tu95": 0.10, "iskander": 0.0, "artillery": 0.01}
-        base_score += type_weight.get(threat_type, 0.05)
+        base_score += THREAT_PREDICTIVE_WEIGHTS.get(threat_type, 0.05)
         return min(1.0, base_score + route_boost + db_boost)
 
     def _calc_confidence(self, total_score: float, distance_km: Optional[float], route_boost: float, db_boost: float, threat_type: str, adj_region: str) -> int:
@@ -1414,24 +1358,7 @@ class TelegramThreatMonitor:
         return None
 
     def _detect_threat_type(self, text: str):
-        text_lower = text.lower()
-        if any(kw in text_lower for kw in ["міг-31", "міг31", "mig-31", "mig31", "кинджал", "х-47", "х47"]):
-            return "mig31k"
-        if any(kw in text_lower for kw in ["ту-95", "ту95", "tu-95", "tu95", "ту-22", "ту22", "tu-22", "tu22", "ту-160", "tu160"]):
-            return "tu95"
-        if any(kw in text_lower for kw in ["шахед", "shahed", "бпла", "дрон", "мопед", "гербер", "орлан", "supercam", "крило"]):
-            return "shahed"
-        if any(kw in text_lower for kw in ["іскандер", "iskander"]):
-            return "iskander"
-        if any(kw in text_lower for kw in ["балісти", "с-300", "с300", "с-400", "с400", "c-300", "c300", "c-400", "c400"]):
-            return "ballistic"
-        if any(kw in text_lower for kw in ["ракет", "крилат", "калібр", "х-101", "х101", "х-55", "х55", "х-555", "х555", "х-59", "х59", "х-69", "х69"]):
-            return "cruise_missile"
-        if any(kw in text_lower for kw in ["артилерія", "рсзв", "обстріл", "град", "смерч", "ураган", "міномет"]):
-            return "artillery"
-        if re.search(r"\bкаб(и|ів)?\b|авіабомб|фаб|уаб", text_lower) or any(kw in text_lower for kw in ["су-34", "су-35", "су-30", "су-57", "сушка", "сушки"]):
-            return "kab"
-        return "unknown"
+        return detect_threat_type_from_text(text)
 
     def _extract_regions(self, text: str):
         found = set()

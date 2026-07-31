@@ -6,11 +6,15 @@ Endpoints for Gemini rules audit history and threat history seeding.
 from fastapi import APIRouter, HTTPException
 
 from database.db_helpers import get_db, execute_query_as_dicts
+from database.query_builder import build_and_execute_query
+from core.threat_types import (
+    THREAT_SHAHED,
+    THREAT_CRUISE_MISSILE,
+    THREAT_BALLISTIC,
+    THREAT_MIG31K,
+)
 
 router = APIRouter()
-
-
-from database.query_builder import build_and_execute_query
 
 @router.get("/api/admin/rules/history")
 async def get_admin_rules_history(
@@ -62,10 +66,10 @@ async def seed_history():
     ]
 
     threat_templates = [
-        {"threat_level": "high", "threat_type": "mig31k", "detail": "Зліт МіГ-31К з аеродрому Саваслейка. Ракетна небезпека!"},
-        {"threat_level": "medium", "threat_type": "shahed", "detail": "Група ударних БпЛА типу 'Shahed' наближається з півдня."},
-        {"threat_level": "high", "threat_type": "cruise_missile", "detail": "Запуск крилатих ракет Х-101/Х-555 з бортів Ту-95МС."},
-        {"threat_level": "critical", "threat_type": "ballistic", "detail": "Загроза застосування балістичного озброєння з Криму!"},
+        {"threat_level": "high", "threat_type": THREAT_MIG31K, "detail": "Зліт МіГ-31К з аеродрому Саваслейка. Ракетна небезпека!"},
+        {"threat_level": "medium", "threat_type": THREAT_SHAHED, "detail": "Група ударних БпЛА типу 'Shahed' наближається з півдня."},
+        {"threat_level": "high", "threat_type": THREAT_CRUISE_MISSILE, "detail": "Запуск крилатих ракет Х-101/Х-555 з бортів Ту-95МС."},
+        {"threat_level": "critical", "threat_type": THREAT_BALLISTIC, "detail": "Загроза застосування балістичного озброєння з Криму!"},
     ]
 
     total_added = 0
