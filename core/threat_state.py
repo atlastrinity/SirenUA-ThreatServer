@@ -815,25 +815,31 @@ class MockThreatManager:
         try:
             any_changed = False
             for region, state in self.threats.items():
-                if only_test and not state.is_test:
-                    continue
-                has_changed = (state.level != "none")
-                if has_changed:
-                    is_test_flag = state.is_test
-                    state.clear()
-                    
-                    now = time.time()
-                    play_sound = True
-                    if now - self.last_sound_time < 10.0:
-                        play_sound = False
-                    else:
-                        self.last_sound_time = now
+                if only_test:
+                    original_count = len(state.active_threats)
+                    state.active_threats = [t for t in state.active_threats if not t.is_test]
+                    if len(state.active_threats) < original_count:
+                        any_changed = True
+                        if not state.active_threats:
+                            state.clear()
+                else:
+                    has_changed = (state.level != "none")
+                    if has_changed:
+                        is_test_flag = state.is_test
+                        state.clear()
                         
-                    send_fcm_notification(region, "none", play_sound=play_sound, is_test=is_test_flag)
-                    
-                    if not is_test_flag:
-                        self.real_threats_backup[region] = state.to_dict()
-                    any_changed = True
+                        now = time.time()
+                        play_sound = True
+                        if now - self.last_sound_time < 10.0:
+                            play_sound = False
+                        else:
+                            self.last_sound_time = now
+                            
+                        send_fcm_notification(region, "none", play_sound=play_sound, is_test=is_test_flag)
+                        
+                        if not is_test_flag:
+                            self.real_threats_backup[region] = state.to_dict()
+                        any_changed = True
                     
             if any_changed:
                 self._execute_save_to_db()
