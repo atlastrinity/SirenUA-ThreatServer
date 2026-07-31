@@ -121,6 +121,17 @@ class SingleThreat:
             origin_lat = coords[0]
             origin_lon = coords[1]
 
+        if origin_lat is None and self.detail:
+            import re
+            match = re.search(r'з\s+([А-Яа-яіЇїЄє\s\'-]+(?:області|область|РФ|Криму|Сумщини|Харківщини|Чернігівщини|Одещини|Донеччини))', self.detail)
+            if match:
+                src_text = match.group(1).strip()
+                src_region = detect_launch_origin_from_text(src_text)
+                if src_region and src_region in REGION_CENTER_COORDINATES:
+                    coords = REGION_CENTER_COORDINATES[src_region]
+                    origin_lat = coords[0]
+                    origin_lon = coords[1]
+
         return {
             "threat_id": self.threat_id,
             "level": self.level,
