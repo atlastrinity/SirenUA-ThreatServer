@@ -328,6 +328,10 @@ async def get_flight_corridors(days: int = 30):
             corridors.append({
                 "source": r["source_region"],
                 "target": r["target_region"],
+                "source_lat": src_coords[0] if src_coords else 50.0,
+                "source_lon": src_coords[1] if src_coords else 36.0,
+                "target_lat": tgt_coords[0] if tgt_coords else 49.0,
+                "target_lon": tgt_coords[1] if tgt_coords else 32.0,
                 "route_description": r["rule_text"],
                 "threat_type": r["threat_type"],
                 "count": r["evidence_count"] or 1,
