@@ -203,6 +203,35 @@ def test_inland_ingress_corridor_extrapolation():
     assert "Запорізька область" in tm.threats
     print("✅ Inland Ingress Corridor Extrapolation successfully auto-stitched Zaporizhzhia corridor for Dnipro!")
 
+def test_palantir_intelligence_endpoints():
+    """Перевірка роботоздатності API ендпоінтів та створення записів в БД Palantir."""
+    from fastapi.testclient import TestClient
+    from server import app
+
+    client = TestClient(app)
+
+    # 1. Overview API
+    res = client.get("/api/admin/palantir/overview?days=30")
+    assert res.status_code == 200
+    data = res.json()
+    assert "trajectory_corridors" in data
+    assert "launch_hubs" in data
+    assert "region_risk_matrix" in data
+
+    # 2. Synthesis POST API
+    res_synth = client.post("/api/admin/palantir/synthesize")
+    assert res_synth.status_code == 200
+    synth_data = res_synth.json()
+    assert synth_data["status"] == "success"
+    assert "palantir_summary" in synth_data
+
+    # 3. Reports GET API
+    res_rep = client.get("/api/admin/palantir/reports?limit=10")
+    assert res_rep.status_code == 200
+    reports_data = res_rep.json()
+    assert reports_data["total"] >= 1
+    print("✅ Palantir Intelligence Endpoints & DB Storage test passed successfully!")
+
 if __name__ == "__main__":
     test_threat_types_detection()
     test_airbases_detection()
@@ -211,4 +240,6 @@ if __name__ == "__main__":
     test_trajectory_gap_stitching()
     test_regional_rule_telemetry_and_metrics()
     test_inland_ingress_corridor_extrapolation()
-    print("\n🎉 ALL 7 THREAT CONSTANTS & TRAJECTORY TESTS PASSED SUCCESSFULLY!")
+    test_palantir_intelligence_endpoints()
+    print("\n🎉 ALL 8 THREAT CONSTANTS, TRAJECTORY & PALANTIR TESTS PASSED SUCCESSFULLY!")
+

@@ -14,6 +14,7 @@ import os
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from core.config import IS_LIVE_MODE
 from core.globals import threat_manager, shelter_manager
@@ -59,6 +60,19 @@ app.include_router(threats_router)
 app.include_router(analytics_router)
 app.include_router(shelters_router)
 app.include_router(admin_router)
+
+
+# ---------------------------------------------------------------------------
+# Admin Analytics HTML Page
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/analytics")
+async def admin_analytics_page():
+    """Serve the Analytics Intelligence dashboard HTML page."""
+    html_path = os.path.join(os.path.dirname(__file__), "admin_analytics.html")
+    if os.path.exists(html_path):
+        return FileResponse(html_path, media_type="text/html")
+    return {"error": "admin_analytics.html not found"}
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SirenUA — Аналітика Розвідки Загроз</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0a0e17;
+            color: #e0e6ed;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #0d1321 0%, #1a1f3a 50%, #0d1321 100%);
+            border-bottom: 1px solid rgba(255, 204, 0, 0.3);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(90deg, #ffcc00, #ff6600);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header .subtitle {
+            font-size: 12px;
+            color: #7a8ba8;
+            margin-top: 2px;
+        }
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #ffcc00, #ff8800);
+            color: #0a0e17;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(255,204,0,0.3); }
+        .btn-secondary {
+            background: rgba(255,255,255,0.08);
+            color: #e0e6ed;
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+        .btn-secondary:hover { background: rgba(255,255,255,0.14); }
+        .period-selector {
+            display: flex;
+            gap: 4px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 4px;
+        }
+        .period-btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            background: transparent;
+            color: #7a8ba8;
+            transition: all 0.2s;
+        }
+        .period-btn.active {
+            background: rgba(255,204,0,0.2);
+            color: #ffcc00;
+        }
+        .layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 500px auto auto;
+            gap: 16px;
+            padding: 16px;
+        }
+        .card {
+            background: linear-gradient(180deg, rgba(20,25,45,0.95) 0%, rgba(15,18,32,0.98) 100%);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .card-header {
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-header h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #c0c8d8;
+        }
+        .card-header .badge {
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+        .badge-red { background: rgba(255,60,60,0.2); color: #ff4444; }
+        .badge-green { background: rgba(0,200,80,0.2); color: #00cc55; }
+        .badge-yellow { background: rgba(255,204,0,0.2); color: #ffcc00; }
+        .card-body { padding: 16px; }
+        .map-card { grid-column: 1 / 3; }
+        #trajectoryMap { width: 100%; height: 450px; background: #0a0e17; }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            padding: 16px;
+            grid-column: 1 / 3;
+        }
+        .stat-box {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+        }
+        .stat-box .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .stat-box .stat-label {
+            font-size: 11px;
+            color: #7a8ba8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .stat-value.orange { color: #ff8800; }
+        .stat-value.red { color: #ff4444; }
+        .stat-value.green { color: #00cc55; }
+        .stat-value.blue { color: #4488ff; }
+        .chart-container { position: relative; height: 280px; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        th {
+            text-align: left;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.04);
+            color: #7a8ba8;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+        }
+        td {
+            padding: 10px 12px;
+            border-top: 1px solid rgba(255,255,255,0.04);
+        }
+        tr:hover td { background: rgba(255,204,0,0.03); }
+        .threat-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        .threat-shahed { background: rgba(255,140,0,0.2); color: #ff8c00; }
+        .threat-cruise { background: rgba(255,60,60,0.2); color: #ff4444; }
+        .threat-ballistic { background: rgba(200,0,255,0.2); color: #cc44ff; }
+        .threat-kab { background: rgba(255,200,0,0.2); color: #ffcc00; }
+        .threat-other { background: rgba(100,140,255,0.2); color: #6688ff; }
+        .table-card { max-height: 400px; overflow-y: auto; }
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 24px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            z-index: 9999;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.4s;
+        }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast-success { background: rgba(0,200,80,0.9); color: #fff; }
+        .toast-error { background: rgba(255,60,60,0.9); color: #fff; }
+        .loading-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(10,14,23,0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9998;
+            font-size: 18px;
+            font-weight: 600;
+            color: #ffcc00;
+        }
+        .loading-overlay.hidden { display: none; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .loading-overlay span { animation: pulse 1.5s infinite; }
+        .reports-list { max-height: 200px; overflow-y: auto; }
+        .report-item {
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 12px;
+        }
+        .report-item:hover { background: rgba(255,204,0,0.03); }
+        .report-date { color: #ffcc00; font-weight: 600; }
+        .report-summary { color: #7a8ba8; margin-top: 4px; white-space: pre-line; }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <span>🔄 Завантаження аналітичних даних...</span>
+    </div>
+
+    <header class="header">
+        <div>
+            <h1>🛡️ SirenUA — Аналітика Розвідки Загроз</h1>
+            <div class="subtitle">Trajectory Intelligence • Launch Origins • Risk Matrix</div>
+        </div>
+        <div class="header-actions">
+            <div class="period-selector">
+                <button class="period-btn" data-days="7" onclick="changePeriod(7)">7 днів</button>
+                <button class="period-btn active" data-days="30" onclick="changePeriod(30)">30 днів</button>
+                <button class="period-btn" data-days="90" onclick="changePeriod(90)">90 днів</button>
+            </div>
+            <button class="btn btn-primary" onclick="generateReport()">🔄 Догенерувати аналітику</button>
+            <button class="btn btn-secondary" onclick="refreshAll()">↻ Оновити</button>
+        </div>
+    </header>
+
+    <!-- Stats Row -->
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-box"><div class="stat-value orange" id="statCorridors">—</div><div class="stat-label">Коридорів прольоту</div></div>
+        <div class="stat-box"><div class="stat-value red" id="statOrigins">—</div><div class="stat-label">Пускових хабів</div></div>
+        <div class="stat-box"><div class="stat-value green" id="statRegions">—</div><div class="stat-label">Областей під загрозою</div></div>
+        <div class="stat-box"><div class="stat-value blue" id="statEffectiveness">—</div><div class="stat-label">Ефективність AI</div></div>
+    </div>
+
+    <div class="layout">
+        <!-- Map -->
+        <div class="card map-card">
+            <div class="card-header">
+                <h3>🗺️ Карта траєкторій та пускових хабів</h3>
+                <span class="badge badge-yellow" id="mapBadge">Завантаження...</span>
+            </div>
+            <div id="trajectoryMap"></div>
+        </div>
+
+        <!-- Threat Type Distribution Chart -->
+        <div class="card">
+            <div class="card-header">
+                <h3>📊 Розподіл за типами загроз</h3>
+                <span class="badge badge-red" id="typeBadge">—</span>
+            </div>
+            <div class="card-body">
+                <div class="chart-container"><canvas id="typeChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Daily Trend Chart -->
+        <div class="card">
+            <div class="card-header">
+                <h3>📈 Тенденція запусків за період</h3>
+                <span class="badge badge-green" id="trendBadge">—</span>
+            </div>
+            <div class="card-body">
+                <div class="chart-container"><canvas id="trendChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Region Risk Matrix Chart -->
+        <div class="card">
+            <div class="card-header">
+                <h3>🎯 ТОП-10 областей за кількістю подій</h3>
+            </div>
+            <div class="card-body">
+                <div class="chart-container"><canvas id="regionChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Categories Doughnut -->
+        <div class="card">
+            <div class="card-header">
+                <h3>🔹 Категорії: БПЛА vs Ракети vs Балістика</h3>
+            </div>
+            <div class="card-body">
+                <div class="chart-container"><canvas id="categoryChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Launch Origins Table -->
+        <div class="card">
+            <div class="card-header">
+                <h3>🚀 Пускові хаби РФ</h3>
+                <span class="badge badge-red" id="originsBadge">—</span>
+            </div>
+            <div class="card-body table-card">
+                <table>
+                    <thead><tr><th>Хаб</th><th>Запусків</th><th>Типи</th><th>Останній</th></tr></thead>
+                    <tbody id="originsTable"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Flight Corridors Table -->
+        <div class="card">
+            <div class="card-header">
+                <h3>✈️ Коридори прольоту</h3>
+                <span class="badge badge-yellow" id="corridorsBadge">—</span>
+            </div>
+            <div class="card-body table-card">
+                <table>
+                    <thead><tr><th>Джерело</th><th>Ціль</th><th>Тип</th><th>Частота</th><th>Точність</th></tr></thead>
+                    <tbody id="corridorsTable"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Saved Reports -->
+        <div class="card" style="grid-column: 1/3;">
+            <div class="card-header">
+                <h3>📋 Збережені аналітичні звіти</h3>
+                <span class="badge badge-green" id="reportsBadge">—</span>
+            </div>
+            <div class="card-body reports-list" id="reportsList"></div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    const API_BASE = window.location.origin;
+    let currentDays = 30;
+    let map, corridorLayer, originLayer, riskLayer;
+    let typeChartInst, trendChartInst, regionChartInst, categoryChartInst;
+
+    // Chart.js global config
+    Chart.defaults.color = '#7a8ba8';
+    Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+    Chart.defaults.font.family = "'Inter', sans-serif";
+
+    function threatBadgeClass(type) {
+        if (!type) return 'threat-other';
+        if (type.includes('shahed') || type.includes('recon')) return 'threat-shahed';
+        if (type.includes('cruise') || type.includes('tu9') || type.includes('zircon')) return 'threat-cruise';
+        if (type.includes('ballistic') || type.includes('iskander')) return 'threat-ballistic';
+        if (type.includes('kab')) return 'threat-kab';
+        return 'threat-other';
+    }
+
+    function threatLabel(type) {
+        const labels = {
+            'shahed': 'БПЛА', 'cruise_missile': 'Крилата', 'ballistic': 'Балістика',
+            'kab': 'КАБ', 'iskander': 'Іскандер', 'mig31k': 'МіГ-31К',
+            'tu95': 'Ту-95МС', 'tu22m3': 'Ту-22М3', 'zircon': 'Циркон',
+            'su35_su57': 'Авіація', 'artillery': 'Артилерія', 'mlrs': 'РСЗВ',
+            'recon_uav': 'Розвідка', 'recon': 'Розвідка'
+        };
+        return labels[type] || type || '—';
+    }
+
+    function showToast(msg, type = 'success') {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.className = `toast toast-${type} show`;
+        setTimeout(() => t.className = 'toast', 3500);
+    }
+
+    function changePeriod(days) {
+        currentDays = days;
+        document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.days) === days));
+        refreshAll();
+    }
+
+    // Initialize Map
+    function initMap() {
+        map = L.map('trajectoryMap', {
+            center: [48.5, 33.5],
+            zoom: 6,
+            zoomControl: true,
+            attributionControl: false
+        });
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 12
+        }).addTo(map);
+        corridorLayer = L.layerGroup().addTo(map);
+        originLayer = L.layerGroup().addTo(map);
+        riskLayer = L.layerGroup().addTo(map);
+    }
+
+    // Load trajectory heatmap on map
+    async function loadTrajectoryMap() {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/analytics/trajectory_heatmap?days=${currentDays}`);
+            const data = await res.json();
+            corridorLayer.clearLayers();
+
+            document.getElementById('mapBadge').textContent = `${data.total} коридорів`;
+            document.getElementById('statCorridors').textContent = data.total;
+
+            const maxCount = Math.max(...data.corridors.map(c => c.count), 1);
+
+            data.corridors.forEach(c => {
+                const weight = Math.max(2, Math.min(8, (c.count / maxCount) * 8));
+                const color = c.threat_type === 'shahed' ? '#ff8c00' :
+                              c.threat_type === 'cruise_missile' ? '#ff4444' :
+                              c.threat_type === 'ballistic' ? '#cc44ff' :
+                              c.threat_type === 'kab' ? '#ffcc00' : '#4488ff';
+
+                // Curved line using intermediate point
+                const midLat = (c.source_lat + c.target_lat) / 2 + (c.source_lon - c.target_lon) * 0.1;
+                const midLon = (c.source_lon + c.target_lon) / 2 + (c.target_lat - c.source_lat) * 0.1;
+
+                const pts = [];
+                for (let t = 0; t <= 1; t += 0.05) {
+                    const lat = (1-t)*(1-t)*c.source_lat + 2*(1-t)*t*midLat + t*t*c.target_lat;
+                    const lon = (1-t)*(1-t)*c.source_lon + 2*(1-t)*t*midLon + t*t*c.target_lon;
+                    pts.push([lat, lon]);
+                }
+
+                // Glow line
+                L.polyline(pts, { color, weight: weight + 4, opacity: 0.15 }).addTo(corridorLayer);
+                // Core line
+                const line = L.polyline(pts, { color, weight, opacity: 0.7, dashArray: c.data_source === 'rule' ? '8 4' : null });
+                line.bindPopup(`<b>${c.source} → ${c.target}</b><br>Тип: ${threatLabel(c.threat_type)}<br>Частота: ${c.count}<br>Довіра: ${c.avg_confidence}%`);
+                line.addTo(corridorLayer);
+
+                // Arrowhead at 80% of trajectory
+                const arrowPt = pts[Math.floor(pts.length * 0.8)];
+                const icon = c.threat_type === 'shahed' ? '✈️' :
+                             c.threat_type?.includes('ballistic') || c.threat_type === 'iskander' ? '🚀' :
+                             c.threat_type?.includes('cruise') ? '🚀' :
+                             c.threat_type === 'kab' ? '💣' : '⚠️';
+                L.marker(arrowPt, {
+                    icon: L.divIcon({
+                        html: `<div style="font-size:16px;text-shadow:0 0 8px ${color};">${icon}</div>`,
+                        iconSize: [20, 20],
+                        className: ''
+                    })
+                }).addTo(corridorLayer);
+            });
+        } catch (e) { console.error('Trajectory map error:', e); }
+    }
+
+    // Load launch origins on map
+    async function loadLaunchOrigins() {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/analytics/launch_origins?days=${currentDays}`);
+            const data = await res.json();
+            originLayer.clearLayers();
+
+            document.getElementById('statOrigins').textContent = data.total;
+            document.getElementById('originsBadge').textContent = `${data.total} хабів`;
+
+            // Table
+            const tbody = document.getElementById('originsTable');
+            tbody.innerHTML = '';
+
+            data.origins.forEach(o => {
+                if (o.lat && o.lon) {
+                    const size = Math.max(20, Math.min(50, o.total_launches * 2));
+                    L.circleMarker([o.lat, o.lon], {
+                        radius: size / 3,
+                        color: '#ff4444',
+                        fillColor: '#ff2222',
+                        fillOpacity: 0.5,
+                        weight: 2
+                    }).bindPopup(`<b>🚀 ${o.name}</b><br>Запусків: ${o.total_launches}<br>${Object.entries(o.by_type).map(([k,v]) => `${threatLabel(k)}: ${v}`).join('<br>')}`).addTo(originLayer);
+
+                    L.marker([o.lat, o.lon], {
+                        icon: L.divIcon({
+                            html: `<div style="font-size:10px;color:#ff4444;font-weight:bold;text-shadow:0 0 6px #000;white-space:nowrap;">${o.name}</div>`,
+                            iconSize: [100, 16],
+                            iconAnchor: [50, -8],
+                            className: ''
+                        })
+                    }).addTo(originLayer);
+                }
+
+                const types = Object.entries(o.by_type).map(([k,v]) =>
+                    `<span class="threat-badge ${threatBadgeClass(k)}">${threatLabel(k)}: ${v}</span>`
+                ).join(' ');
+
+                tbody.innerHTML += `<tr>
+                    <td style="font-weight:600;color:#ff8800;">${o.name}</td>
+                    <td style="font-weight:700;color:#ff4444;">${o.total_launches}</td>
+                    <td>${types}</td>
+                    <td style="color:#7a8ba8;font-size:11px;">${o.last_detected ? o.last_detected.substring(0,16) : '—'}</td>
+                </tr>`;
+            });
+        } catch (e) { console.error('Launch origins error:', e); }
+    }
+
+    // Load region risk on map
+    async function loadRegionRisk() {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/analytics/region_risk_matrix?days=${currentDays}`);
+            const data = await res.json();
+            riskLayer.clearLayers();
+
+            document.getElementById('statRegions').textContent = data.total;
+
+            data.regions.forEach(r => {
+                if (!r.lat || !r.lon) return;
+                const risk = r.risk_score || 0;
+                const color = risk > 70 ? '#ff2222' : risk > 40 ? '#ff8800' : risk > 15 ? '#ffcc00' : '#00cc55';
+                const radius = Math.max(8, Math.min(25, risk / 4));
+
+                L.circleMarker([r.lat, r.lon], {
+                    radius,
+                    color,
+                    fillColor: color,
+                    fillOpacity: 0.25,
+                    weight: 1.5
+                }).bindPopup(`<b>${r.name}</b><br>Ризик: ${risk}%<br>Подій: ${r.total_events}<br>Тип: ${threatLabel(r.dominant_threat_type)}`).addTo(riskLayer);
+            });
+
+            // Region chart (top 10)
+            const top10 = data.regions.slice(0, 10);
+            if (regionChartInst) regionChartInst.destroy();
+            regionChartInst = new Chart(document.getElementById('regionChart'), {
+                type: 'bar',
+                data: {
+                    labels: top10.map(r => r.name.replace(' область', '').replace('м. ', '')),
+                    datasets: [{
+                        label: 'Кількість подій',
+                        data: top10.map(r => r.total_events),
+                        backgroundColor: top10.map(r => {
+                            const risk = r.risk_score || 0;
+                            return risk > 70 ? 'rgba(255,34,34,0.6)' : risk > 40 ? 'rgba(255,136,0,0.6)' : 'rgba(255,204,0,0.6)';
+                        }),
+                        borderColor: top10.map(r => {
+                            const risk = r.risk_score || 0;
+                            return risk > 70 ? '#ff2222' : risk > 40 ? '#ff8800' : '#ffcc00';
+                        }),
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { color: 'rgba(255,255,255,0.04)' } },
+                        y: { grid: { display: false } }
+                    }
+                }
+            });
+        } catch (e) { console.error('Region risk error:', e); }
+    }
+
+    // Load threat type distribution
+    async function loadThreatTypes() {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/analytics/threat_type_distribution?days=${currentDays}`);
+            const data = await res.json();
+
+            const totalAll = Object.values(data.totals).reduce((a,b) => a+b, 0);
+            document.getElementById('typeBadge').textContent = `${totalAll} подій`;
+
+            // Doughnut of categories
+            const cats = data.categories;
+            const catLabels = Object.keys(cats).filter(k => cats[k] > 0);
+            const catValues = catLabels.map(k => cats[k]);
+            const catColors = ['#ff8c00', '#ff4444', '#cc44ff', '#ffcc00', '#4488ff', '#88ff44', '#7a8ba8'];
+
+            if (categoryChartInst) categoryChartInst.destroy();
+            categoryChartInst = new Chart(document.getElementById('categoryChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: catLabels,
+                    datasets: [{
+                        data: catValues,
+                        backgroundColor: catColors.slice(0, catLabels.length),
+                        borderWidth: 0,
+                        hoverOffset: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '55%',
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: { padding: 12, font: { size: 11 }, usePointStyle: true }
+                        }
+                    }
+                }
+            });
+
+            // Bar chart by type
+            const types = Object.keys(data.totals).filter(k => data.totals[k] > 0);
+            if (typeChartInst) typeChartInst.destroy();
+            typeChartInst = new Chart(document.getElementById('typeChart'), {
+                type: 'bar',
+                data: {
+                    labels: types.map(t => threatLabel(t)),
+                    datasets: [{
+                        label: 'Кількість',
+                        data: types.map(t => data.totals[t]),
+                        backgroundColor: types.map(t => {
+                            if (t.includes('shahed') || t.includes('recon')) return 'rgba(255,140,0,0.6)';
+                            if (t.includes('cruise') || t.includes('tu9') || t.includes('zircon')) return 'rgba(255,60,60,0.6)';
+                            if (t.includes('ballistic') || t.includes('iskander')) return 'rgba(200,0,255,0.6)';
+                            if (t.includes('kab')) return 'rgba(255,200,0,0.6)';
+                            return 'rgba(100,140,255,0.6)';
+                        }),
+                        borderRadius: 4,
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { grid: { color: 'rgba(255,255,255,0.04)' } }
+                    }
+                }
+            });
+        } catch (e) { console.error('Threat types error:', e); }
+    }
+
+    // Load daily summary trend
+    async function loadDailySummary() {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/analytics/daily_summary?days=${currentDays}`);
+            const data = await res.json();
+
+            document.getElementById('trendBadge').textContent = `${data.total_days} днів`;
+
+            if (data.summaries.length > 0) {
+                const latest = data.summaries[data.summaries.length - 1];
+                document.getElementById('statEffectiveness').textContent = `${latest.effectiveness_pct}%`;
+            }
+
+            if (trendChartInst) trendChartInst.destroy();
+            trendChartInst = new Chart(document.getElementById('trendChart'), {
+                type: 'line',
+                data: {
+                    labels: data.summaries.map(s => s.date.substring(5)),
+                    datasets: [
+                        {
+                            label: 'Всього подій',
+                            data: data.summaries.map(s => s.total_events),
+                            borderColor: '#ffcc00',
+                            backgroundColor: 'rgba(255,204,0,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 2
+                        },
+                        {
+                            label: 'Підтверджені',
+                            data: data.summaries.map(s => s.confirmed),
+                            borderColor: '#00cc55',
+                            backgroundColor: 'rgba(0,200,80,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 2
+                        },
+                        {
+                            label: 'Перехоплені',
+                            data: data.summaries.map(s => s.mitigated),
+                            borderColor: '#4488ff',
+                            backgroundColor: 'rgba(68,136,255,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { usePointStyle: true, font: { size: 11 } } }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: true }
+                    }
+                }
+            });
+        } catch (e) { console.error('Daily summary error:', e); }
+    }
+
+    // Load flight corridors table
+    async function loadFlightCorridors() {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/analytics/flight_corridors?days=${currentDays}`);
+            const data = await res.json();
+
+            document.getElementById('corridorsBadge').textContent = `${data.total} коридорів`;
+
+            const tbody = document.getElementById('corridorsTable');
+            tbody.innerHTML = '';
+            data.corridors.forEach(c => {
+                tbody.innerHTML += `<tr>
+                    <td style="color:#ff8800;font-weight:600;">${c.source}</td>
+                    <td style="color:#ffcc00;">${c.target}</td>
+                    <td><span class="threat-badge ${threatBadgeClass(c.threat_type)}">${threatLabel(c.threat_type)}</span></td>
+                    <td style="font-weight:700;">${c.count}</td>
+                    <td>${c.accuracy}%</td>
+                </tr>`;
+            });
+        } catch (e) { console.error('Flight corridors error:', e); }
+    }
+
+    // Load saved reports
+    async function loadReports() {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/analytics/reports?limit=20`);
+            const data = await res.json();
+
+            document.getElementById('reportsBadge').textContent = `${data.total} звітів`;
+
+            const container = document.getElementById('reportsList');
+            container.innerHTML = '';
+            if (data.reports.length === 0) {
+                container.innerHTML = '<div class="report-item" style="color:#7a8ba8;">Немає збережених звітів. Натисніть "Догенерувати аналітику".</div>';
+                return;
+            }
+            data.reports.forEach(r => {
+                container.innerHTML += `<div class="report-item">
+                    <span class="report-date">📋 ${r.report_date}</span>
+                    <span style="color:#7a8ba8;margin-left:8px;">(${r.generated_by === 'manual' ? 'вручну' : 'автоматично'})</span>
+                    <div class="report-summary">${r.summary_text || '—'}</div>
+                </div>`;
+            });
+        } catch (e) { console.error('Reports error:', e); }
+    }
+
+    // Generate report
+    async function generateReport() {
+        try {
+            showToast('⏳ Генерація аналітичного звіту...', 'success');
+            const res = await fetch(`${API_BASE}/api/admin/analytics/generate_daily_report`, { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'success') {
+                showToast(`✅ Звіт за ${data.report_date} згенеровано! Коридорів: ${data.trajectory_corridors}, Хабів: ${data.launch_origins}`, 'success');
+                loadReports();
+            } else {
+                showToast('❌ Помилка генерації звіту', 'error');
+            }
+        } catch (e) {
+            showToast('❌ Помилка: ' + e.message, 'error');
+        }
+    }
+
+    // Refresh all data
+    async function refreshAll() {
+        document.getElementById('loadingOverlay').classList.remove('hidden');
+        try {
+            await Promise.all([
+                loadTrajectoryMap(),
+                loadLaunchOrigins(),
+                loadRegionRisk(),
+                loadThreatTypes(),
+                loadDailySummary(),
+                loadFlightCorridors(),
+                loadReports()
+            ]);
+        } catch (e) {
+            console.error('Refresh error:', e);
+        }
+        document.getElementById('loadingOverlay').classList.add('hidden');
+    }
+
+    // Init
+    document.addEventListener('DOMContentLoaded', () => {
+        initMap();
+        refreshAll();
+    });
+    </script>
+</body>
+</html>

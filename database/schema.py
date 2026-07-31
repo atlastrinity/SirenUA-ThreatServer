@@ -212,6 +212,38 @@ def init_analytics_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_rules_audit_ts ON gemini_rules_audit(timestamp)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_rules_audit_action ON gemini_rules_audit(action)')
 
+    # --- analytics_reports & palantir_reports ---
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analytics_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            report_date DATE NOT NULL,
+            report_type TEXT DEFAULT 'daily',
+            summary_text TEXT,
+            trajectory_data TEXT,
+            launch_data TEXT,
+            risk_matrix TEXT,
+            generated_by TEXT DEFAULT 'auto'
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_reports_date ON analytics_reports(report_date)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_reports_type ON analytics_reports(report_type)')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS palantir_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            report_date DATE NOT NULL,
+            threat_assessment_summary TEXT,
+            palantir_vectors_json TEXT,
+            launch_hubs_json TEXT,
+            risk_matrix_json TEXT,
+            confidence_index REAL DEFAULT 0.95,
+            generated_by TEXT DEFAULT 'palantir_engine'
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_palantir_reports_date ON palantir_reports(report_date)')
+
     # Seed mock data in dev mode
     if not IS_LIVE_MODE:
         _seed_mock_data(cursor)

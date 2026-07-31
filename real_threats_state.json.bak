@@ -1,0 +1,26 @@
+{
+  "Сумська область": {
+    "level": "none",
+    "type": null,
+    "detail": null,
+    "since": null,
+    "confidence": null,
+    "eta": null,
+    "is_predictive": false,
+    "is_active": false,
+    "is_test": false,
+    "active_threats": []
+  },
+  "Чернігівська область": {
+    "level": "none",
+    "type": null,
+    "detail": null,
+    "since": null,
+    "confidence": null,
+    "eta": null,
+    "is_predictive": false,
+    "is_active": false,
+    "is_test": false,
+    "active_threats": []
+  }
+}
