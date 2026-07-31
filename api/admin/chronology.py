@@ -55,6 +55,8 @@ async def get_admin_chronology(
                    tc.timestamp as clearing_timestamp,
                    tc.resolution_type
             FROM paired_events pe
+            JOIN threat_history th ON pe.threat_event_id = th.id
+            LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
             WHERE th.timestamp >= datetime('now', ?)
         '''
         params = [day_filter]
