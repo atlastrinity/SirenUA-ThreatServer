@@ -129,9 +129,36 @@ def test_rules_engine_learning():
     assert "shahed" in rule["rule_text"]
     print(f"✅ Gemini Rules Engine learned ETA math rule: {rule['rule_text']}")
 
+def test_trajectory_gap_stitching():
+    print("🧪 Test 5: Testing Intelligent Trajectory Gap Stitching & Path Bridging...")
+    from monitor.telegram_monitor import TelegramThreatMonitor
+    from core.threat_state import MockThreatManager
+
+    tm = MockThreatManager()
+    monitor = TelegramThreatMonitor(threat_manager=tm)
+
+    # Test bridging gap from Sumy (north-east) to Kyiv (center-west)
+    # Topological path: Sumy -> Chernihiv -> Kyiv
+    monitor._bridge_trajectory_gaps(
+        source_region="Сумська область",
+        target_region="Київська область",
+        threat_type=THREAT_SHAHED,
+        group_id="group_gap_test_1"
+    )
+
+    # Chernihiv should now be activated as a predictive flight corridor gap region
+    chernihiv_state = tm.threats.get("Чернігівська область")
+    assert chernihiv_state is not None
+    assert chernihiv_state.level != "none"
+    assert chernihiv_state.is_predictive is True
+    assert "Проміжний коридор" in chernihiv_state.detail
+    assert "відновлено" in chernihiv_state.detail
+    print("✅ Trajectory gap stitching successfully bridged Chernihiv region between Sumy and Kyiv!")
+
 if __name__ == "__main__":
     test_threat_types_detection()
     test_airbases_detection()
     test_kinematics_calculations()
     test_rules_engine_learning()
-    print("\n🎉 ALL THREAT CONSTANTS, AIRBASES, AND RULES TESTS PASSED SUCCESSFULLY!")
+    test_trajectory_gap_stitching()
+    print("\n🎉 ALL THREAT CONSTANTS, AIRBASES, RULES, AND TRAJECTORY STITCHING TESTS PASSED SUCCESSFULLY!")

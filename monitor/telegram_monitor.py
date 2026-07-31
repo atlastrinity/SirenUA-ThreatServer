@@ -617,6 +617,12 @@ class TelegramThreatMonitor:
                         self._handle_cross_region_transit(reg, region, threat_type, group_id)
                         break
 
+            # Bridge trajectory gaps from source_regions if provided
+            source_regions = item.get("source_regions", [])
+            for src in source_regions:
+                if isinstance(src, str) and src in ALL_REGIONS and src != region:
+                    self._bridge_trajectory_gaps(src, region, threat_type, group_id, confidence, is_test, rules_applied)
+
             self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
                                            confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
                                            is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
@@ -709,6 +715,58 @@ class TelegramThreatMonitor:
 
         await self._propagate_predictive_threats()
 
+    def _bridge_trajectory_gaps(self, source_region: str, target_region: str, threat_type: Optional[str], group_id: Optional[str] = None, confidence: Optional[int] = None, is_test: bool = False, rules_applied: list = None):
+        """
+        Intelligent Trajectory Gap Stitching Engine:
+        Connects flight path vectors when a threat disappears/misses detection in intermediate regions
+        and reappears in a downstream target region. Automatically bridges intermediate gap regions
+        along the shortest topological path with a predictive transit corridor state.
+        """
+        if not source_region or not target_region or source_region == target_region:
+            return
+
+        path = self._find_path(source_region, target_region)
+        if len(path) <= 2:
+            return  # Directly adjacent or same region — no intermediate gap
+
+        # Intermediate regions along the flight path vector
+        intermediate_regions = path[1:-1]
+        print(f"🌉 [Trajectory Stitching] Відновлення коридору між {source_region} ➔ {target_region}. Проміжні області з розривом: {intermediate_regions}")
+
+        for inter_reg in intermediate_regions:
+            current_state = self.threat_manager.threats.get(inter_reg)
+            # Only fill gap if current region has no active threat
+            if not current_state or current_state.level == "none":
+                src_gen = get_genitive_region(source_region)
+                tgt_gen = get_genitive_region(target_region)
+                ukr_type = get_ukrainian_threat_type(threat_type)
+
+                gap_detail = (
+                    f"🌉 Проміжний коридор перельоту ({ukr_type}): напрямок {src_gen} ➔ {tgt_gen}.\n"
+                    f"⚠️ Траєкторію відновлено після тимчасового розриву засікання рад/каналами."
+                )
+                gap_conf = max(60, (confidence or 75) - 15)
+
+                self.threat_manager.set_threat(
+                    region=inter_reg,
+                    level="medium",
+                    threat_type=threat_type,
+                    detail=gap_detail,
+                    confidence=gap_conf,
+                    eta="коридор",
+                    is_predictive=True,
+                    is_test=is_test,
+                    telemetry={
+                        "is_detection_gap": True,
+                        "gap_source_region": source_region,
+                        "gap_target_region": target_region,
+                        "group_id": group_id
+                    },
+                    rules_applied=rules_applied
+                )
+                # Auto clear for gap regions after 45 mins
+                self._schedule_auto_clear(inter_reg, 2700, threat_type=threat_type, group_id=group_id)
+
     def _handle_cross_region_transit(self, source_region: str, target_region: str, threat_type: Optional[str], group_id: Optional[str]):
         """
         Обробляє транзит загрози з одного регіону в інший (Cross-Region Transit Handshake).
@@ -716,6 +774,9 @@ class TelegramThreatMonitor:
         """
         if source_region == target_region:
             return
+
+        # Bridge intermediate topological gaps along trajectory path if non-adjacent
+        self._bridge_trajectory_gaps(source_region, target_region, threat_type, group_id)
 
         print(f"✈️  [Transit Handshake] Переліт загрози ({threat_type or 'ціль'}): {source_region} ➔ {target_region}")
 
@@ -1458,7 +1519,11 @@ class TelegramThreatMonitor:
                 print(f"⚠️ [{description}] Error executing task: {e}")
             tasks_dict.pop(key, None)
             
-        tasks_dict[key] = asyncio.create_task(task_wrapper())
+        try:
+            loop = asyncio.get_running_loop()
+            tasks_dict[key] = loop.create_task(task_wrapper())
+        except RuntimeError:
+            pass
 
     def _schedule_predictive_reevaluation(self, region: str, delay_seconds: float, threat_type: str, group_id: str):
         key = (region, threat_type, group_id)
