@@ -21,17 +21,19 @@ from database.db_helpers import (
     send_fcm_notification,
     run_firestore_with_retry,
 )
-
-# Типи загроз з описами українською
-THREAT_TYPES = {
-    "mig31k": "МіГ-31К (Кинджал)",
-    "tu95": "Ту-95МС (крилаті ракети)",
-    "cruise_missile": "Крилаті ракети",
-    "shahed": "БПЛА Shahed-136",
-    "ballistic": "Балістична ракета",
-    "iskander": "Іскандер-М",
-    "kab": "Керовані авіабомби (КАБ)",
-}
+from core.threat_types import (
+    THREAT_TITLES as THREAT_TYPES,
+    THREAT_SHAHED,
+    THREAT_CRUISE_MISSILE,
+    THREAT_BALLISTIC,
+    THREAT_MIG31K,
+    THREAT_KAB,
+    THREAT_TU95,
+    THREAT_ISKANDER,
+    THREAT_ARTILLERY,
+    get_threat_title,
+    calculate_kinematic_eta,
+)
 
 import re
 
