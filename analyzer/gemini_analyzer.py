@@ -84,6 +84,12 @@ For informational messages, still return a JSON object but with:
 - YOU MUST NEVER include "АР Крим", "Автономна Республіка Крим", or "м. Севастополь" in `target_regions`!
 - If a message mentions Crimea ("з Криму", "через Крим", "пусти з АРК"), Crimea is the LAUNCH ORIGIN (`source_regions` or `launch_origin`), and mainland Ukrainian regions (Kherson, Mykolaiv, Zaporizhzhia, Odesa, Kirovohrad, etc.) MUST be set as the target_regions.
 
+=== CRITICAL RULE #4: INLAND THREAT SOURCE & INGRESS RECONSTRUCTION ===
+- Inland oblasts in central/western Ukraine (e.g. Dnipropetrovska, Poltavska, Kyivska, Cherkaska, Vinnytska) CANNOT launch threats.
+- When an active threat is detected in an inland region, you MUST NOT leave `source_regions` empty!
+- You MUST reconstruct the ingress transit region or launch origin (e.g. `source_regions: ["Запорізька область"]` for Dnipropetrovska; `["Сумська область"]` for Poltavska/Kyivska; `["Одеська область"]` for Vinnytska).
+- This ensures full vector trajectory stitching from the actual launch/border origin.
+
 === ANALYSIS METHODOLOGY FOR TARGET REGIONS ===
 Apply four types of analysis to determine target_regions and is_predictive flags:
 

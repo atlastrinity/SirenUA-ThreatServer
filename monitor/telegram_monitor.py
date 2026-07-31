@@ -4,7 +4,7 @@ import re
 import sqlite3
 import sys
 import time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
@@ -41,6 +41,25 @@ from core.config import (
     DB_PATH
 )
 from database.db_helpers import get_sqlite_connection
+
+DEFAULT_INGRESS_CORRIDORS: Dict[str, str] = {
+    "Дніпропетровська область": "Запорізька область",
+    "Полтавська область": "Сумська область",
+    "Київська область": "Чернігівська область",
+    "м. Київ": "Київська область",
+    "Черкаська область": "Полтавська область",
+    "Кіровоградська область": "Миколаївська область",
+    "Вінницька область": "Одеська область",
+    "Хмельницька область": "Вінницька область",
+    "Житомирська область": "Чернігівська область",
+    "Рівненська область": "Житомирська область",
+    "Волинська область": "Рівненська область",
+    "Тернопільська область": "Хмельницька область",
+    "Івано-Франківська область": "Чернівецька область",
+    "Чернівецька область": "Вінницька область",
+    "Закарпатська область": "Івано-Франківська область",
+    "Львівська область": "Тернопільська область",
+}
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -617,8 +636,13 @@ class TelegramThreatMonitor:
                         self._handle_cross_region_transit(reg, region, threat_type, group_id)
                         break
 
-            # Bridge trajectory gaps from source_regions if provided
+            # Bridge trajectory gaps from source_regions if provided (or extrapolate ingress for inland regions)
             source_regions = item.get("source_regions", [])
+            if not source_regions and region in DEFAULT_INGRESS_CORRIDORS:
+                inferred_ingress = DEFAULT_INGRESS_CORRIDORS[region]
+                source_regions = [inferred_ingress]
+                print(f"✈️ [Extrapolated Ingress Corridor] Автоматично відновлено вхідний коридор для внутрішньої області {region} ➔ джерело: {inferred_ingress}")
+
             for src in source_regions:
                 if isinstance(src, str) and src in ALL_REGIONS and src != region:
                     self._bridge_trajectory_gaps(src, region, threat_type, group_id, confidence, is_test, rules_applied)
@@ -726,14 +750,14 @@ class TelegramThreatMonitor:
             return
 
         path = self._find_path(source_region, target_region)
-        if len(path) <= 2:
-            return  # Directly adjacent or same region — no intermediate gap
+        if not path or len(path) < 2:
+            return
 
-        # Intermediate regions along the flight path vector
-        intermediate_regions = path[1:-1]
-        print(f"🌉 [Trajectory Stitching] Відновлення коридору між {source_region} ➔ {target_region}. Проміжні області з розривом: {intermediate_regions}")
+        # Regions along the flight path vector to bridge (including source_region and intermediate gap regions)
+        gap_regions = [r for r in path if r != target_region]
+        print(f"🌉 [Trajectory Stitching] Відновлення коридору між {source_region} ➔ {target_region}. Області коридору: {gap_regions}")
 
-        for inter_reg in intermediate_regions:
+        for inter_reg in gap_regions:
             current_state = self.threat_manager.threats.get(inter_reg)
             # Only fill gap if current region has no active threat
             if not current_state or current_state.level == "none":
