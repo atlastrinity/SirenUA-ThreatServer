@@ -418,7 +418,7 @@
             const maxCount = Math.max(...data.corridors.map(c => c.count), 1);
 
             data.corridors.forEach(c => {
-                const weight = Math.max(2, Math.min(8, (c.count / maxCount) * 8));
+                const weight = Math.max(1.5, Math.min(3.5, (c.count / maxCount) * 3.5));
                 const color = c.threat_type === 'shahed' ? '#ff8c00' :
                               c.threat_type === 'cruise_missile' ? '#ff4444' :
                               c.threat_type === 'ballistic' ? '#cc44ff' :
@@ -435,12 +435,18 @@
                     pts.push([lat, lon]);
                 }
 
-                // Glow line
-                L.polyline(pts, { color, weight: weight + 4, opacity: 0.15 }).addTo(corridorLayer);
-                // Core line
-                const line = L.polyline(pts, { color, weight, opacity: 0.7, dashArray: c.data_source === 'rule' ? '8 4' : null });
+                // 1. Soft diffuse glow at origin (launch end - transparent & wider)
+                const originPts = pts.slice(0, Math.floor(pts.length * 0.65));
+                L.polyline(originPts, { color, weight: weight + 3.5, opacity: 0.15, lineCap: 'round' }).addTo(corridorLayer);
+
+                // 2. Sleek continuous solid core line (NO dashes)
+                const line = L.polyline(pts, { color, weight, opacity: 0.85, lineCap: 'round' });
                 line.bindPopup(`<b>${c.source} → ${c.target}</b><br>Тип: ${threatLabel(c.threat_type)}<br>Частота: ${c.count}<br>Довіра: ${c.avg_confidence}%`);
                 line.addTo(corridorLayer);
+
+                // 3. Sharp concentrated white laser beam near target destination
+                const targetPts = pts.slice(Math.floor(pts.length * 0.6));
+                L.polyline(targetPts, { color: '#ffffff', weight: 1.5, opacity: 0.95, lineCap: 'round' }).addTo(corridorLayer);
 
                 // Arrowhead at 80% of trajectory
                 const arrowPt = pts[Math.floor(pts.length * 0.8)];
