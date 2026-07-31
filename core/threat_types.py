@@ -195,6 +195,34 @@ THREAT_ETA_DEFAULTS_SECONDS: Dict[str, int] = {
 }
 
 # ==============================================================================
+# 4b. THREAT ICON REGISTRY (SFSYMBOL CONSTANTS)
+# ==============================================================================
+THREAT_ICONS: Dict[str, str] = {
+    THREAT_SHAHED: "airplane.circle.fill",
+    THREAT_CRUISE_MISSILE: "paperplane.fill",
+    THREAT_BALLISTIC: "flame.fill",
+    THREAT_MIG31K: "bolt.fill",
+    THREAT_KAB: "circle.circle.fill",
+    THREAT_TU95: "airplane",
+    THREAT_TU22M3: "airplane",
+    THREAT_SU35: "airplane.departure",
+    THREAT_ISKANDER: "flame.fill",
+    THREAT_ARTILLERY: "burst.fill",
+    THREAT_ZIRCON: "bolt.horizontal.fill",
+    THREAT_MLRS: "sparkles",
+    THREAT_FPV: "viewfinder",
+    THREAT_RECON: "eye.fill",
+    THREAT_RECON_UAV: "eye.fill",
+    THREAT_UNKNOWN: "exclamationmark.triangle.fill",
+}
+
+def get_threat_icon(threat_type: Optional[str]) -> str:
+    """Returns official SFSymbol icon for a given threat object type."""
+    if not threat_type:
+        return THREAT_ICONS[THREAT_UNKNOWN]
+    return THREAT_ICONS.get(threat_type, THREAT_ICONS[THREAT_UNKNOWN])
+
+# ==============================================================================
 # 5. KEYWORD CLASSIFICATION MAPPINGS FOR TELEGRAM PARSER
 # ==============================================================================
 THREAT_KEYWORDS: Dict[str, List[str]] = {

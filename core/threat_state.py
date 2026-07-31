@@ -284,9 +284,12 @@ class ThreatState:
 
     def _update_existing_threat(self, existing: SingleThreat, level: str, detail: Optional[str],
                                 confidence: Optional[int], eta: Optional[str],
-                                eta_seconds: Optional[int], is_predictive: bool) -> bool:
-        """Updates properties of an existing SingleThreat if they changed."""
+                                eta_seconds: Optional[int], is_predictive: bool,
+                                telemetry: Optional[dict] = None) -> bool:
+        """Updates properties of an existing SingleThreat if they changed and shifts coordinate history."""
         changed = False
+        existing.last_updated_at = datetime.now(timezone.utc).isoformat()
+        
         if existing.level != level:
             existing.level = level
             changed = True
@@ -305,13 +308,30 @@ class ThreatState:
         if existing.is_predictive != is_predictive:
             existing.is_predictive = is_predictive
             changed = True
+
+        # Координатне переміщення та збереження історії попередньої точки з Telegram:
+        if telemetry and isinstance(telemetry, dict):
+            new_lat = telemetry.get("last_checkpoint_latitude") or telemetry.get("target_latitude") or telemetry.get("origin_latitude")
+            new_lon = telemetry.get("last_checkpoint_longitude") or telemetry.get("target_longitude") or telemetry.get("origin_longitude")
+            if new_lat is not None and new_lon is not None:
+                if existing.telemetry is None:
+                    existing.telemetry = {}
+                # Зберігаємо попередню точку як origin при отриманні нових координат
+                if "last_checkpoint_latitude" in existing.telemetry:
+                    existing.telemetry["origin_latitude"] = existing.telemetry["last_checkpoint_latitude"]
+                    existing.telemetry["origin_longitude"] = existing.telemetry["last_checkpoint_longitude"]
+                existing.telemetry["last_checkpoint_latitude"] = new_lat
+                existing.telemetry["last_checkpoint_longitude"] = new_lon
+                changed = True
+
         return changed
 
     def set_threat(self, level: str, threat_type: Optional[str] = None,
                    detail: Optional[str] = None, confidence: Optional[int] = None,
                    eta: Optional[str] = None, is_predictive: bool = False,
                    is_test: bool = False, group_id: Optional[str] = None,
-                   eta_seconds: Optional[int] = None) -> bool:
+                   eta_seconds: Optional[int] = None,
+                   telemetry: Optional[dict] = None) -> bool:
         if level == "none":
             if threat_type:
                 self.clear_by_type(threat_type)
