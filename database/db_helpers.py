@@ -186,11 +186,17 @@ def backup_sqlite_to_firestore():
         compressed = gzip.compress(json_str.encode('utf-8'))
         encoded = base64.b64encode(compressed).decode('utf-8')
         
-        db.collection('sirenua_backup').document('sqlite_compressed').set({
-            "data": encoded,
-            "size_kb": round(len(encoded) / 1024, 2),
-            "updated_at": firestore.SERVER_TIMESTAMP
-        })
+        doc_ref = db.collection('sirenua_backup').document('sqlite_compressed')
+        run_firestore_with_retry(
+            lambda: doc_ref.set({
+                "data": encoded,
+                "size_kb": round(len(encoded) / 1024, 2),
+                "updated_at": firestore.SERVER_TIMESTAMP
+            }),
+            operation_name="backup_sqlite_to_firestore_set",
+            context_info="saving_sqlite_compressed",
+            max_retries=3
+        )
         print(f"💾 [Backup] SQLite успішно збережено у Firestore (розмір: {len(encoded) / 1024:.2f} KB)")
         return True
     except Exception as e:
@@ -207,30 +213,33 @@ def restore_sqlite_from_firestore(force: bool = False):
         return False
         
     try:
-        # Перевіряємо чи є дані локально. Якщо правила чи зв'язані події вже є — пропуск відновлення (якщо не примусово)
+        # Перевіряємо чи є РЕАЛЬНІ оперативні дані (не seed-правила).
+        # threat_history > 50 означає що є реальні дані моніторингу, а не тільки seed.
         if os.path.exists(DB_PATH):
             conn = get_sqlite_connection(DB_PATH)
             cursor = conn.cursor()
             
-            # Перевіряємо наявність таблиць
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gemini_rules'")
-            has_rules_table = cursor.fetchone()
-            
-            rules_count = 0
-            events_count = 0
-            if has_rules_table:
-                cursor.execute("SELECT COUNT(*) FROM gemini_rules")
-                rules_count = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM paired_events")
-                events_count = cursor.fetchone()[0]
+            history_count = 0
+            try:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='threat_history'")
+                if cursor.fetchone():
+                    cursor.execute("SELECT COUNT(*) FROM threat_history")
+                    history_count = cursor.fetchone()[0]
+            except Exception:
+                pass
             conn.close()
             
-            if not force and (rules_count > 0 or events_count > 0):
-                print("💾 [Restore] Локальна SQLite вже містить дані (rules чи events), пропуск відновлення.")
+            if not force and history_count > 50:
+                print(f"💾 [Restore] Локальна SQLite вже містить {history_count} реальних подій, пропуск відновлення.")
                 return False
                 
         doc_ref = db.collection('sirenua_backup').document('sqlite_compressed')
-        doc = doc_ref.get()
+        doc = run_firestore_with_retry(
+            lambda: doc_ref.get(),
+            operation_name="restore_sqlite_from_firestore_get",
+            context_info="fetching_sqlite_compressed",
+            max_retries=3
+        )
         if not doc.exists:
             print("⚠️ [Restore] Бекап SQLite не знайдено у Firestore.")
             return False

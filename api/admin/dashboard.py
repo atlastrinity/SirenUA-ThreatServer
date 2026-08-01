@@ -118,3 +118,31 @@ async def get_admin_dashboard_stats():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/admin/backup")
+async def trigger_backup():
+    """Примусовий бекап SQLite у Firebase Firestore."""
+    try:
+        from database.db_helpers import backup_sqlite_to_firestore
+        import asyncio
+        result = await asyncio.to_thread(backup_sqlite_to_firestore)
+        if result:
+            return {"status": "ok", "message": "Бекап SQLite успішно збережено у Firebase."}
+        return {"status": "warning", "message": "Бекап не вдався (Firebase не ініціалізовано або БД порожня)."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка бекапу: {str(e)}")
+
+
+@router.post("/api/admin/restore")
+async def trigger_restore():
+    """Примусове відновлення SQLite з Firebase Firestore."""
+    try:
+        from database.db_helpers import restore_sqlite_from_firestore
+        import asyncio
+        result = await asyncio.to_thread(restore_sqlite_from_firestore, True)
+        if result:
+            return {"status": "ok", "message": "SQLite успішно відновлено з Firebase бекапу."}
+        return {"status": "warning", "message": "Відновлення не вдалося (бекап відсутній або Firebase не ініціалізовано)."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка відновлення: {str(e)}")
