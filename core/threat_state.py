@@ -372,6 +372,10 @@ class ThreatState:
                    is_test: bool = False, group_id: Optional[str] = None,
                    eta_seconds: Optional[int] = None,
                    telemetry: Optional[dict] = None) -> bool:
+        if self.region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь"]:
+            # АР Крим є тимчасово окупованою територією та використовується виключно як транзитна/початкова точка вильоту.
+            return False
+
         if level == "none":
             if threat_type:
                 self.clear_by_type(threat_type)
