@@ -83,26 +83,52 @@ async def get_region_history(region: str, limit: int = 50):
     region = unquote(region)
 
     db = get_db()
-    if not db:
-        raise HTTPException(status_code=503, detail="Firestore недоступний")
+    if db:
+        try:
+            docs = (
+                db.collection("sirenua_history")
+                .where("region", "==", region)
+                .stream()
+            )
 
+            history = []
+            for doc in docs:
+                data = doc.to_dict()
+                data["id"] = doc.id
+                history.append(data)
+
+            history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            history = history[:limit]
+
+            return {"region": region, "count": len(history), "history": history}
+        except Exception as e:
+            print(f"⚠️ [History API] Firestore query failed ({e}), falling back to SQLite local db...")
+
+    # Fallback to local SQLite DB
     try:
-        docs = (
-            db.collection("sirenua_history")
-            .where("region", "==", region)
-            .stream()
+        from database.db_helpers import get_sqlite_connection, DB_PATH
+        conn = get_sqlite_connection(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, timestamp, region, threat_level, threat_type, detail, confidence, is_test FROM threat_history WHERE region = ? ORDER BY timestamp DESC LIMIT ?",
+            (region, limit)
         )
+        rows = cursor.fetchall()
+        conn.close()
 
-        history = []
-        for doc in docs:
-            data = doc.to_dict()
-            data["id"] = doc.id
-            history.append(data)
-
-        # Sort in memory by timestamp descending
-        history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        history = history[:limit]
-
+        history = [
+            {
+                "id": str(r[0]),
+                "timestamp": r[1],
+                "region": r[2],
+                "threat_level": r[3],
+                "threat_type": r[4],
+                "detail": r[5],
+                "confidence": r[6],
+                "is_test": bool(r[7])
+            }
+            for r in rows
+        ]
         return {"region": region, "count": len(history), "history": history}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
