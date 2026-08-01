@@ -107,7 +107,7 @@ class SingleThreat:
         return self.confidence
 
     def to_dict(self) -> dict:
-        from core.regions import REGION_CENTER_COORDINATES
+        from core.topology import REGION_CENTROIDS
         from core.threat_types import detect_launch_origin_from_text
         origin_lat = None
         origin_lon = None
@@ -117,8 +117,8 @@ class SingleThreat:
                 origin_lat = self.telemetry["origin_latitude"]
                 origin_lon = self.telemetry["origin_longitude"]
 
-        if origin_lat is None and self.transit_from and self.transit_from in REGION_CENTER_COORDINATES:
-            coords = REGION_CENTER_COORDINATES[self.transit_from]
+        if origin_lat is None and self.transit_from and self.transit_from in REGION_CENTROIDS:
+            coords = REGION_CENTROIDS[self.transit_from]
             origin_lat = coords[0]
             origin_lon = coords[1]
 
@@ -174,8 +174,8 @@ class SingleThreat:
                 if match:
                     src_text = match.group(1).strip().lower()
                     for stem, reg in ORIGIN_MAP.items():
-                        if stem in src_text and reg in REGION_CENTER_COORDINATES:
-                            coords = REGION_CENTER_COORDINATES[reg]
+                        if stem in src_text and reg in REGION_CENTROIDS:
+                            coords = REGION_CENTROIDS[reg]
                             origin_lat = coords[0]
                             origin_lon = coords[1]
                             break
