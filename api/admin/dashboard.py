@@ -20,9 +20,8 @@ async def get_admin_dashboard_stats():
         # Total events (7d) excluding official alarms to match accuracy breakdown
         total_query = """
             SELECT COUNT(*) as c 
-            FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
+            FROM threat_history th
+            WHERE th.timestamp >= datetime('now', '-7 days') AND th.threat_type != 'official_alarm'
         """
         total_rows = execute_query_as_dicts(total_query)
         total_7d = total_rows[0]["c"] if total_rows else 0
@@ -35,9 +34,9 @@ async def get_admin_dashboard_stats():
                 COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END), 0) as overestimated,
                 COALESCE(SUM(CASE WHEN pe.lifecycle_status = 'active' AND pe.prediction_accuracy IS NULL THEN 1 ELSE 0 END), 0) as active,
                 COUNT(*) as total
-            FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
+            FROM threat_history th
+            LEFT JOIN paired_events pe ON pe.threat_event_id = th.id
+            WHERE th.timestamp >= datetime('now', '-7 days') AND th.threat_type != 'official_alarm'
         """
         accuracy_rows = execute_query_as_dicts(accuracy_query)
         acc = accuracy_rows[0] if accuracy_rows else {"confirmed": 0, "mitigated": 0, "overestimated": 0, "active": 0, "total": 0}
@@ -50,7 +49,7 @@ async def get_admin_dashboard_stats():
             accuracy_pct = 0
 
         # Active threats right now
-        active_query = "SELECT COUNT(*) as c FROM paired_events WHERE lifecycle_status = 'active' AND threat_type != 'official_alarm'"
+        active_query = "SELECT COUNT(*) as c FROM threat_history WHERE threat_level IN ('high', 'medium') AND threat_type != 'official_alarm' AND timestamp >= datetime('now', '-2 hours')"
         active_rows = execute_query_as_dicts(active_query)
         active_now = active_rows[0]["c"] if active_rows else 0
 
@@ -59,16 +58,15 @@ async def get_admin_dashboard_stats():
             SELECT AVG(
                 strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)
             ) as avg_delta
-            FROM paired_events pe
-            JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
-            JOIN threat_history th_alarm ON th_alarm.region = pe.region
+            FROM threat_history th_ai
+            LEFT JOIN paired_events pe ON pe.threat_event_id = th_ai.id
+            JOIN threat_history th_alarm ON th_alarm.region = th_ai.region
                 AND th_alarm.threat_type = 'official_alarm'
                 AND th_alarm.threat_level = 'high'
                 AND ABS(strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)) < 1800
                 AND strftime('%s', th_alarm.timestamp) >= strftime('%s', th_ai.timestamp)
             WHERE th_ai.timestamp >= datetime('now', '-7 days')
-                AND pe.was_predictive = 1
-                AND pe.threat_type != 'official_alarm'
+                AND th_ai.threat_type != 'official_alarm'
         """
         avg_rows = execute_query_as_dicts(avg_query)
         avg_row = avg_rows[0] if avg_rows else None
@@ -76,21 +74,19 @@ async def get_admin_dashboard_stats():
 
         # Threats by type (7d)
         type_query = """
-            SELECT pe.threat_type, COUNT(*) as count
-            FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
-            GROUP BY pe.threat_type ORDER BY count DESC
+            SELECT th.threat_type, COUNT(*) as count
+            FROM threat_history th
+            WHERE th.timestamp >= datetime('now', '-7 days') AND th.threat_type != 'official_alarm'
+            GROUP BY th.threat_type ORDER BY count DESC
         """
         by_type = execute_query_as_dicts(type_query)
 
         # Top regions (7d)
         regions_query = """
-            SELECT pe.region, COUNT(*) as count
-            FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
-            GROUP BY pe.region ORDER BY count DESC LIMIT 10
+            SELECT th.region, COUNT(*) as count
+            FROM threat_history th
+            WHERE th.timestamp >= datetime('now', '-7 days') AND th.threat_type != 'official_alarm'
+            GROUP BY th.region ORDER BY count DESC LIMIT 10
         """
         top_regions = execute_query_as_dicts(regions_query)
 
@@ -98,9 +94,8 @@ async def get_admin_dashboard_stats():
         hourly_query = f"""
             SELECT CAST(strftime('%H', datetime(th.timestamp, {tz_modifier})) AS INTEGER) as hour,
                    COUNT(*) as count
-            FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE th.timestamp >= datetime('now', '-7 days') AND pe.threat_type != 'official_alarm'
+            FROM threat_history th
+            WHERE th.timestamp >= datetime('now', '-7 days') AND th.threat_type != 'official_alarm'
             GROUP BY hour ORDER BY hour
         """
         hourly = execute_query_as_dicts(hourly_query)

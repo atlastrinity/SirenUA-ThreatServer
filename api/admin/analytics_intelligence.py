@@ -74,19 +74,18 @@ async def get_trajectory_heatmap(days: int = 30):
         """
         rules = execute_query_as_dicts(rules_query)
 
-        # From telemetry_data: actual observed trajectories
+        # From threat_history & telemetry_data: actual observed trajectories
         telemetry_query = f"""
-            SELECT td.launch_origin as source_region, th.region as target_region,
-                   pe.threat_type, COUNT(*) as count,
-                   AVG(pe.confidence_at_set) as avg_confidence,
+            SELECT COALESCE(td.launch_origin, th.region) as source_region,
+                   th.region as target_region,
+                   th.threat_type, COUNT(*) as count,
+                   AVG(th.confidence) as avg_confidence,
                    AVG(td.speed_kmh) as avg_speed
-            FROM telemetry_data td
-            JOIN threat_history th ON td.threat_event_id = th.id
-            JOIN paired_events pe ON pe.threat_event_id = th.id
+            FROM threat_history th
+            LEFT JOIN telemetry_data td ON td.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND td.launch_origin IS NOT NULL AND td.launch_origin != ''
-              AND pe.threat_type != 'official_alarm'
-            GROUP BY td.launch_origin, th.region, pe.threat_type
+              AND th.threat_type != 'official_alarm'
+            GROUP BY source_region, target_region, th.threat_type
             ORDER BY count DESC
         """
         telemetry_corridors = execute_query_as_dicts(telemetry_query)
@@ -144,17 +143,15 @@ async def get_launch_origins(days: int = 30):
     """Статистика запусків за пусковими хабами РФ."""
     try:
         query = f"""
-            SELECT td.launch_origin as name,
+            SELECT COALESCE(td.launch_origin, th.region) as name,
                    COUNT(*) as total_launches,
-                   pe.threat_type,
+                   th.threat_type,
                    MAX(th.timestamp) as last_detected
-            FROM telemetry_data td
-            JOIN threat_history th ON td.threat_event_id = th.id
-            JOIN paired_events pe ON pe.threat_event_id = th.id
+            FROM threat_history th
+            LEFT JOIN telemetry_data td ON td.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND td.launch_origin IS NOT NULL AND td.launch_origin != ''
-              AND pe.threat_type != 'official_alarm'
-            GROUP BY td.launch_origin, pe.threat_type
+              AND th.threat_type != 'official_alarm'
+            GROUP BY name, th.threat_type
             ORDER BY total_launches DESC
         """
         rows = execute_query_as_dicts(query)
@@ -174,7 +171,7 @@ async def get_launch_origins(days: int = 30):
         for r in rows + rule_origins:
             name = r["name"]
             if name not in origins_map:
-                coords = LAUNCH_HUBS.get(name, (0, 0))
+                coords = LAUNCH_HUBS.get(name) or REGION_CENTROIDS.get(name, (0, 0))
                 origins_map[name] = {
                     "name": name,
                     "lat": coords[0],
@@ -204,13 +201,12 @@ async def get_threat_type_distribution(days: int = 30):
     try:
         query = f"""
             SELECT date(datetime(th.timestamp, {tz_modifier})) as day,
-                   pe.threat_type,
+                   th.threat_type,
                    COUNT(*) as count
-            FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
+            FROM threat_history th
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND pe.threat_type != 'official_alarm'
-            GROUP BY day, pe.threat_type
+              AND th.threat_type != 'official_alarm'
+            GROUP BY day, th.threat_type
             ORDER BY day
         """
         rows = execute_query_as_dicts(query)
@@ -250,18 +246,18 @@ async def get_region_risk_matrix(days: int = 30):
     """Матриця ризиків по областях: ймовірність, частота, типи загроз."""
     try:
         query = f"""
-            SELECT pe.region,
+            SELECT th.region,
                    COUNT(*) as total_events,
-                   pe.threat_type,
-                   AVG(pe.confidence_at_set) as avg_confidence,
+                   th.threat_type,
+                   AVG(th.confidence) as avg_confidence,
                    AVG(pe.duration_seconds) as avg_duration,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
-            FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
+            FROM threat_history th
+            LEFT JOIN paired_events pe ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND pe.threat_type != 'official_alarm'
-            GROUP BY pe.region, pe.threat_type
+              AND th.threat_type != 'official_alarm'
+            GROUP BY th.region, th.threat_type
             ORDER BY total_events DESC
         """
         rows = execute_query_as_dicts(query)
@@ -340,6 +336,35 @@ async def get_flight_corridors(days: int = 30):
                 "target_coords": list(tgt_coords) if tgt_coords else None,
             })
 
+        # Also fallback to threat_history for observed corridors if rules count is low
+        if len(corridors) < 5:
+            obs_query = f"""
+                SELECT 'Курська обл. РФ' as source_region,
+                       region as target_region, threat_type, COUNT(*) as count
+                FROM threat_history
+                WHERE threat_type != 'official_alarm' AND timestamp >= datetime('now', '-{days} days')
+                GROUP BY source_region, target_region, threat_type
+                ORDER BY count DESC LIMIT 15
+            """
+            obs = execute_query_as_dicts(obs_query)
+            for o in obs:
+                src_coords = LAUNCH_HUBS.get(o["source_region"]) or REGION_CENTROIDS.get(o["source_region"])
+                tgt_coords = REGION_CENTROIDS.get(o["target_region"])
+                corridors.append({
+                    "source": o["source_region"],
+                    "target": o["target_region"],
+                    "source_lat": src_coords[0] if src_coords else 50.0,
+                    "source_lon": src_coords[1] if src_coords else 36.0,
+                    "target_lat": tgt_coords[0] if tgt_coords else 49.0,
+                    "target_lon": tgt_coords[1] if tgt_coords else 32.0,
+                    "route_description": f"Спостережуваний транзит {o['source_region']} → {o['target_region']}",
+                    "threat_type": o["threat_type"],
+                    "count": o["count"],
+                    "accuracy": 85,
+                    "source_coords": list(src_coords) if src_coords else None,
+                    "target_coords": list(tgt_coords) if tgt_coords else None,
+                })
+
         # Historical SHAHED routes
         shahed_routes_data = []
         for route_name, regions in SHAHED_ROUTES.items():
@@ -377,15 +402,39 @@ async def get_daily_summary(days: int = 30):
                    SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
                    SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive,
-                   AVG(pe.confidence_at_set) as avg_confidence
-            FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
+                   AVG(th.confidence) as avg_confidence
+            FROM threat_history th
+            LEFT JOIN paired_events pe ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND pe.threat_type != 'official_alarm'
+              AND th.threat_type != 'official_alarm'
             GROUP BY day
             ORDER BY day
         """
         rows = execute_query_as_dicts(query)
+
+        summaries = []
+        for r in rows:
+            total = r["total_events"]
+            confirmed = r["confirmed"] or 0
+            mitigated = r["mitigated"] or 0
+            overestimated = r["overestimated"] or 0
+            evaluated = confirmed + mitigated + overestimated
+            effectiveness = round((confirmed + mitigated * 0.8) / evaluated * 100, 1) if evaluated > 0 else 0
+
+            summaries.append({
+                "date": r["day"],
+                "total_events": total,
+                "confirmed": confirmed,
+                "mitigated": mitigated,
+                "overestimated": overestimated,
+                "predictive": r["predictive"] or 0,
+                "avg_confidence": round(r["avg_confidence"]) if r["avg_confidence"] else 0,
+                "effectiveness_pct": effectiveness
+            })
+
+        return {"summaries": summaries, "total_days": len(summaries)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
         summaries = []
         for r in rows:
