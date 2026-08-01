@@ -15,7 +15,8 @@ from core.config import IS_LIVE_MODE, logger
 from core.globals import threat_manager, shelter_manager
 import core.globals
 from core.firebase_init import init_firebase
-from database.analytics_db import init_analytics_db, last_logged_states, log_error_to_db
+from database.error_logger import log_error_to_db
+from database.analytics_db import last_logged_states
 
 # Background task handle
 aerial_alerts_task = None
@@ -83,15 +84,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Помилка запуску FCM воркера: {e}")
 
-    # Analytics DB
-    init_analytics_db()
+    # Analytics DB — create tables only (no seed yet)
+    from database.schema import init_analytics_db_tables_only, seed_if_empty
+    init_analytics_db_tables_only()
 
-    # Restore SQLite from Firestore
+    # Restore SQLite from Firestore BEFORE seeding
+    # (seed creates rules which would block restore check)
+    restored = False
     try:
         from database.db_helpers import restore_sqlite_from_firestore
-        await asyncio.to_thread(restore_sqlite_from_firestore)
+        restored = await asyncio.to_thread(restore_sqlite_from_firestore)
+        if restored:
+            logger.info("💾 [Lifespan] SQLite успішно відновлено з Firebase — пропуск seed.")
     except Exception as e:
         logger.error(f"Помилка автоматичного відновлення SQLite: {e}")
+
+    # Seed baseline data only if Firebase restore didn't provide data
+    if not restored:
+        try:
+            await asyncio.to_thread(seed_if_empty)
+            logger.info("🌱 [Lifespan] Seed-дані завантажено (Firebase бекап відсутній або порожній).")
+        except Exception as e:
+            logger.error(f"Помилка seed: {e}")
 
     # Load saved threat state
     try:
