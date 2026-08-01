@@ -9,9 +9,9 @@ from core.config import DB_PATH, IS_LIVE_MODE
 from database.db_helpers import get_sqlite_connection
 
 
-def init_analytics_db():
-    """Create all analytics tables and indexes. Seeds mock data in non-live mode."""
-    from database.db_helpers import local_sqlite_backup, local_sqlite_restore
+def init_analytics_db_tables_only():
+    """Create all analytics tables and indexes WITHOUT seeding any data."""
+    from database.db_helpers import local_sqlite_restore
     try:
         conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
@@ -249,30 +249,9 @@ def init_analytics_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_origin ON telemetry_data(launch_origin)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_paired_event_id ON paired_events(threat_event_id)')
 
-    # Always seed baseline route pattern rules and intelligence when database is newly initialized
-    _seed_mock_data(cursor)
-
-    cursor.execute("SELECT COUNT(*) as c FROM error_log")
-    if cursor.fetchone()[0] == 0:
-        try:
-            cursor.execute("""
-                INSERT INTO error_log (timestamp, source, error_type, message, endpoint, context)
-                VALUES (datetime('now', '-2 hours'), 'gemini_analyzer', 'gemini_api_error', '429 Quota exceeded for model gemini-1.5-flash. Falling back to regex parser.', '/api/gemini/status', 'model=gemini-1.5-flash')
-            """)
-            cursor.execute("""
-                INSERT INTO error_log (timestamp, source, error_type, message, endpoint, context)
-                VALUES (datetime('now', '-1 hours'), 'telegram_monitor', 'network_error', 'Connection reset by peer during Telegram channel poll. Reconnected in 2.5s.', 'telethon_poll', 'channel=@vanek_nikolaev')
-            """)
-            cursor.execute("""
-                INSERT INTO error_log (timestamp, source, error_type, message, endpoint, context)
-                VALUES (datetime('now', '-30 minutes'), 'firebase', 'firebase_error', 'FCM send failed: Requested entity was not found. Topic: region_kyiv_city', 'send_fcm_notification', 'region=м. Київ, topic=region_kyiv_city')
-            """)
-        except Exception as e:
-            print(f"⚠️ Error seeding mock errors: {e}")
-
     conn.commit()
     conn.close()
-    print("💾 Аналітична БД ініціалізована (threat_history + telemetry_data + threat_clearings + gemini_rules + paired_events + error_log + gemini_rules_audit)")
+    print("💾 Аналітична БД — таблиці та індекси ініціалізовані (без seed).")
 
 
 def _seed_mock_data(cursor: sqlite3.Cursor):
