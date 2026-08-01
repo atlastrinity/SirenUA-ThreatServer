@@ -151,15 +151,34 @@ class SingleThreat:
                 "львів": "Львівська область", "львівщ": "Львівська область",
                 "крим": "АР Крим"
             }
-            match = re.search(r'з\s+([А-Яа-яіЇїЄє\s\'-]+?)(?:\s+області|\s+область|\s+РФ|\s+Криму|щини|чини|\s+\()', self.detail, re.IGNORECASE)
-            if match:
-                src_text = match.group(1).strip().lower()
-                for stem, reg in ORIGIN_MAP.items():
-                    if stem in src_text and reg in REGION_CENTER_COORDINATES:
-                        coords = REGION_CENTER_COORDINATES[reg]
-                        origin_lat = coords[0]
-                        origin_lon = coords[1]
-                        break
+            SPECIAL_ORIGIN_PATTERNS = {
+                "чорн": (45.20, 31.00),     # Акваторія Чорного моря
+                "акватор": (45.20, 31.00),  # Акваторія
+                "мор": (45.20, 31.00),      # З моря
+                "чауд": (45.00, 35.83),     # Мыс Чауда (АР Крим)
+                "азов": (46.40, 36.50),     # Азовське море
+                "курск": (51.32, 34.85),    # Курськ / Курщина
+                "брянск": (52.05, 31.50),   # Брянськ / Брянщина
+                "бєлгород": (50.30, 36.40), # Бєлгород / Бєлгородщина
+                "белгород": (50.30, 36.40), # Белгород
+            }
+
+            detail_lower = self.detail.lower()
+            for key, coords in SPECIAL_ORIGIN_PATTERNS.items():
+                if key in detail_lower:
+                    origin_lat, origin_lon = coords[0], coords[1]
+                    break
+
+            if origin_lat is None:
+                match = re.search(r'з\s+([А-Яа-яіЇїЄє\s\'-]+?)(?:\s+області|\s+область|\s+РФ|\s+Криму|щини|чини|\s+\()', self.detail, re.IGNORECASE)
+                if match:
+                    src_text = match.group(1).strip().lower()
+                    for stem, reg in ORIGIN_MAP.items():
+                        if stem in src_text and reg in REGION_CENTER_COORDINATES:
+                            coords = REGION_CENTER_COORDINATES[reg]
+                            origin_lat = coords[0]
+                            origin_lon = coords[1]
+                            break
 
         return {
             "threat_id": self.threat_id,
