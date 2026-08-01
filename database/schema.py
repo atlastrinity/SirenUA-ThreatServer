@@ -249,9 +249,8 @@ def init_analytics_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_telemetry_origin ON telemetry_data(launch_origin)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_paired_event_id ON paired_events(threat_event_id)')
 
-    # Seed mock data in dev mode
-    if not IS_LIVE_MODE:
-        _seed_mock_data(cursor)
+    # Always seed baseline route pattern rules and intelligence when database is newly initialized
+    _seed_mock_data(cursor)
 
     cursor.execute("SELECT COUNT(*) as c FROM error_log")
     if cursor.fetchone()[0] == 0:
