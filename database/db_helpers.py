@@ -361,6 +361,11 @@ def _restore_from_payload(encoded: str) -> bool:
         cursor.execute("PRAGMA foreign_keys = ON")
         conn.commit()
         conn.close()
+        try:
+            from api.admin.analytics_intelligence import _ANALYTICS_CACHE
+            _ANALYTICS_CACHE.clear()
+        except Exception:
+            pass
         print(f"💾 [Restore Upload] SQLite успішно відновлено з завантаженого бекапу! ({total_restored} записів)")
         return True
     except Exception as e:
