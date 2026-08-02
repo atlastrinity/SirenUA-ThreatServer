@@ -163,6 +163,22 @@ def backup_sqlite_to_firestore():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
+        # Safety check: don't overwrite a full backup with an empty/tiny DB
+        # This prevents data loss when container restarts and restore failed (e.g. 429 quota)
+        history_count = 0
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='threat_history'")
+            if cursor.fetchone():
+                cursor.execute("SELECT COUNT(*) FROM threat_history")
+                history_count = cursor.fetchone()[0]
+        except Exception:
+            pass
+        
+        if history_count < 50:
+            print(f"⚠️ [Backup] Локальна SQLite містить лише {history_count} записів threat_history — пропуск бекапу для захисту від перезапису повних даних.")
+            conn.close()
+            return False
+        
         # Перевірка наявності таблиць перед зчитуванням
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables_in_db = [r["name"] for r in cursor.fetchall()]
@@ -203,6 +219,7 @@ def backup_sqlite_to_firestore():
         logger.error(f"Помилка резервного копіювання SQLite у Firestore: {e}")
         _log_error("database_helpers", f"Помилка резервного копіювання SQLite: {e}", "backup_sqlite_to_firestore", error_type="database_error")
         return False
+
 
 def restore_sqlite_from_firestore(force: bool = False):
     """Відновлює локальну базу даних SQLite зі стиснутого бекапу в Firestore."""

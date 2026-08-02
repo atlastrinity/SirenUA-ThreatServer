@@ -680,6 +680,8 @@ class MockThreatManager:
                 if region in self.threats:
                     self.threats[region].load_from_dict(data)
             print(f"💾 Завантажено збережений стан загроз з {filepath}")
+            return True
+        return False
 
     def set_scenario(self, scenario: str):
         """Встановлює попередньо визначений сценарій для тестування з інтелектуальним оновленням та чергою."""
