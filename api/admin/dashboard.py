@@ -3,7 +3,7 @@ Admin Dashboard API.
 Aggregated statistics for the admin dashboard.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from core.config import get_kyiv_tz_offset
 from database.db_helpers import execute_query_as_dicts
 
@@ -146,3 +146,24 @@ async def trigger_restore():
         return {"status": "warning", "message": "Відновлення не вдалося (бекап відсутній або Firebase не ініціалізовано)."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Помилка відновлення: {str(e)}")
+
+
+@router.post("/api/admin/restore_upload")
+async def trigger_restore_upload(request: Request):
+    """Відновлення SQLite з HTTP-завантаженого gzip+base64 бекапу (обхід Firestore)."""
+    try:
+        from database.db_helpers import _restore_from_payload
+        import asyncio
+        body = await request.json()
+        encoded = body.get("data")
+        if not encoded:
+            raise HTTPException(status_code=400, detail="Missing 'data' field with base64+gzip payload")
+        result = await asyncio.to_thread(_restore_from_payload, encoded)
+        if result:
+            return {"status": "ok", "message": "SQLite успішно відновлено з завантаженого бекапу."}
+        return {"status": "warning", "message": "Відновлення не вдалося."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Помилка відновлення: {str(e)}")
+

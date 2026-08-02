@@ -315,6 +315,59 @@ def restore_sqlite_from_firestore(force: bool = False):
         _log_error("database_helpers", f"Помилка відновлення SQLite: {e}", "restore_sqlite_from_firestore", error_type="database_error")
         return False
 
+
+def _restore_from_payload(encoded: str) -> bool:
+    """Відновлює SQLite з raw base64+gzip payload (без Firestore)."""
+    try:
+        compressed = base64.b64decode(encoded)
+        json_str = gzip.decompress(compressed).decode('utf-8')
+        backup_data = json.loads(json_str)
+        
+        conn = get_sqlite_connection(DB_PATH)
+        cursor = conn.cursor()
+        
+        tables = [
+            ("gemini_rules", ["id", "created_at", "updated_at", "rule_type", "source_region", "target_region", "threat_type", "rule_text", "rule_json", "evidence_count", "accuracy_score", "is_active", "last_validated"]),
+            ("paired_events", ["id", "created_at", "region", "threat_event_id", "telemetry_id", "clearing_event_id", "lifecycle_status", "threat_level", "threat_type", "confidence_at_set", "confidence_at_clear", "was_predictive", "prediction_accuracy", "duration_seconds", "gemini_group_id", "rules_applied"]),
+            ("threat_history", ["id", "timestamp", "region", "threat_level", "threat_type", "detail", "confidence", "is_test"]),
+            ("threat_clearings", ["id", "timestamp", "region", "original_threat_event_id", "linked_group_id", "linked_correlation_group", "resolution_type", "intercepted_count", "total_targets_in_wave", "impact_confirmed", "damage_assessment", "civilian_casualties_reported", "infrastructure_hit", "air_defense_effectiveness", "threat_duration_assessment", "prediction_accuracy_hint", "was_predictive", "original_threat_level", "original_threat_type", "original_confidence", "clearing_confidence", "clearing_context_tags", "source_reliability", "time_of_day_category", "clearing_source_channel", "clearing_message_text", "threat_set_timestamp", "threat_duration_seconds", "is_test"]),
+            ("telemetry_data", ["id", "threat_event_id", "group_id", "attack_vector", "target_count", "speed_kmh", "altitude_category", "heading_degrees", "distance_to_target_km", "launch_origin", "weapon_subtype", "engagement_status", "air_defense_active", "multiple_waves", "wave_number", "time_of_day_category", "weather_factor", "source_reliability", "message_context_tags", "strategic_priority", "civilian_risk_level", "event_phase", "correlation_group", "target_cities_coords"]),
+            ("gemini_rules_audit", ["id", "timestamp", "action", "rule_type", "rule_text", "source_region", "target_region", "threat_type", "reason"]),
+            ("error_log", ["id", "timestamp", "source", "error_type", "message", "endpoint", "context"])
+        ]
+        
+        cursor.execute("PRAGMA foreign_keys = OFF")
+        
+        total_restored = 0
+        for table_name, columns in tables:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+            if not cursor.fetchone():
+                continue
+                
+            rows = backup_data.get(table_name, [])
+            if not rows:
+                continue
+                
+            cursor.execute(f"DELETE FROM {table_name}")
+            
+            for row in rows:
+                row_keys = [k for k in row.keys() if k in columns]
+                placeholders = ", ".join(["?"] * len(row_keys))
+                cols_str = ", ".join(row_keys)
+                vals = [row[k] for k in row_keys]
+                cursor.execute(f"INSERT OR REPLACE INTO {table_name} ({cols_str}) VALUES ({placeholders})", vals)
+            total_restored += len(rows)
+                
+        cursor.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+        conn.close()
+        print(f"💾 [Restore Upload] SQLite успішно відновлено з завантаженого бекапу! ({total_restored} записів)")
+        return True
+    except Exception as e:
+        logger.error(f"Помилка відновлення SQLite з завантаженого бекапу: {e}")
+        return False
+
+
 _recent_events_cache = {}
 
 def is_duplicate_event(region: str, level: str, threat_type: Optional[str], window_seconds: int = 20) -> bool:
