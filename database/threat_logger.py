@@ -142,8 +142,12 @@ def log_threat_to_firestore(
             context_info=f"region={region}"
         )
         print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type}, is_test={is_test})")
-    except Exception:
-        print(f"❌ Firestore history write failed for {region}")
+    except Exception as e:
+        if "429" in str(e) or "Quota" in str(e):
+            print(f"⚠️ [Firestore History] Skipped writing event for {region} (Firestore 429 Quota Exceeded). History is safely saved in local SQLite.")
+        else:
+            print(f"❌ Firestore history write failed for {region}: {e}")
+
 
 
 def flush_history_batch():

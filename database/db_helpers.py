@@ -298,34 +298,53 @@ def restore_sqlite_from_firestore(force: bool = False):
         _log_error("database_helpers", f"Помилка відновлення SQLite: {e}", "restore_sqlite_from_firestore", error_type="database_error")
         return False
 
-def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> bool:
-    """Checks Firestore to see if a similar history event was already logged within the last 20 seconds."""
-    db = get_db()
-    if not db:
-        return False
+_recent_events_cache = {}
+
+def is_duplicate_event(region: str, level: str, threat_type: Optional[str], window_seconds: int = 20) -> bool:
+    """
+    Checks if a similar threat event was already logged for the region within window_seconds.
+    Uses fast in-memory TTL cache + local SQLite (threat_history) for zero network overhead & zero Firestore quota usage.
+    """
+    global _recent_events_cache
+    now_ts = time.time()
+    cache_key = (region, level, threat_type or "")
+
+    # Fast In-Memory Check (O(1))
+    last_seen_ts = _recent_events_cache.get(cache_key)
+    if last_seen_ts and (now_ts - last_seen_ts) < window_seconds:
+        return True
+
+    # Fallback to local SQLite check
     try:
-        docs = db.collection("sirenua_history").where("region", "==", region).limit(5).get()
-        if not docs:
-            return False
-            
-        events = [doc.to_dict() for doc in docs]
-        events.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        latest = events[0]
-        
-        latest_level = latest.get("threat_level")
-        latest_type = latest.get("threat_type")
-        latest_time_str = latest.get("timestamp")
-        
-        if latest_level == level and latest_type == threat_type and latest_time_str:
-            latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            current_time = datetime.now(timezone.utc)
-            diff = (current_time - latest_time).total_seconds()
-            if abs(diff) < 20:
-                return True
+        conn = get_sqlite_connection(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT timestamp, threat_level, threat_type FROM threat_history WHERE region = ? ORDER BY id DESC LIMIT 1",
+            (region,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            latest_time_str = row[0]
+            latest_level = row[1]
+            latest_type = row[2]
+
+            if latest_level == level and (latest_type == threat_type or (not latest_type and not threat_type)) and latest_time_str:
+                try:
+                    latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    diff = (datetime.now(timezone.utc) - latest_time).total_seconds()
+                    if abs(diff) < window_seconds:
+                        _recent_events_cache[cache_key] = now_ts
+                        return True
+                except Exception:
+                    pass
     except Exception as e:
-        logger.error(f"Error checking duplicate history in Firestore: {e}")
-        _log_error("database_helpers", f"Error checking duplicate history: {e}", "is_duplicate_event", error_type="firebase_error")
+        logger.error(f"Error checking duplicate history in SQLite: {e}")
+
+    _recent_events_cache[cache_key] = now_ts
     return False
+
 
 def delete_test_history_from_firestore():
     db = get_db()
@@ -521,23 +540,27 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         _log_error("database_helpers", f"Помилка відправки FCM Push для {region}: {e}", "send_fcm_notification", context=f"region={region}, topic={topic}", error_type="firebase_error")
 
 
-def run_firestore_with_retry(operation_func, operation_name: str, context_info: str = "", max_retries: int = 3):
+def run_firestore_with_retry(operation_func, operation_name: str, context_info: str = "", max_retries: int = 2):
     """
-    Runs a Firestore database operation with automatic retry on quota hits (HTTP 429).
+    Runs a Firestore database operation with automatic retry on transient errors.
+    Gracefully handles HTTP 429 Quota Exceeded without spamming error logs.
     """
     for attempt in range(max_retries):
         try:
             return operation_func()
         except Exception as e:
             err_str = str(e)
-            if ("429" in err_str or "Quota" in err_str) and attempt < max_retries - 1:
-                wait = (2 ** attempt) * 5
-                print(f"⚠️ Firestore quota hit during {operation_name}, retry {attempt+1}/{max_retries} in {wait}s ({context_info})")
-                _log_error("firebase", str(e), endpoint=operation_name, context=f"{context_info}, attempt={attempt+1}", error_type="firebase_quota")
+            if "429" in err_str or "Quota" in err_str:
+                logger.warning(f"⚠️ [Firestore Quota] {operation_name} ({context_info}): 429 Quota exceeded.")
+                raise e
+            elif attempt < max_retries - 1:
+                wait = (2 ** attempt) * 2
+                logger.warning(f"⚠️ Firestore operation {operation_name} retry {attempt+1}/{max_retries} in {wait}s ({context_info})")
                 time.sleep(wait)
             else:
-                print(f"⚠️ Error executing Firestore operation {operation_name}: {e}")
+                logger.error(f"⚠️ Error executing Firestore operation {operation_name}: {e}")
                 raise e
+
 
 
 def execute_query_as_dicts(query: str, params: tuple = (), json_fields: list = None) -> list:
