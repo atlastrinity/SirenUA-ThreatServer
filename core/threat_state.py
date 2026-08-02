@@ -478,7 +478,61 @@ class MockThreatManager:
                 pass
         self.save_to_file()
 
+    def load_from_sqlite(self) -> bool:
+        """Restores active threat states from local SQLite database (paired_events & telemetry_data)."""
+        try:
+            import sqlite3
+            from database.db_helpers import get_sqlite_connection, DB_PATH
+            conn = get_sqlite_connection(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT p.region, p.threat_level, p.threat_type, p.confidence_at_set, p.gemini_group_id,
+                       t.attack_vector, t.speed_kmh, t.heading_degrees, t.distance_to_target_km, t.target_cities_coords
+                FROM paired_events p
+                LEFT JOIN telemetry_data t ON p.telemetry_id = t.id
+                WHERE p.lifecycle_status = 'active'
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+
+            if rows:
+                restored_count = 0
+                for row in rows:
+                    region = row["region"]
+                    if region in self.threats:
+                        telemetry = None
+                        if row["gemini_group_id"]:
+                            telemetry = {
+                                "group_id": row["gemini_group_id"],
+                                "attack_vector": row["attack_vector"],
+                                "speed_kmh": row["speed_kmh"],
+                                "heading_degrees": row["heading_degrees"],
+                                "distance_to_target_km": row["distance_to_target_km"],
+                            }
+                            if row["target_cities_coords"]:
+                                try:
+                                    telemetry["target_cities_coords"] = json.loads(row["target_cities_coords"])
+                                except Exception:
+                                    pass
+
+                        self.set_threat(
+                            region=region,
+                            level=row["threat_level"],
+                            threat_type=row["threat_type"],
+                            confidence=row["confidence_at_set"],
+                            telemetry=telemetry
+                        )
+                        restored_count += 1
+                print(f"💾 Відновлено {restored_count} активних загроз з локальної SQLite.")
+                return True
+        except Exception as e:
+            print(f"⚠️ Помилка відновлення активних загроз з SQLite: {e}")
+        return False
+
+
     def load_from_db(self):
+        loaded = False
         db = get_db()
         if db:
             try:
@@ -490,20 +544,25 @@ class MockThreatManager:
                         if region in self.threats:
                             self.threats[region].load_from_dict(data)
                     print("💾 Завантажено збережений стан загроз з Firebase Firestore")
+                    loaded = True
                 else:
                     print("⚠️ Документ загроз у Firebase не знайдено.")
-                    self.load_from_file()
-                
-                self.load_real_threats_from_db()
-                if not self.real_threats_backup:
-                    for region, state in self.threats.items():
-                        if not state.is_test:
-                            self.real_threats_backup[region] = state.to_dict()
             except Exception as e:
                 print(f"⚠️ Помилка завантаження стану загроз з Firebase: {e}")
-                self.load_from_file()
-        else:
-            self.load_from_file()
+
+        if not loaded:
+            loaded = self.load_from_file()
+
+        # Fallback to local SQLite if state is still empty or no active threats
+        if not loaded or not any(s.is_active for s in self.threats.values()):
+            self.load_from_sqlite()
+
+        self.load_real_threats_from_db()
+        if not self.real_threats_backup:
+            for region, state in self.threats.items():
+                if not state.is_test:
+                    self.real_threats_backup[region] = state.to_dict()
+
 
     def save_real_threats_to_db(self):
         with self._save_lock:
