@@ -170,14 +170,24 @@ class SingleThreat:
                     break
 
             if origin_lat is None:
+                INLAND_CONTROLLED_OBLASTS = {
+                    "Черкаська область", "Чернігівська область", "Полтавська область",
+                    "Київська область", "Житомирська область", "Вінницька область",
+                    "Кіровоградська область", "Хмельницька область", "Рівненська область",
+                    "Волинська область", "Тернопільська область", "Чернівецька область",
+                    "Івано-Франківська область", "Львівська область", "Закарпатська область"
+                }
                 match = re.search(r'з\s+([А-Яа-яіЇїЄє\s\'-]+?)(?:\s+області|\s+область|\s+РФ|\s+Криму|щини|чини|\s+\()', self.detail, re.IGNORECASE)
                 if match:
                     src_text = match.group(1).strip().lower()
                     for stem, reg in ORIGIN_MAP.items():
                         if stem in src_text and reg in REGION_CENTROIDS:
-                            coords = REGION_CENTROIDS[reg]
-                            origin_lat = coords[0]
-                            origin_lon = coords[1]
+                            self.transit_from = reg
+                            # Only set origin coordinates if region is an external launch area/border, not an inland controlled region
+                            if reg not in INLAND_CONTROLLED_OBLASTS:
+                                coords = REGION_CENTROIDS[reg]
+                                origin_lat = coords[0]
+                                origin_lon = coords[1]
                             break
 
         return {

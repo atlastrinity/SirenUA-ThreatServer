@@ -766,8 +766,13 @@ class TelegramThreatMonitor:
                 ukr_type = get_ukrainian_threat_type(threat_type)
 
                 origin_note = ""
-                if inter_reg in ("Чернігівська область", "Сумська область", "Житомирська область"):
-                    origin_note = " (вхід з напрямку державного кордону)"
+                INLAND_TRANSIT_OBLASTS = (
+                    "Чернігівська область", "Сумська область", "Житомирська область",
+                    "Черкаська область", "Полтавська область", "Кіровоградська область",
+                    "Вінницька область", "Київська область", "Хмельницька область"
+                )
+                if inter_reg in INLAND_TRANSIT_OBLASTS:
+                    origin_note = " (вхід з напрямку державного кордону/транзит)"
 
                 gap_detail = (
                     f"🌉 Проміжний коридор транзиту ({ukr_type}): напрямок {src_gen} ➔ {tgt_gen}{origin_note}.\n"
