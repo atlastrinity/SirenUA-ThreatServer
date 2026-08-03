@@ -436,30 +436,6 @@ async def get_daily_summary(days: int = 30):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-        summaries = []
-        for r in rows:
-            total = r["total_events"]
-            confirmed = r["confirmed"] or 0
-            mitigated = r["mitigated"] or 0
-            overestimated = r["overestimated"] or 0
-            evaluated = confirmed + mitigated + overestimated
-            effectiveness = round((confirmed + mitigated * 0.8) / evaluated * 100, 1) if evaluated > 0 else 0
-
-            summaries.append({
-                "date": r["day"],
-                "total_events": total,
-                "confirmed": confirmed,
-                "mitigated": mitigated,
-                "overestimated": overestimated,
-                "predictive": r["predictive"] or 0,
-                "avg_confidence": round(r["avg_confidence"]) if r["avg_confidence"] else 0,
-                "effectiveness_pct": effectiveness
-            })
-
-        return {"summaries": summaries, "total_days": len(summaries)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.post("/api/admin/analytics/generate_daily_report")
 async def generate_daily_report():

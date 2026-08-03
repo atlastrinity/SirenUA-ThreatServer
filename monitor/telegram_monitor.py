@@ -29,6 +29,9 @@ from core.threat_types import (
 )
 from core.topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
 from analyzer.gemini_analyzer import GeminiThreatAnalyzer
+from monitor.parsers.regex_parser import is_threat_relevant, extract_regions_from_text
+from monitor.trajectory.gap_bridging import find_shortest_path, INLAND_TRANSIT_OBLASTS, EXTRAPOLATED_INGRESS_CORRIDORS
+from monitor.scheduler.scheduler import ThreatScheduler
 from core.config import (
     TELEGRAM_API_ID,
     TELEGRAM_API_HASH,
@@ -342,26 +345,7 @@ class TelegramThreatMonitor:
 
     def _find_path(self, start_region: str, end_region: str) -> list[str]:
         """BFS algorithm to find the shortest path between two regions."""
-        if start_region not in UKRAINE_TOPOLOGY or end_region not in UKRAINE_TOPOLOGY:
-            return []
-        
-        queue = [[start_region]]
-        visited = set([start_region])
-        
-        while queue:
-            path = queue.pop(0)
-            node = path[-1]
-            
-            if node == end_region:
-                return path
-                
-            for adjacent in UKRAINE_TOPOLOGY.get(node, []):
-                if adjacent not in visited:
-                    visited.add(adjacent)
-                    new_path = list(path)
-                    new_path.append(adjacent)
-                    queue.append(new_path)
-        return []
+        return find_shortest_path(start_region, end_region)
 
     # --- Pre-filter: skip obviously non-threat messages before sending to Gemini ---
     _THREAT_KEYWORDS = {
