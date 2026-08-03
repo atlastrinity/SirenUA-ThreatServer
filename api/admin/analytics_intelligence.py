@@ -92,46 +92,49 @@ async def get_trajectory_heatmap(days: int = 30):
 
         corridors = []
 
-        # Process rules
-        for r in rules:
-            src = r["source_region"]
-            tgt = r["target_region"]
+        def _build_corridor_item(src, tgt, count, threat_type, avg_conf, data_source, speed=None):
             src_coords = LAUNCH_HUBS.get(src) or REGION_CENTROIDS.get(src)
             tgt_coords = REGION_CENTROIDS.get(tgt)
             if src_coords and tgt_coords:
-                corridors.append({
+                item = {
                     "source": src,
                     "target": tgt,
                     "source_lat": src_coords[0],
                     "source_lon": src_coords[1],
                     "target_lat": tgt_coords[0],
                     "target_lon": tgt_coords[1],
-                    "count": r["evidence_count"] or 1,
-                    "threat_type": r["threat_type"],
-                    "avg_confidence": round(r["accuracy_score"] * 100) if r["accuracy_score"] else 0,
-                    "data_source": "rule"
-                })
+                    "count": count,
+                    "threat_type": threat_type,
+                    "avg_confidence": avg_conf,
+                    "data_source": data_source
+                }
+                if speed is not None:
+                    item["avg_speed"] = speed
+                return item
+            return None
+
+        # Process rules
+        for r in rules:
+            item = _build_corridor_item(
+                r["source_region"], r["target_region"],
+                r["evidence_count"] or 1, r["threat_type"],
+                round(r["accuracy_score"] * 100) if r["accuracy_score"] else 0,
+                "rule"
+            )
+            if item:
+                corridors.append(item)
 
         # Process telemetry
         for t in telemetry_corridors:
-            src = t["source_region"]
-            tgt = t["target_region"]
-            src_coords = LAUNCH_HUBS.get(src) or REGION_CENTROIDS.get(src)
-            tgt_coords = REGION_CENTROIDS.get(tgt)
-            if src_coords and tgt_coords:
-                corridors.append({
-                    "source": src,
-                    "target": tgt,
-                    "source_lat": src_coords[0],
-                    "source_lon": src_coords[1],
-                    "target_lat": tgt_coords[0],
-                    "target_lon": tgt_coords[1],
-                    "count": t["count"],
-                    "threat_type": t["threat_type"],
-                    "avg_confidence": round(t["avg_confidence"]) if t["avg_confidence"] else 0,
-                    "avg_speed": round(t["avg_speed"]) if t["avg_speed"] else None,
-                    "data_source": "telemetry"
-                })
+            item = _build_corridor_item(
+                t["source_region"], t["target_region"],
+                t["count"], t["threat_type"],
+                round(t["avg_confidence"]) if t["avg_confidence"] else 0,
+                "telemetry",
+                speed=round(t["avg_speed"]) if t.get("avg_speed") else None
+            )
+            if item:
+                corridors.append(item)
 
         return {"corridors": corridors, "total": len(corridors)}
     except Exception as e:
@@ -507,20 +510,23 @@ async def generate_daily_report():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/admin/analytics/reports")
-async def get_analytics_reports(limit: int = 30):
-    """Отримати збережені аналітичні звіти."""
+def _fetch_table_reports(table_name: str, fields: str, limit: int):
     try:
-        query = """
-            SELECT id, created_at, report_date, report_type, summary_text, generated_by
-            FROM analytics_reports
-            ORDER BY created_at DESC
-            LIMIT ?
-        """
+        query = f"SELECT {fields} FROM {table_name} ORDER BY created_at DESC LIMIT ?"
         rows = execute_query_as_dicts(query, (limit,))
         return {"reports": rows, "total": len(rows)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/admin/analytics/reports")
+async def get_analytics_reports(limit: int = 30):
+    """Отримати збережені аналітичні звіти."""
+    return _fetch_table_reports(
+        "analytics_reports",
+        "id, created_at, report_date, report_type, summary_text, generated_by",
+        limit
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -558,15 +564,9 @@ async def synthesize_palantir_intelligence():
 @router.get("/api/admin/palantir/reports")
 async def get_palantir_reports(limit: int = 30):
     """Get reports from palantir_reports DB table."""
-    try:
-        query = """
-            SELECT id, created_at, report_date, threat_assessment_summary, confidence_index, generated_by
-            FROM palantir_reports
-            ORDER BY created_at DESC
-            LIMIT ?
-        """
-        rows = execute_query_as_dicts(query, (limit,))
-        return {"reports": rows, "total": len(rows)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return _fetch_table_reports(
+        "palantir_reports",
+        "id, created_at, report_date, threat_assessment_summary, confidence_index, generated_by",
+        limit
+    )
 

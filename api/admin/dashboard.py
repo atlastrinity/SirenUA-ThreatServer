@@ -120,32 +120,40 @@ async def get_admin_dashboard_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _run_db_operation(fn, success_msg: str, fail_msg: str, err_prefix: str, *args):
+    try:
+        import asyncio
+        result = await asyncio.to_thread(fn, *args)
+        if result:
+            return {"status": "ok", "message": success_msg}
+        return {"status": "warning", "message": fail_msg}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{err_prefix}: {str(e)}")
+
+
 @router.post("/api/admin/backup")
 async def trigger_backup():
     """Примусовий бекап SQLite у Firebase Firestore."""
-    try:
-        from database.db_helpers import backup_sqlite_to_firestore
-        import asyncio
-        result = await asyncio.to_thread(backup_sqlite_to_firestore)
-        if result:
-            return {"status": "ok", "message": "Бекап SQLite успішно збережено у Firebase."}
-        return {"status": "warning", "message": "Бекап не вдався (Firebase не ініціалізовано або БД порожня)."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Помилка бекапу: {str(e)}")
+    from database.db_helpers import backup_sqlite_to_firestore
+    return await _run_db_operation(
+        backup_sqlite_to_firestore,
+        "Бекап SQLite успішно збережено у Firebase.",
+        "Бекап не вдався (Firebase не ініціалізовано або БД порожня).",
+        "Помилка бекапу"
+    )
 
 
 @router.post("/api/admin/restore")
 async def trigger_restore():
     """Примусове відновлення SQLite з Firebase Firestore."""
-    try:
-        from database.db_helpers import restore_sqlite_from_firestore
-        import asyncio
-        result = await asyncio.to_thread(restore_sqlite_from_firestore, True)
-        if result:
-            return {"status": "ok", "message": "SQLite успішно відновлено з Firebase бекапу."}
-        return {"status": "warning", "message": "Відновлення не вдалося (бекап відсутній або Firebase не ініціалізовано)."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Помилка відновлення: {str(e)}")
+    from database.db_helpers import restore_sqlite_from_firestore
+    return await _run_db_operation(
+        restore_sqlite_from_firestore,
+        "SQLite успішно відновлено з Firebase бекапу.",
+        "Відновлення не вдалося (бекап відсутній або Firebase не ініціалізовано).",
+        "Помилка відновлення",
+        True
+    )
 
 
 @router.post("/api/admin/restore_upload")

@@ -18,7 +18,7 @@ from analyzer.prompts.system_prompts import BASE_SYSTEM_PROMPT
 from analyzer.rules_engine import RulesEngine
 
 class GeminiThreatAnalyzer:
-    def __init__(self, error_callback=None, rule_audit_callback=None, db_path: str = "threat_analytics.db"):
+    def __init__(self, error_callback=None, rule_audit_callback=None, db_path: str = "threat_analytics.db", rules_engine: Optional[RulesEngine] = None):
         # Configure Gemini
         keys_str = os.environ.get("GEMINI_API_KEYS", "")
         if keys_str:
@@ -45,7 +45,7 @@ class GeminiThreatAnalyzer:
         self._error_callback = error_callback
         self._rule_audit_callback = rule_audit_callback
         self.system_prompt = BASE_SYSTEM_PROMPT
-        self.rules_engine = RulesEngine(db_path=db_path, rule_audit_callback=rule_audit_callback)
+        self.rules_engine = rules_engine or RulesEngine(db_path=db_path, rule_audit_callback=rule_audit_callback)
 
     def _handle_api_error(self, e: Exception, attempt: int, max_attempts: int, endpoint: str, context: str) -> bool:
         """
