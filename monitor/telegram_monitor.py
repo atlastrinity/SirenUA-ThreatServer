@@ -765,8 +765,12 @@ class TelegramThreatMonitor:
                 tgt_gen = get_genitive_region(target_region)
                 ukr_type = get_ukrainian_threat_type(threat_type)
 
+                origin_note = ""
+                if inter_reg in ("Чернігівська область", "Сумська область", "Житомирська область"):
+                    origin_note = " (вхід з напрямку державного кордону)"
+
                 gap_detail = (
-                    f"🌉 Проміжний коридор перельоту ({ukr_type}): напрямок {src_gen} ➔ {tgt_gen}.\n"
+                    f"🌉 Проміжний коридор транзиту ({ukr_type}): напрямок {src_gen} ➔ {tgt_gen}{origin_note}.\n"
                     f"⚠️ Траєкторію відновлено після тимчасового розриву засікання рад/каналами."
                 )
                 gap_conf = max(60, (confidence or 75) - 15)
@@ -782,6 +786,7 @@ class TelegramThreatMonitor:
                     is_test=is_test,
                     telemetry={
                         "is_detection_gap": True,
+                        "is_transit_corridor": True,
                         "gap_source_region": source_region,
                         "gap_target_region": target_region,
                         "group_id": group_id

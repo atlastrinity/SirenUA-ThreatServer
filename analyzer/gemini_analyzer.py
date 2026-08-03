@@ -90,6 +90,12 @@ For informational messages, still return a JSON object but with:
 - You MUST reconstruct the ingress transit region or launch origin (e.g. `source_regions: ["Запорізька область"]` for Dnipropetrovska; `["Сумська область"]` for Poltavska/Kyivska; `["Одеська область"]` for Vinnytska).
 - This ensures full vector trajectory stitching from the actual launch/border origin.
 
+=== CRITICAL RULE #5: CONTROLLED UKRAINIAN REGIONS ARE NEVER LAUNCH ORIGINS ===
+- Controlled Ukrainian oblasts (e.g. Chernihivska, Sumska, Kyivska, Zhytomyrska, Poltavska, etc.) CANNOT be set as `launch_origin` (launch base/airfield).
+- `launch_origin` MUST ONLY be specified as a real military launch airfield/base or external origin in RF/Belarus/Crimea/Seas (e.g., "Приморсько-Ахтарськ", "Єйськ", "Курськ", "Брянська область (РФ)", "Оленья", "Чауда (Крим)", "Чорне море", "Каспійське море").
+- If a drone enters across northern/eastern borders (e.g. via Chernihivska or Sumska oblast), those regions are TRANSIT CORRIDORS (`source_regions`), NOT launch origins.
+
+
 === ANALYSIS METHODOLOGY FOR TARGET REGIONS ===
 Apply four types of analysis to determine target_regions and is_predictive flags:
 
