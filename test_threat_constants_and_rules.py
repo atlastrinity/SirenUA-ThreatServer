@@ -232,14 +232,30 @@ def test_palantir_intelligence_endpoints():
     assert reports_data["total"] >= 1
     print("✅ Palantir Intelligence Endpoints & DB Storage test passed successfully!")
 
-if __name__ == "__main__":
-    test_threat_types_detection()
-    test_airbases_detection()
-    test_kinematics_calculations()
-    test_rules_engine_learning()
-    test_trajectory_gap_stitching()
-    test_regional_rule_telemetry_and_metrics()
     test_inland_ingress_corridor_extrapolation()
     test_palantir_intelligence_endpoints()
-    print("\n🎉 ALL 8 THREAT CONSTANTS, TRAJECTORY & PALANTIR TESTS PASSED SUCCESSFULLY!")
+    test_fcm_topic_mapping()
+    print("\n🎉 ALL THREAT CONSTANTS, TRAJECTORY, PALANTIR & FCM TOPIC TESTS PASSED SUCCESSFULLY!")
+
+
+def test_fcm_topic_mapping():
+    """Перевірка правильного перетворення назв областей у латинські FCM топіки."""
+    from database.notifications import get_fcm_topic
+
+    assert get_fcm_topic("Чернігівська область") == "region_chernihiv"
+    assert get_fcm_topic("Київська область") == "region_kyiv_oblast"
+    assert get_fcm_topic("м. Київ") == "region_kyiv_city"
+    assert get_fcm_topic("Вінницька область") == "region_vinnytsia"
+    assert get_fcm_topic("Полтавська область") == "region_poltava"
+    assert get_fcm_topic("Автономна Республіка Крим") == "region_crimea"
+
+    # Already valid topics pass through
+    assert get_fcm_topic("region_sumy") == "region_sumy"
+    assert get_fcm_topic("all") == "all"
+
+    # Edge cases
+    assert get_fcm_topic("") == "all"
+    assert get_fcm_topic(None) == "all"
+    print("✅ FCM Topic Mapping test passed successfully!")
+
 
