@@ -663,17 +663,29 @@ async def rebuild_rules():
 async def get_region_history(
     region: str,
     date: Optional[str] = None,
-    days: int = 1,
     limit: int = 200
 ):
     """
-    Повертає повну хронологію загроз ТА відбоїв тривог для конкретної області за вказаний календарний день (00:00 - 23:59 за Київським часом).
-    Підтримує Firestore та SQLite бекап.
+    Повертає хронологію загроз для області за вказаний календарний день.
+    
+    Час фільтрується суворо за Київською добою (00:00:00 — 23:59:59 Europe/Kiev).
+    
+    Дані джерел:
+      - Firestore (sirenua_history) — основне джерело. Містить і загрози, і відбої
+        (clearing_logger записує відбій як threat_level="none" прямо сюди).
+      - SQLite (threat_history) — резервне джерело (фолбек), використовується лише
+        якщо Firestore повернув 0 подій. Також містить і загрози, і відбої.
+    
+    Args:
+        region: Назва області (URL-encoded)
+        date: Дата у форматі YYYY-MM-DD. Без параметра — сьогодні за Києвом.
+        limit: Максимальна кількість подій (до 200)
     """
     from urllib.parse import unquote
-    from datetime import datetime as dt, timedelta, time as dt_time
+    from datetime import datetime as dt, timedelta, time as dt_time, timezone
     region = unquote(region)
     
+    # --- Часова зона Києва ---
     try:
         import zoneinfo
         kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
@@ -681,120 +693,93 @@ async def get_region_history(
         from backports import zoneinfo
         kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
     
-    current_local = dt.now(kyiv_tz)
+    now_kyiv = dt.now(kyiv_tz)
 
+    # --- Визначення календарного дня ---
     if date:
         try:
             target_date = dt.strptime(date, "%Y-%m-%d").date()
         except ValueError:
             raise HTTPException(status_code=400, detail="Невірний формат дати. Використовуйте YYYY-MM-DD")
     else:
-        target_date = current_local.date()
+        target_date = now_kyiv.date()
     
-    # Суворі межі календарної доби у Київському часі: від 00:00:00 до 23:59:59
-    local_start = dt.combine(target_date, dt_time.min).replace(tzinfo=kyiv_tz)
-    local_end = dt.combine(target_date + timedelta(days=days-1), dt_time.max).replace(tzinfo=kyiv_tz)
+    # Суворі межі календарної доби за Києвом → конвертація в UTC
+    day_start_kyiv = dt.combine(target_date, dt_time.min).replace(tzinfo=kyiv_tz)
+    day_end_kyiv = dt.combine(target_date, dt_time.max).replace(tzinfo=kyiv_tz)
     
-    utc_start = local_start.astimezone(timezone.utc)
-    utc_end = local_end.astimezone(timezone.utc)
-    
-    date_start = utc_start.strftime("%Y-%m-%d %H:%M:%S")
-    date_end = utc_end.strftime("%Y-%m-%d %H:%M:%S")
+    utc_start = day_start_kyiv.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    utc_end = day_end_kyiv.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+    # --- Отримання подій ---
     events = []
-    db = get_db()
     
-    # 1. Firestore: Отримуємо як загрози (sirenua_history), так і відбої (sirenua_clearings)
+    # 1. Firestore (основне джерело) — sirenua_history містить і загрози, і відбої
+    db = get_db()
     if db:
         try:
-            # a) threat activations
-            docs_hist = await asyncio.to_thread(
+            docs = await asyncio.to_thread(
                 lambda: db.collection('sirenua_history')
                           .where('region', '==', region)
                           .get()
             )
-            for doc in docs_hist:
+            for doc in docs:
                 d = doc.to_dict()
                 ts = d.get('timestamp', '')
-                if date_start <= ts <= date_end:
+                if utc_start <= ts <= utc_end:
                     events.append(d)
-            
-            # b) threat clearings (відбої)
-            docs_clear = await asyncio.to_thread(
-                lambda: db.collection('sirenua_clearings')
-                          .where('region', '==', region)
-                          .get()
-            )
-            for doc in docs_clear:
-                d = doc.to_dict()
-                ts = d.get('timestamp', '')
-                if date_start <= ts <= date_end:
-                    events.append({
-                        "id": d.get("id") or str(int(time.time() * 1000)),
-                        "timestamp": ts,
-                        "region": region,
-                        "threat_level": "none",
-                        "threat_type": d.get("original_threat_type") or "official_alarm",
-                        "detail": d.get("clearing_message_text") or "Відбій загрози",
-                        "confidence": 100
-                    })
         except Exception as e:
             print(f"⚠️ [History API] Firestore fetch failed: {e}")
 
-    # 2. Fallback to local SQLite if Firestore returned 0 events
+    # 2. SQLite фолбек — лише якщо Firestore порожній
+    #    threat_history також містить і загрози, і відбої (clearing_logger дублює їх сюди)
     if not events:
         try:
-            def _fetch_from_sqlite():
+            def _fetch_sqlite():
                 conn = sqlite3.connect(DB_PATH)
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-                
                 cursor.execute("""
                     SELECT id, timestamp, region, threat_level, threat_type, detail, confidence
                     FROM threat_history
                     WHERE region = ? AND timestamp >= ? AND timestamp <= ? AND is_test = 0
-
-                    UNION ALL
-
-                    SELECT (id + 1000000) as id, timestamp, region, 'none' as threat_level,
-                           COALESCE(original_threat_type, 'official_alarm') as threat_type,
-                           COALESCE(clearing_message_text, 'Відбій загрози') as detail,
-                           100 as confidence
-                    FROM threat_clearings
-                    WHERE region = ? AND timestamp >= ? AND timestamp <= ? AND is_test = 0
-
                     ORDER BY timestamp DESC
-                """, (region, date_start, date_end, region, date_start, date_end))
-                
+                    LIMIT ?
+                """, (region, utc_start, utc_end, min(limit, 200)))
                 rows = cursor.fetchall()
                 conn.close()
-                res = []
-                for row in rows:
-                    res.append({
-                        "id": str(row["id"]),
-                        "timestamp": row["timestamp"],
-                        "region": row["region"],
-                        "threat_level": row["threat_level"],
-                        "threat_type": row["threat_type"],
-                        "detail": row["detail"],
-                        "confidence": row["confidence"]
-                    })
-                return res
+                return [{
+                    "id": str(row["id"]),
+                    "timestamp": row["timestamp"],
+                    "region": row["region"],
+                    "threat_level": row["threat_level"],
+                    "threat_type": row["threat_type"],
+                    "detail": row["detail"],
+                    "confidence": row["confidence"]
+                } for row in rows]
 
-            events = await asyncio.to_thread(_fetch_from_sqlite)
+            events = await asyncio.to_thread(_fetch_sqlite)
         except Exception as e:
             print(f"⚠️ [History API] SQLite fallback fetch failed: {e}")
 
-    # Sort by timestamp descending
+    # --- Сортування та дедуплікація ---
     events.sort(key=lambda x: str(x.get('timestamp', '')), reverse=True)
     
-    # Limit results
-    events = events[:min(limit, 200)]
+    seen = set()
+    unique = []
+    for ev in events:
+        key = f"{ev.get('timestamp')}|{ev.get('threat_level')}|{ev.get('threat_type')}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(ev)
+    
+    unique = unique[:min(limit, 200)]
     
     return {
         "region": region,
-        "date": local_start.strftime("%Y-%m-%d"),
-        "count": len(events),
-        "events": events,
-        "history": events
+        "date": str(target_date),
+        "count": len(unique),
+        "events": unique,
+        "history": unique
     }
+
