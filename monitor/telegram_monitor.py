@@ -1585,22 +1585,10 @@ class TelegramThreatMonitor:
 
     async def _rules_learner_loop(self):
         """Background task that analyzes paired events every 6 hours to derive new rules."""
-        # Wait 5 minutes before first run to let data accumulate
-        await asyncio.sleep(300)
-        
-        while self.is_running:
-            try:
-                count = self._run_rules_learner()
-                if count > 0:
-                    print(f"🧠 [Rules Learner] Автонавчання завершено: {count} правил створено/оновлено")
-            except Exception as e:
-                print(f"⚠️ [Rules Learner] Помилка: {e}")
-            
-            # Sleep 6 hours
-            await asyncio.sleep(6 * 3600)
+        from monitor.rules_evaluator import run_rules_learner_loop
+        await run_rules_learner_loop(self)
 
     def _run_rules_learner(self) -> int:
         """Analyze paired events and derive rules by delegating to the analyzer's central engine."""
-        if self.analyzer and hasattr(self.analyzer, 'run_rules_learner'):
-            return self.analyzer.run_rules_learner()
-        return 0
+        from monitor.rules_evaluator import run_rules_learner
+        return run_rules_learner(self)
