@@ -100,3 +100,30 @@ CLEAR_KEYWORDS = [
     r"чисто", 
     r"дорозвідка"
 ]
+
+
+def get_kyiv_tz_offset() -> str:
+    """Returns Kyiv timezone offset string (+02:00 or +03:00) for SQLite queries."""
+    from datetime import datetime
+    import zoneinfo
+    try:
+        kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        offset = datetime.now(kyiv_tz).utcoffset()
+        hours = int(offset.total_seconds() // 3600)
+        return f"+{hours:02d}:00"
+    except Exception:
+        return "+03:00"
+
+
+def get_kyiv_tz_modifier() -> str:
+    """Returns Kyiv timezone modifier for SQLite datetime functions e.g. '+3 hours'."""
+    from datetime import datetime
+    import zoneinfo
+    try:
+        kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+        offset = datetime.now(kyiv_tz).utcoffset()
+        hours = int(offset.total_seconds() // 3600)
+        return f"+{hours} hours"
+    except Exception:
+        return "+3 hours"
+
