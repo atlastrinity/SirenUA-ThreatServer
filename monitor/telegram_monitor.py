@@ -513,9 +513,9 @@ class TelegramThreatMonitor:
                     if not eta_str:
                         eta_str = "~15 хв"
                 elif threat_type == "kab":
-                    delay = 1200  # 20 хв
+                    delay = 420   # 7 хв (фізичний ліміт дольоту КАБ)
                     if not eta_str:
-                        eta_str = "~25 хв"
+                        eta_str = "~5-10 хв"
                 elif threat_type == "shahed":
                     delay = 10800  # 3 години
                     if not eta_str:
@@ -1511,7 +1511,7 @@ class TelegramThreatMonitor:
                         elif t_type == "ballistic":
                             delay = 600
                         elif t_type == "kab":
-                            delay = 1200
+                            delay = 420
                         elif t_type == "shahed":
                             delay = 10800
                         elif t_type == "cruise_missile":
