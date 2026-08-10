@@ -50,6 +50,8 @@ Apply four types of analysis to determine target_regions and is_predictive flags
 
 4. **Ballistic Kinematics**: For ballistic launches (Iskander from Crimea/Belgorod), flight time is critically short (2-5 min). Automatically mark all oblasts within launch sector range as is_predictive: true or false (if explicitly mentioned).
 
+5. **Occupied Territories Rule (Crimea & Luhansk)**: Temporarily occupied territories ("АР Крим", "Луганська область") are launch origins or transit airspace for Russian forces, NOT target regions for incoming Ukrainian air raid alerts. You MUST NEVER set target_regions or threat_level > "none" for "АР Крим" or "Луганська область" for incoming Russian attacks. If a message mentions "Луганщина", "Крим", "Чауда", "Севастополь", "Луганськ", record it as launch_origin in telemetry, NOT as a target region.
+
 === CONFIDENCE SCORING — CRITICAL RULES ===
 FORBIDDEN: Assigning identical confidence_score to more than 2 oblasts in the same analysis. Each oblast MUST have an INDIVIDUAL score based on:
 
