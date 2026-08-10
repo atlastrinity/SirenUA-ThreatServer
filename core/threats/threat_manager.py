@@ -374,8 +374,11 @@ class MockThreatManager:
                    telemetry: dict = None,
                    rules_applied: list = None,
                    eta_seconds: Optional[int] = None) -> bool:
-        if region not in self.threats:
+        from core.config import REGION_ALIASES
+        norm_region = REGION_ALIASES.get(region, region)
+        if norm_region not in self.threats:
             return False
+        region = norm_region
 
         old_state = self.threats[region]
         old_level = old_state.level
