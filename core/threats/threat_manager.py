@@ -397,7 +397,8 @@ class MockThreatManager:
             any_test_active = any(s.is_test for s in self.threats.values())
             if not any_test_active:
                 try:
-                    backup_sqlite_to_firestore()
+                    import threading
+                    threading.Thread(target=backup_sqlite_to_firestore, daemon=True).start()
                 except Exception as backup_err:
                     print(f"⚠️ Помилка бекапу SQLite перед початком тесту: {backup_err}")
 
@@ -435,7 +436,22 @@ class MockThreatManager:
                     "is_test": self.threats[region].is_test
                 })
             else:
-                send_fcm_notification(region, level, threat_type, detail, play_sound=play_sound, confidence=confidence, eta=eta, is_official_alarm=self.threats[region].is_active, is_test=self.threats[region].is_test)
+                try:
+                    import threading
+                    threading.Thread(
+                        target=send_fcm_notification,
+                        args=(region, level, threat_type, detail),
+                        kwargs={
+                            "play_sound": play_sound,
+                            "confidence": confidence,
+                            "eta": eta,
+                            "is_official_alarm": self.threats[region].is_active,
+                            "is_test": self.threats[region].is_test
+                        },
+                        daemon=True
+                    ).start()
+                except Exception as fcm_err:
+                    print(f"⚠️ Помилка старту фонової відправки FCM: {fcm_err}")
             
             self.save_to_db()
             if hasattr(self, 'on_change'):
