@@ -749,7 +749,7 @@ class TelegramThreatMonitor:
                 continue
             
             for adj_region in adjacent:
-                if adj_region in ("АР Крим", "Луганська область"):
+                if adj_region in ("АР Крим", "Автономна Республіка Крим", "Крим", "Луганська область", "Луганська обл."):
                     continue
                 # Skip if already has active (non-predictive) threat
                 adj_state = self.threat_manager.threats.get(adj_region)

@@ -460,7 +460,8 @@ class MockThreatManager:
                    telemetry: dict = None,
                    rules_applied: list = None,
                    eta_seconds: Optional[int] = None) -> bool:
-        if region not in self.threats or region in ("АР Крим", "Луганська область"):
+        occupied_set = {"АР Крим", "Автономна Республіка Крим", "Крим", "Луганська область", "Луганська обл."}
+        if region not in self.threats or region in occupied_set:
             return False
 
         old_state = self.threats[region]
