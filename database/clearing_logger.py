@@ -218,6 +218,29 @@ def log_clearing_to_db(
         conn.commit()
         conn.close()
 
+        # Log clearing event to history table & Firestore so it appears in app chronology
+        try:
+            from database.threat_logger import log_threat_to_db, log_threat_to_firestore
+            clear_detail = message_text[:200] if message_text else f"🟢 Відбій загрози/тривоги в: {region}"
+            log_threat_to_db(
+                region=region,
+                level="none",
+                threat_type=original_type or "clear",
+                detail=clear_detail,
+                confidence=clearing_confidence or 100,
+                is_test=is_test
+            )
+            log_threat_to_firestore(
+                region=region,
+                level="none",
+                threat_type=original_type or "clear",
+                detail=clear_detail,
+                confidence=clearing_confidence or 100,
+                is_test=is_test
+            )
+        except Exception as e:
+            print(f"⚠️ [Clearing History] Failed to record clear event in history: {e}")
+
         res_type = clearing_telemetry.get("resolution_type", "unknown")
         pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "n/a")
         dur = f"{threat_duration_sec}с" if threat_duration_sec else "?"
