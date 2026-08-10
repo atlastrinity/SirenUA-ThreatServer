@@ -361,6 +361,10 @@ class MockThreatManager:
                 self.load_from_file()
         else:
             self.load_from_file()
+            
+        for occ_r in ("АР Крим", "Луганська область"):
+            if occ_r in self.threats:
+                self.threats[occ_r].clear()
 
     def save_real_threats_to_db(self):
         with self._save_lock:
@@ -456,7 +460,7 @@ class MockThreatManager:
                    telemetry: dict = None,
                    rules_applied: list = None,
                    eta_seconds: Optional[int] = None) -> bool:
-        if region not in self.threats:
+        if region not in self.threats or region in ("АР Крим", "Луганська область"):
             return False
 
         old_state = self.threats[region]
