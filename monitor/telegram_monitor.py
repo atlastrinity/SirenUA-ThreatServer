@@ -410,7 +410,8 @@ class TelegramThreatMonitor:
                             source_channel=source_channel,
                             message_text=text,
                             clearing_confidence=confidence,
-                            was_predictive=was_pred
+                            was_predictive=was_pred,
+                            threat_type=threat_type
                         )
                         
                         clearing_gid = clearing_telemetry.get("linked_group_id") if clearing_telemetry else None

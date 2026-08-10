@@ -27,7 +27,31 @@ def detect_mitigation_from_text(text: str) -> bool:
     return any(kw in text_lower for kw in keywords)
 
 
-def _find_original_threat_event(cursor, region: str, clearing_telemetry: dict):
+def _detect_threat_type_from_text(text: str) -> str:
+    """Detects tactical threat type from message text."""
+    if not text:
+        return None
+    t = text.lower()
+    if "балістик" in t:
+        return "ballistic"
+    elif "шахед" in t or "бпла" in t or "дрон" in t:
+        return "shahed"
+    elif "крилат" in t or "ракет" in t:
+        return "cruise_missile"
+    elif "каб" in t or "авіац" in t:
+        return "kab"
+    elif "міг" in t or "кинджал" in t:
+        return "mig31k"
+    elif "ту-95" in t or "ту95" in t:
+        return "tu95"
+    elif "іскандер" in t:
+        return "iskander"
+    elif "повітрян" in t and "тривог" in t:
+        return "official_alarm"
+    return None
+
+
+def _find_original_threat_event(cursor, region: str, clearing_telemetry: dict, threat_type: str = None):
     """Helper to locate the original active threat event for a region."""
     linked_gid = clearing_telemetry.get("linked_group_id")
     row = None
@@ -42,7 +66,17 @@ def _find_original_threat_event(cursor, region: str, clearing_telemetry: dict):
         ''', (region, linked_gid))
         row = cursor.fetchone()
 
-    if not row:
+    if not row and threat_type and threat_type != 'official_alarm':
+        cursor.execute('''
+            SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
+            FROM threat_history th
+            JOIN paired_events pe ON th.id = pe.threat_event_id
+            WHERE th.region = ? AND th.threat_type = ? AND pe.lifecycle_status = 'active'
+            ORDER BY th.timestamp DESC LIMIT 1
+        ''', (region, threat_type))
+        row = cursor.fetchone()
+
+    if not row and (threat_type == 'official_alarm' or not threat_type):
         cursor.execute('''
             SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
             FROM threat_history th
@@ -130,17 +164,20 @@ def log_clearing_to_db(
     clearing_confidence: int = None,
     was_predictive: bool = False,
     is_test: bool = False,
+    threat_type: str = None,
 ):
     """Log threat clearing event linked to original threat. Closes active paired events."""
     if not clearing_telemetry:
         clearing_telemetry = {}
+
+    detected_type = threat_type or _detect_threat_type_from_text(message_text)
 
     try:
         conn = get_sqlite_connection(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        row = _find_original_threat_event(cursor, region, clearing_telemetry)
+        row = _find_original_threat_event(cursor, region, clearing_telemetry, detected_type)
         if not row:
             conn.close()
             return None
@@ -218,14 +255,20 @@ def log_clearing_to_db(
         conn.commit()
         conn.close()
 
+        # Determine the accurate threat_type to record in history
+        saved_type = detected_type or original_type or "clear"
+        if message_text and ("загроз" in message_text.lower() or "загроза" in message_text.lower()):
+            if saved_type == "official_alarm":
+                saved_type = detected_type or "threat_clear"
+
         # Log clearing event to history table & Firestore so it appears in app chronology
         try:
             from database.threat_logger import log_threat_to_db, log_threat_to_firestore
-            clear_detail = message_text[:200] if message_text else f"🟢 Відбій загрози/тривоги в: {region}"
+            clear_detail = message_text[:200] if message_text else f"🟢 Відбій загрози в: {region}"
             log_threat_to_db(
                 region=region,
                 level="none",
-                threat_type=original_type or "clear",
+                threat_type=saved_type,
                 detail=clear_detail,
                 confidence=clearing_confidence or 100,
                 is_test=is_test
@@ -233,7 +276,7 @@ def log_clearing_to_db(
             log_threat_to_firestore(
                 region=region,
                 level="none",
-                threat_type=original_type or "clear",
+                threat_type=saved_type,
                 detail=clear_detail,
                 confidence=clearing_confidence or 100,
                 is_test=is_test
@@ -244,7 +287,7 @@ def log_clearing_to_db(
         res_type = clearing_telemetry.get("resolution_type", "unknown")
         pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "n/a")
         dur = f"{threat_duration_sec}с" if threat_duration_sec else "?"
-        print(f"📊 [Clearing DB] {region}: тип={res_type}, предикція={pred_hint}, тривалість={dur}, linked_event={original_event_id}")
+        print(f"📊 [Clearing DB] {region}: тип={res_type}, предикція={pred_hint}, тривалість={dur}, saved_type={saved_type}")
 
         return clearing_id
     except Exception as e:
