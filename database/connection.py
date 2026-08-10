@@ -18,6 +18,11 @@ def get_sqlite_connection(db_path: str = None) -> sqlite3.Connection:
     return conn
 
 
+def get_db(db_path: str = None) -> sqlite3.Connection:
+    """Alias for get_sqlite_connection for database dependency injection."""
+    return get_sqlite_connection(db_path)
+
+
 def _log_error(source: str, message: str, endpoint: str = "", context: str = "", error_type: str = "general"):
     """Записує помилку в базу даних error_log та консоль."""
     try:
