@@ -123,3 +123,37 @@ def normalize_region_name(raw_name: str) -> str:
             if kw in name_lower:
                 return canonical_name
     return raw_name
+
+
+def extract_region_specific_text(text: str, target_region: str) -> str:
+    """
+    Якщо допис у Telegram містить зведення по кількох областях (наприклад: 🛵Харківщина... 🛵Сумщина... 🛵Одещина...),
+    виділяє тільки блок тексту, що стосується конкретно target_region.
+    """
+    if not text or not target_region:
+        return text
+
+    import re
+    blocks = re.split(r'\n(?=[🛵📍▪️•▶️🔻●]|\b[А-ЯІЇЄ][а-яіїє]+щ?ина:)', text.strip())
+    if len(blocks) <= 1:
+        blocks = text.strip().split("\n\n")
+
+    if len(blocks) <= 1:
+        return text
+
+    target_data = ALL_REGIONS.get(target_region)
+    if not target_data:
+        return text
+
+    keywords = target_data.get("keywords", [])
+    matching_blocks = []
+
+    for block in blocks:
+        block_lower = block.lower()
+        if any(kw in block_lower for kw in keywords):
+            matching_blocks.append(block.strip())
+
+    if matching_blocks:
+        return "\n\n".join(matching_blocks)
+    
+    return text

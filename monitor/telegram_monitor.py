@@ -542,7 +542,10 @@ class TelegramThreatMonitor:
                     if not eta_str:
                         eta_str = "~10 хв"
                     
-                detail = clean_user_facing_threat_detail(text)
+                from core.regions import extract_region_specific_text
+                region_detail_text = extract_region_specific_text(clean_user_facing_threat_detail(text), region)
+                
+                detail = region_detail_text
                 
                 # Append telemetry details in a readable format if available
                 telemetry_info = []
