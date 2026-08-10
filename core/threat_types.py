@@ -428,7 +428,7 @@ def get_threat_speed(threat_type: Optional[str], custom_speed: Optional[float] =
     return DEFAULT_SPEEDS_KMH.get(threat_type, DEFAULT_SPEEDS_KMH[THREAT_UNKNOWN])
 
 def format_eta_seconds_to_str(eta_seconds: Optional[int]) -> str:
-    """Formats ETA in seconds into standardized human-readable Ukrainian string."""
+    """Formats ETA in seconds into standardized human-readable Ukrainian string (hours as integers, remaining as minutes)."""
     if eta_seconds is None or eta_seconds <= 0:
         return "в області"
     elif eta_seconds < 300:
@@ -440,10 +440,11 @@ def format_eta_seconds_to_str(eta_seconds: Optional[int]) -> str:
         mins = eta_seconds // 60
         return f"~{mins} хв"
     else:
-        hours = round(eta_seconds / 3600.0, 1)
-        if hours.is_integer():
-            return f"~{int(hours)} год"
-        return f"~{hours} год"
+        hours = eta_seconds // 3600
+        mins = (eta_seconds % 3600) // 60
+        if mins == 0:
+            return f"~{hours} год"
+        return f"~{hours} год {mins} хв"
 
 def calculate_kinematic_eta(
     distance_km: float, 

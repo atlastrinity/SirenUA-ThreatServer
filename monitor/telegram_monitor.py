@@ -897,22 +897,9 @@ class TelegramThreatMonitor:
                 region_hash_offset = (hash(adj_region) % 5) - 2  # -2 to +2
                 confidence = max(25, min(80, confidence + region_hash_offset))
                 
-                # Generate ETA string
-                eta_str = ""
-                if eta_seconds:
-                    if eta_seconds < 300:
-                        eta_str = "~2-5 хв"
-                    elif eta_seconds < 900:
-                        eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
-                    elif eta_seconds < 3600:
-                        eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 5} хв"
-                    else:
-                        h = eta_seconds // 3600
-                        m = (eta_seconds % 3600) // 60
-                        if m > 0:
-                            eta_str = f"~{h} год {m}-{m + 10} хв"
-                        else:
-                            eta_str = f"~{h} год"
+                # Generate ETA string via centralized format_eta_seconds_to_str
+                from core.threat_types import format_eta_seconds_to_str
+                eta_str = format_eta_seconds_to_str(eta_seconds)
                 
                 # Keep the best prediction for each region
                 if adj_region not in predictions or predictions[adj_region]["score"] < total_score:
