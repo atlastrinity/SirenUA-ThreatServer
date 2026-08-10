@@ -673,6 +673,51 @@ class MockThreatManager:
                 self.save_to_db()
                 if hasattr(self, 'on_change'):
                     self.on_change(region, self.threats[region], telemetry=None)
+
+                # Log official alarm start & clear to history & Firestore so official clears appear in app chronology
+                try:
+                    from database.threat_logger import log_threat_to_db, log_threat_to_firestore
+                    from database.clearing_logger import log_clearing_to_db
+                    if is_active:
+                        log_threat_to_db(
+                            region=region,
+                            level="high",
+                            threat_type="official_alarm",
+                            detail=f"🚨 Повітряна тривога в: {region}",
+                            confidence=100
+                        )
+                        log_threat_to_firestore(
+                            region=region,
+                            level="high",
+                            threat_type="official_alarm",
+                            detail=f"🚨 Повітряна тривога в: {region}",
+                            confidence=100
+                        )
+                    else:
+                        log_clearing_to_db(
+                            region=region,
+                            clearing_telemetry={"resolution_type": "official_alarm_ended"},
+                            message_text=f"🟢 Відбій офіційної тривоги в: {region}",
+                            clearing_confidence=100,
+                            was_predictive=False
+                        )
+                        log_threat_to_db(
+                            region=region,
+                            level="none",
+                            threat_type="official_alarm",
+                            detail=f"🟢 Відбій тривоги в: {region}",
+                            confidence=100
+                        )
+                        log_threat_to_firestore(
+                            region=region,
+                            level="none",
+                            threat_type="official_alarm",
+                            detail=f"🟢 Відбій тривоги в: {region}",
+                            confidence=100
+                        )
+                except Exception as alarm_log_err:
+                    print(f"⚠️ Помилка логування стану офіційної тривоги: {alarm_log_err}")
+
                 if was_active and not is_active and self.threats[region].active_threats:
                     if hasattr(self, 'on_official_alarm_ended') and callable(self.on_official_alarm_ended):
                         self.on_official_alarm_ended(region)
