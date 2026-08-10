@@ -1486,6 +1486,10 @@ class TelegramThreatMonitor:
             
         self._clear_tasks[key] = asyncio.create_task(auto_clear())
 
+    def restore_scheduled_clears(self):
+        """Restores auto-clear timers for active threats."""
+        self._schedule_initial_auto_clears()
+
     def _schedule_initial_auto_clears(self):
         from datetime import datetime, timezone
         for region, state in self.threat_manager.threats.items():
