@@ -361,24 +361,20 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         return
 
     if level == "none":
-        if is_official_alarm:
-            title = f"🟢 Відбій: {region}"
-            body = "Загрозу знято."
-            sound = "clearance.wav"
-        else:
-            title = f"🟢 Відбій: {region}"
-            body = "Загрозу знято."
-            sound = None
+        title = f"🟢 Відбій: {region}"
+        body = "Загрозу знято."
+        sound = "vidbiy.wav" if play_sound else None
     else:
-        sound = "warning.wav" if play_sound else None
         if is_official_alarm:
             title = f"🔴 Повітряна тривога: {region}"
             body = detail if detail else "Пройдіть в укриття!"
+            sound = "siren.wav" if play_sound else None
         else:
             level_ukr = {"critical": "КРИТИЧНА", "high": "ВИСОКА", "medium": "СЕРЕДНЯ", "low": "НИЗЬКА"}.get(level, level)
             type_str = f" ({threat_type})" if threat_type else ""
             title = f"⚠️ Загроза {level_ukr}: {region}{type_str}"
             body = detail if detail else "Зафіксовано рух ворожих цілей."
+            sound = "warning.wav" if play_sound else None
 
     try:
         android_config = None
