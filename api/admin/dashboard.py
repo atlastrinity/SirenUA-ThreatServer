@@ -4,7 +4,7 @@ Aggregated statistics for the admin dashboard.
 """
 
 from fastapi import APIRouter, HTTPException, Request
-from core.config import get_kyiv_tz_offset
+from core.config import get_kyiv_tz_modifier
 from database.db_helpers import execute_query_as_dicts
 
 router = APIRouter()
@@ -13,8 +13,7 @@ router = APIRouter()
 @router.get("/api/admin/dashboard/stats")
 async def get_admin_dashboard_stats():
     """Агреговані статистичні дані для дашборду."""
-    offset_hours = get_kyiv_tz_offset()
-    tz_modifier = f"'{offset_hours:+d} hours'"
+    tz_modifier = f"'{get_kyiv_tz_modifier()}'"
 
     try:
         # Total events (7d) excluding official alarms to match accuracy breakdown

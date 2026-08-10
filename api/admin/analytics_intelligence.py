@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
-from core.config import get_kyiv_tz_offset
+from core.config import get_kyiv_tz_modifier
 from core.topology import REGION_CENTROIDS, SHAHED_ROUTES
 from core.threat_types import THREAT_TYPES
 from database.db_helpers import execute_query_as_dicts, execute_write, get_sqlite_connection
@@ -198,8 +198,7 @@ async def get_launch_origins(days: int = 30):
 @router.get("/api/admin/analytics/threat_type_distribution")
 async def get_threat_type_distribution(days: int = 30):
     """Розподіл типів загроз за часом (щоденно)."""
-    offset_hours = get_kyiv_tz_offset()
-    tz_modifier = f"'{offset_hours:+d} hours'"
+    tz_modifier = f"'{get_kyiv_tz_modifier()}'"
 
     try:
         query = f"""
@@ -394,8 +393,7 @@ async def get_flight_corridors(days: int = 30):
 @router.get("/api/admin/analytics/daily_summary")
 async def get_daily_summary(days: int = 30):
     """Щоденний зведений звіт: запуски, перехоплення, прильоти."""
-    offset_hours = get_kyiv_tz_offset()
-    tz_modifier = f"'{offset_hours:+d} hours'"
+    tz_modifier = f"'{get_kyiv_tz_modifier()}'"
 
     try:
         query = f"""

@@ -5,7 +5,7 @@ Endpoints for error log listing and aggregated error statistics.
 
 from fastapi import APIRouter, HTTPException
 
-from core.config import get_kyiv_tz_offset
+from core.config import get_kyiv_tz_modifier
 from database.db_helpers import execute_query_as_dicts
 
 router = APIRouter()
@@ -33,15 +33,13 @@ async def get_admin_errors(source: str = None, error_type: str = None, days: int
     }
 
 
-@router.get("/api/admin/errors/stats")
-async def get_admin_errors_stats(days: int = 7):
-    """Агреговані лічильники помилок."""
-    offset_hours = get_kyiv_tz_offset()
-    tz_modifier = f"'{offset_hours:+d} hours'"
+@router.get("/api/admin/errors/summary")
+async def get_admin_errors_summary(days: int = 7):
+    """Отримує зведення та статистику помилок сервера."""
+    day_filter = f"-{days} days"
+    tz_modifier = f"'{get_kyiv_tz_modifier()}'"
 
     try:
-        day_filter = f'-{days} days'
-
         # By source
         by_source = execute_query_as_dicts('''
             SELECT source, COUNT(*) as count FROM error_log

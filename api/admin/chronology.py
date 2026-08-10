@@ -8,7 +8,7 @@ from typing import Tuple
 from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 
-from core.config import get_kyiv_tz_offset
+from core.config import get_kyiv_tz_modifier
 from database.db_helpers import execute_query_as_dicts
 
 router = APIRouter()
@@ -38,8 +38,7 @@ async def get_admin_chronology(
     prediction_accuracy: str = None
 ):
     """Хронологія загроз: встановлення → зняття, з match_type."""
-    offset_hours = get_kyiv_tz_offset()
-    tz_modifier = f"'{offset_hours:+d} hours'"
+    tz_modifier = f"'{get_kyiv_tz_modifier()}'"
 
     try:
         day_filter = f'-{days} days'
@@ -268,8 +267,7 @@ async def get_admin_chronology_v2(
     Для кожної AI-події шукає найближчу офіційну тривогу в ±30хв вікні
     та обчислює time_delta, match_reason, та включає telemetry summary.
     """
-    offset_hours = get_kyiv_tz_offset()
-    tz_modifier = f"'{offset_hours:+d} hours'"
+    tz_modifier = f"'{get_kyiv_tz_modifier()}'"
 
     try:
         # Date filter
