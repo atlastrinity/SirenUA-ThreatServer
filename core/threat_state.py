@@ -362,7 +362,8 @@ class MockThreatManager:
         else:
             self.load_from_file()
             
-        for occ_r in ("АР Крим", "Луганська область"):
+        from core.regions import PERMANENTLY_OCCUPIED_REGIONS
+        for occ_r in PERMANENTLY_OCCUPIED_REGIONS:
             if occ_r in self.threats:
                 self.threats[occ_r].clear()
 
