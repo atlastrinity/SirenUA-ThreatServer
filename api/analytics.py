@@ -667,11 +667,11 @@ async def get_region_history(
     limit: int = 200
 ):
     """
-    Повертає повну хронологію загроз ТА відбоїв тривог для конкретної області.
-    Підтримує Firestore та SQLite бекап, автоматично показує останні 24 години для "сьогодні".
+    Повертає повну хронологію загроз ТА відбоїв тривог для конкретної області за вказаний календарний день (00:00 - 23:59 за Київським часом).
+    Підтримує Firestore та SQLite бекап.
     """
     from urllib.parse import unquote
-    from datetime import datetime as dt, timedelta
+    from datetime import datetime as dt, timedelta, time as dt_time
     region = unquote(region)
     
     try:
@@ -682,19 +682,18 @@ async def get_region_history(
         kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
     
     current_local = dt.now(kyiv_tz)
-    today_str = current_local.strftime("%Y-%m-%d")
 
-    if date and date != today_str:
+    if date:
         try:
-            parsed_date = dt.strptime(date, "%Y-%m-%d")
-            local_start = parsed_date.replace(tzinfo=kyiv_tz)
-            local_end = local_start + timedelta(days=days)
+            target_date = dt.strptime(date, "%Y-%m-%d").date()
         except ValueError:
             raise HTTPException(status_code=400, detail="Невірний формат дати. Використовуйте YYYY-MM-DD")
     else:
-        # Для "сьогодні" за замовчуванням беремо останні 24 години від поточного часу
-        local_end = current_local + timedelta(hours=1)
-        local_start = current_local - timedelta(hours=24)
+        target_date = current_local.date()
+    
+    # Суворі межі календарної доби у Київському часі: від 00:00:00 до 23:59:59
+    local_start = dt.combine(target_date, dt_time.min).replace(tzinfo=kyiv_tz)
+    local_end = dt.combine(target_date + timedelta(days=days-1), dt_time.max).replace(tzinfo=kyiv_tz)
     
     utc_start = local_start.astimezone(timezone.utc)
     utc_end = local_end.astimezone(timezone.utc)
