@@ -76,59 +76,132 @@ async def rebuild_rules():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/history/{region}")
-async def get_region_history(region: str, limit: int = 50):
-    """Публічна хронологія загроз для регіону (для клієнтського додатку)."""
-    from urllib.parse import unquote
-    region = unquote(region)
+from typing import Optional
+import sqlite3
+import asyncio
 
+@router.get("/api/history/{region}")
+async def get_region_history(
+    region: str,
+    date: Optional[str] = None,
+    limit: int = 200
+):
+    """
+    Повертає хронологію загроз для області за вказаний календарний день.
+    
+    Час фільтрується суворо за Київською добою (00:00:00 — 23:59:59 Europe/Kiev).
+    
+    Дані джерел:
+      - Firestore (sirenua_history) — основне джерело. Містить і загрози, і відбої
+        (clearing_logger записує відбій як threat_level="none" прямо сюди).
+      - SQLite (threat_history) — резервне джерело (фолбек), використовується лише
+        якщо Firestore повернув 0 подій. Також містить і загрози, і відбої.
+    
+    Args:
+        region: Назва області (URL-encoded)
+        date: Дата у форматі YYYY-MM-DD. Без параметра — сьогодні за Києвом.
+        limit: Максимальна кількість подій (до 200)
+    """
+    from urllib.parse import unquote
+    from datetime import datetime as dt, timedelta, time as dt_time, timezone
+    from database.db_helpers import DB_PATH
+    region = unquote(region)
+    
+    # --- Часова зона Києва ---
+    try:
+        import zoneinfo
+        kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+    except ImportError:
+        from backports import zoneinfo
+        kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
+    
+    now_kyiv = dt.now(kyiv_tz)
+
+    # --- Визначення календарного дня ---
+    if date:
+        try:
+            target_date = dt.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Невірний формат дати. Використовуйте YYYY-MM-DD")
+    else:
+        target_date = now_kyiv.date()
+    
+    # Суворі межі календарної доби за Києвом → конвертація в UTC
+    day_start_kyiv = dt.combine(target_date, dt_time.min).replace(tzinfo=kyiv_tz)
+    day_end_kyiv = dt.combine(target_date, dt_time.max).replace(tzinfo=kyiv_tz)
+    
+    utc_start = day_start_kyiv.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    utc_end = day_end_kyiv.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    # --- Отримання подій ---
+    events = []
+    
+    # 1. Firestore (основне джерело) — sirenua_history містить і загрози, і відбої
     db = get_db()
     if db:
         try:
-            docs = (
-                db.collection("sirenua_history")
-                .where("region", "==", region)
-                .stream()
+            docs = await asyncio.to_thread(
+                lambda: db.collection('sirenua_history')
+                          .where('region', '==', region)
+                          .get()
             )
-
-            history = []
             for doc in docs:
-                data = doc.to_dict()
-                data["id"] = doc.id
-                history.append(data)
-
-            history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-            history = history[:limit]
-
-            return {"region": region, "count": len(history), "history": history}
+                d = doc.to_dict()
+                ts = d.get('timestamp', '')
+                if utc_start <= ts <= utc_end:
+                    events.append(d)
         except Exception as e:
-            print(f"⚠️ [History API] Firestore query failed ({e}), falling back to SQLite local db...")
+            print(f"⚠️ [History API] Firestore fetch failed: {e}")
 
-    # Fallback to local SQLite DB
-    try:
-        from database.db_helpers import get_sqlite_connection, DB_PATH
-        conn = get_sqlite_connection(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, timestamp, region, threat_level, threat_type, detail, confidence, is_test FROM threat_history WHERE region = ? ORDER BY timestamp DESC LIMIT ?",
-            (region, limit)
-        )
-        rows = cursor.fetchall()
-        conn.close()
+    # 2. SQLite фолбек — лише якщо Firestore порожній
+    #    threat_history також містить і загрози, і відбої (clearing_logger дублює їх сюди)
+    if not events:
+        try:
+            def _fetch_sqlite():
+                conn = sqlite3.connect(DB_PATH)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, timestamp, region, threat_level, threat_type, detail, confidence
+                    FROM threat_history
+                    WHERE region = ? AND timestamp >= ? AND timestamp <= ? AND is_test = 0
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                """, (region, utc_start, utc_end, min(limit, 200)))
+                rows = cursor.fetchall()
+                conn.close()
+                return [{
+                    "id": str(row["id"]),
+                    "timestamp": row["timestamp"],
+                    "region": row["region"],
+                    "threat_level": row["threat_level"],
+                    "threat_type": row["threat_type"],
+                    "detail": row["detail"],
+                    "confidence": row["confidence"]
+                } for row in rows]
 
-        history = [
-            {
-                "id": str(r[0]),
-                "timestamp": r[1],
-                "region": r[2],
-                "threat_level": r[3],
-                "threat_type": r[4],
-                "detail": r[5],
-                "confidence": r[6],
-                "is_test": bool(r[7])
-            }
-            for r in rows
-        ]
-        return {"region": region, "count": len(history), "history": history}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            events = await asyncio.to_thread(_fetch_sqlite)
+        except Exception as e:
+            print(f"⚠️ [History API] SQLite fallback fetch failed: {e}")
+
+    # --- Сортування та дедуплікація ---
+    events.sort(key=lambda x: str(x.get('timestamp', '')), reverse=True)
+    
+    seen = set()
+    unique = []
+    for ev in events:
+        key = f"{ev.get('timestamp')}|{ev.get('threat_level')}|{ev.get('threat_type')}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(ev)
+    
+    unique = unique[:min(limit, 200)]
+    
+    return {
+        "region": region,
+        "date": str(target_date),
+        "count": len(unique),
+        "events": unique,
+        "history": unique
+    }
+
