@@ -28,7 +28,15 @@ logger = logging.getLogger("shelter_manager")
 GOV_DATASET_URLS = os.environ.get("GOV_DATASET_URLS", "").split(",")
 GOV_DATASET_URLS = [url.strip() for url in GOV_DATASET_URLS if url.strip()]
 
-from database.db_helpers import _log_error
+import aiohttp
+
+try:
+    from firebase_admin import firestore
+    HAS_FIREBASE = True
+except ImportError:
+    HAS_FIREBASE = False
+
+logger = logging.getLogger("shelter_manager")
 
 # ──────────────────────────────────────────────────────────────
 # Data model
@@ -132,12 +140,9 @@ OVERPASS_QUERY = """
 area["name:en"="Ukraine"]["type"="boundary"]->.searchArea;
 (
   nwr["amenity"="shelter"]["shelter_type"="bomb_shelter"](area.searchArea);
-  nwr["amenity"="shelter"]["shelter_type"="civil_defence"](area.searchArea);
-  nwr["military"="bunker"](area.searchArea);
+  nwr["military"="bunker"]["bunker_type"="bomb_shelter"](area.searchArea);
+  nwr["amenity"="shelter"]["shelter_type"="public_transport"](area.searchArea);
   nwr["building"="bunker"](area.searchArea);
-  nwr["station"="subway"](area.searchArea);
-  nwr["parking"="underground"](area.searchArea);
-  nwr["defence"="civil_defence"](area.searchArea);
 );
 out center;
 """
@@ -146,27 +151,6 @@ out center;
 def _parse_osm_element(elem: dict) -> Optional[Shelter]:
     """Parse a single OSM element into a Shelter object."""
     tags = elem.get("tags", {})
-    st = str(tags.get("shelter_type", "")).lower()
-    bt = str(tags.get("bunker_type", "")).lower()
-    amenity = str(tags.get("amenity", "")).lower()
-    highway = str(tags.get("highway", "")).lower()
-    name = tags.get("name") or tags.get("name:uk") or tags.get("name:en") or ""
-    name_lower = name.lower()
-
-    # STRICT EXCLUSIONS: Reject bus stops, rain canopies, pavilions, gazebos
-    if st in ("public_transport", "weather_shelter", "gazebo", "picnic_site", "sun_shelter"):
-        return None
-    if highway in ("bus_stop", "platform") or amenity in ("bus_station", "taxi", "shelter_rain"):
-        return None
-    if tags.get("public_transport") is not None:
-        return None
-
-    excluded_words = [
-        "дощ", "зупинка", "навіс", "альтанка", "павільйон", "тент",
-        "палатка", "павіліон", "сквер", "пляж", "кафе", "ресторан", "маф"
-    ]
-    if any(w in name_lower for w in excluded_words):
-        return None
 
     # Coordinates: for ways/relations use "center", for nodes use lat/lon
     lat = elem.get("lat") or (elem.get("center", {}).get("lat"))
@@ -178,15 +162,12 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
     osm_id = elem.get("id", 0)
     shelter_id = f"osm_{osm_type}_{osm_id}"
 
+    # Name
+    name = tags.get("name") or tags.get("name:uk") or tags.get("name:en")
     if not name:
-        if tags.get("station") == "subway":
-            name = "Станція метро (Укриття)"
-        elif tags.get("parking") == "underground":
-            name = "Підземний паркінг (Укриття)"
-        elif st:
-            name = f"Укриття ({st})"
-        else:
-            name = "Укриття цивільного захисту"
+        # Build a description from tags
+        st = tags.get("shelter_type", tags.get("bunker_type", ""))
+        name = f"Укриття ({st})" if st else "Укриття"
 
     # Address
     addr_parts = []
@@ -200,14 +181,12 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
 
     # Type classification
     shelter_type = "bomb_shelter"
-    if tags.get("station") == "subway" or "метро" in name_lower:
+    if tags.get("station") == "subway" or "метро" in (name or "").lower():
         shelter_type = "metro"
-    elif tags.get("military") == "bunker" or tags.get("building") == "bunker":
+    elif tags.get("military") == "bunker":
         shelter_type = "bunker"
-    elif tags.get("parking") == "underground" or "паркінг" in name_lower:
-        shelter_type = "underground_parking"
-    elif "укриття" in name_lower or "сховище" in name_lower or st in ("bomb_shelter", "civil_defence"):
-        shelter_type = "bomb_shelter"
+    elif tags.get("shelter_type") == "public_transport":
+        shelter_type = "underground"
 
     # Capacity
     cap = tags.get("capacity")
@@ -307,6 +286,13 @@ async def _fetch_firestore_shelters() -> List[Shelter]:
         logger.error(f"⚠️ Помилка завантаження з Firestore: {e}")
         _log_error("shelter_manager", f"Помилка завантаження з Firestore: {e}", "load_from_firestore", error_type="firebase_error")
         return []
+
+def _log_error(source: str, message: str, endpoint: str = None, context: str = None, error_type: str = None):
+    try:
+        from database.analytics_db import log_error_to_db
+        log_error_to_db(source, message, endpoint, context, error_type)
+    except Exception as err:
+        logger.error(f"Internal error logger failure: {err}")
 
 
 # ──────────────────────────────────────────────────────────────

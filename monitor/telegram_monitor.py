@@ -1,37 +1,18 @@
 import asyncio
 import os
 import re
-import sqlite3
 import sys
 import time
-from typing import Optional, Tuple, Dict
+from typing import Optional
 from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
 
 from core.threat_state import ThreatState
 from core.regions import ALL_REGIONS, get_genitive_region, get_ukrainian_threat_type
-from core.threat_types import (
-    THREAT_TYPES,
-    THREAT_SHAHED,
-    THREAT_BALLISTIC,
-    THREAT_ISKANDER,
-    THREAT_CRUISE_MISSILE,
-    THREAT_KAB,
-    DEFAULT_SPEEDS_KMH,
-    THREAT_PREDICTIVE_WEIGHTS,
-    THREAT_ETA_DEFAULTS_SECONDS,
-    get_threat_delay_and_eta,
-    get_threat_speed,
-    format_eta_seconds_to_str,
-    calculate_kinematic_eta,
-    detect_threat_type_from_text,
-)
+from core.threat_state import THREAT_TYPES
 from core.topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
 from analyzer.gemini_analyzer import GeminiThreatAnalyzer
-from monitor.parsers.regex_parser import is_threat_relevant, extract_regions_from_text
-from monitor.trajectory.gap_bridging import find_shortest_path, INLAND_TRANSIT_OBLASTS, EXTRAPOLATED_INGRESS_CORRIDORS
-from monitor.scheduler.scheduler import ThreatScheduler
 from core.config import (
     TELEGRAM_API_ID,
     TELEGRAM_API_HASH,
@@ -41,105 +22,15 @@ from core.config import (
     MEDIUM_KEYWORDS,
     LOW_KEYWORDS,
     CLEAR_KEYWORDS,
-    DB_PATH
 )
-from database.db_helpers import get_sqlite_connection
 
-DEFAULT_INGRESS_CORRIDORS: Dict[str, str] = {
-    "Дніпропетровська область": "Запорізька область",
-    "Полтавська область": "Сумська область",
-    "Київська область": "Чернігівська область",
-    "м. Київ": "Київська область",
-    "Черкаська область": "Полтавська область",
-    "Кіровоградська область": "Миколаївська область",
-    "Вінницька область": "Одеська область",
-    "Хмельницька область": "Вінницька область",
-    "Житомирська область": "Чернігівська область",
-    "Рівненська область": "Житомирська область",
-    "Волинська область": "Рівненська область",
-    "Тернопільська область": "Хмельницька область",
-    "Івано-Франківська область": "Чернівецька область",
-    "Чернівецька область": "Вінницька область",
-    "Закарпатська область": "Івано-Франківська область",
-    "Львівська область": "Тернопільська область",
-}
-
-try:
-    sys.stdout.reconfigure(line_buffering=True)
-except Exception:
-    pass
-
-def clean_user_facing_threat_detail(text: str) -> str:
-    if not text:
-        return ""
-    # Strip raw markdown formatting (**text**, _text_)
-    text = re.sub(r'\*+', '', text)
-    text = re.sub(r'_+', '', text)
-    # Remove any brackets like [AI], [Telegram], [kpszsu], etc.
-    text = re.sub(r'\[[A-Za-z0-9_.\-\s]+\]', '', text)
-    # Remove Telegram handles like @monitoring_channel
-    text = re.sub(r'@[A-Za-z0-9_]+', '', text)
-    # Remove URL links
-    text = re.sub(r'https?://\S+', '', text)
-    # Replace references to AI / ШІ with system
-    text = re.sub(r'(?i)\bШІ\b', 'системи', text)
-    text = re.sub(r'(?i)\bAI\b', 'системи', text)
-    # Deduplicate repeating warning emojis
-    text = re.sub(r'([‼️🔴⚠️])\1+', r'\1', text)
-    # Clean up double spaces or leading/trailing whitespace
-    text = re.sub(r' +', ' ', text).strip()
-    return text
-
-def sanitize_region_in_flight_text(text: str) -> str:
-    if not text:
-        return ""
-    text = re.sub(r'\bв\s+([А-Яа-яЄєІіЇїҐґ\s\-]+(?:області|областях|регіоні))', r'у напрямку \1', text, flags=re.IGNORECASE)
-    for p in ["в області", "в межах області", "у межах області", "в повітряному просторі"]:
-        text = re.sub(re.escape(p), "у напрямку області", text, flags=re.IGNORECASE)
-    return text
-
-def parse_eta_seconds(eta_str: str) -> Optional[int]:
-    if not eta_str:
-        return None
-    # Remove tilde, plus, spaces
-    clean = eta_str.replace("~", "").replace("+", "").strip().lower()
-    # Handle "в області"
-    if "в області" in clean:
-        return 0
-    # Check minutes
-    if "хв" in clean:
-        val = clean.replace("хв", "").strip()
-        if "-" in val:
-            parts = val.split("-")
-            try:
-                # Use max of the range to be safe
-                return int(float(parts[1].strip()) * 60)
-            except (ValueError, IndexError):
-                pass
-        else:
-            try:
-                return int(float(val) * 60)
-            except ValueError:
-                pass
-    # Check hours
-    elif "год" in clean:
-        val = clean.replace("год", "").strip()
-        if "-" in val:
-            parts = val.split("-")
-            try:
-                return int(float(parts[1].strip()) * 3600)
-            except (ValueError, IndexError):
-                pass
-        else:
-            try:
-                return int(float(val) * 3600)
-            except ValueError:
-                pass
-    return None
+from monitor.parser import clean_user_facing_threat_detail
+from monitor.telemetry import get_time_of_day_modifier, get_default_auto_clear_delay
 
 class TelegramThreatMonitor:
     def __init__(self, threat_manager):
         self.threat_manager = threat_manager
+        self.threat_manager.on_official_alarm_ended = self._on_official_alarm_ended
         self.is_running = False
         self.use_mtproto = False
         self.client: Optional[TelegramClient] = None
@@ -184,9 +75,6 @@ class TelegramThreatMonitor:
         # Запускаємо фоновий таск самонавчання правил (кожні 6 годин)
         self._rules_learner_task = asyncio.create_task(self._rules_learner_loop())
         
-        # Запускаємо фоновий цикл загасання довіри
-        self._decay_task = asyncio.create_task(self._confidence_decay_loop())
-        
         # 1. Try to load from environment variable (StringSession) - best for Render production
         session_string = os.environ.get("TELEGRAM_SESSION_STRING")
         if session_string:
@@ -200,6 +88,8 @@ class TelegramThreatMonitor:
                     print("✅ Юзербот авторизований через StringSession! Отримуємо повідомлення МИТТЄВО.")
                     await self._join_target_channels()
                     self._setup_event_handlers()
+                    self.restore_scheduled_clears()
+                    asyncio.create_task(self._periodic_cleanup_loop())
                     return
                 else:
                     print("⚠️ StringSession надано, але сесія не авторизована.")
@@ -226,6 +116,8 @@ class TelegramThreatMonitor:
                     print("✅ Юзербот авторизований через локальний файл! Отримуємо повідомлення МИТТЄВО.")
                     await self._join_target_channels()
                     self._setup_event_handlers()
+                    self.restore_scheduled_clears()
+                    asyncio.create_task(self._periodic_cleanup_loop())
                     return
                 else:
                     print("⚠️ Файл сесії знайдено, але користувач не авторизований.")
@@ -238,6 +130,10 @@ class TelegramThreatMonitor:
         self.use_mtproto = False
         asyncio.create_task(self._scrape_loop())
         print(f"📥 Автоматичний веб-моніторинг (кожні 20 сек) активний для: {', '.join(TARGET_CHANNELS)}")
+
+        # Restore scheduled timers and start periodic cleanup loop
+        self.restore_scheduled_clears()
+        asyncio.create_task(self._periodic_cleanup_loop())
 
     def _setup_event_handlers(self):
         if not self.client:
@@ -291,61 +187,73 @@ class TelegramThreatMonitor:
                     return
                 
                 is_first_run = self.last_seen_posts[channel] is None
+                
                 if is_first_run:
-                    self._init_scrape_base_id(channel, messages)
+                    max_id = 0
+                    for msg in messages:
+                        post_id = msg.get('data-post')
+                        if post_id:
+                            try:
+                                current_id = int(post_id.split('/')[-1])
+                                if current_id > max_id:
+                                    max_id = current_id
+                                    self.last_seen_posts[channel] = post_id
+                            except:
+                                continue
+                    print(f"📡 [{channel}] Первинний запуск веб-скрейпера. Базовий ID: {max_id}")
                     return
 
-                await self._process_scraped_messages(channel, messages)
+                last_id = 0
+                if self.last_seen_posts[channel] is not None:
+                    last_id = int(self.last_seen_posts[channel].split('/')[-1])
+
+                for msg in messages:
+                    post_id = msg.get('data-post')
+                    if not post_id:
+                        continue
+                        
+                    try:
+                        current_id = int(post_id.split('/')[-1])
+                        if current_id <= last_id:
+                            continue
+                        self.last_seen_posts[channel] = post_id
+                    except:
+                        continue
+
+                    text_div = msg.select_one('.tgme_widget_message_text')
+                    if text_div:
+                        for br in text_div.find_all("br"):
+                            br.replace_with("\n")
+                        text = text_div.get_text()
+                        
+                        short_text = text.strip().replace('\n', ' ')[:80]
+                        print(f"📖 [Web: {channel}] Нове повідомлення (ID: {current_id}): \"{short_text}...\"")
+                        await self._process_message(text, channel)
         except Exception as e:
             self.log_error("telegram", f"Помилка скрейпера для каналу {channel}: {e}", endpoint="_scrape_channel")
 
-    def _init_scrape_base_id(self, channel: str, messages):
-        """Finds and sets the initial maximum message ID on first run."""
-        max_id = 0
-        for msg in messages:
-            post_id = msg.get('data-post')
-            if post_id:
-                try:
-                    current_id = int(post_id.split('/')[-1])
-                    if current_id > max_id:
-                        max_id = current_id
-                        self.last_seen_posts[channel] = post_id
-                except:
-                    continue
-        print(f"📡 [{channel}] Первинний запуск веб-скрейпера. Базовий ID: {max_id}")
-
-    async def _process_scraped_messages(self, channel: str, messages):
-        """Processes new scraped messages that have IDs greater than last seen."""
-        last_id = 0
-        if self.last_seen_posts[channel] is not None:
-            last_id = int(self.last_seen_posts[channel].split('/')[-1])
-
-        for msg in messages:
-            post_id = msg.get('data-post')
-            if not post_id:
-                continue
-                
-            try:
-                current_id = int(post_id.split('/')[-1])
-                if current_id <= last_id:
-                    continue
-                self.last_seen_posts[channel] = post_id
-            except:
-                continue
-
-            text_div = msg.select_one('.tgme_widget_message_text')
-            if text_div:
-                for br in text_div.find_all("br"):
-                    br.replace_with("\n")
-                text = text_div.get_text()
-                
-                short_text = text.strip().replace('\n', ' ')[:80]
-                print(f"📖 [Web: {channel}] Нове повідомлення (ID: {current_id}): \"{short_text}...\"")
-                await self._process_message(text, channel)
-
     def _find_path(self, start_region: str, end_region: str) -> list[str]:
         """BFS algorithm to find the shortest path between two regions."""
-        return find_shortest_path(start_region, end_region)
+        if start_region not in UKRAINE_TOPOLOGY or end_region not in UKRAINE_TOPOLOGY:
+            return []
+        
+        queue = [[start_region]]
+        visited = set([start_region])
+        
+        while queue:
+            path = queue.pop(0)
+            node = path[-1]
+            
+            if node == end_region:
+                return path
+                
+            for adjacent in UKRAINE_TOPOLOGY.get(node, []):
+                if adjacent not in visited:
+                    visited.add(adjacent)
+                    new_path = list(path)
+                    new_path.append(adjacent)
+                    queue.append(new_path)
+        return []
 
     # --- Pre-filter: skip obviously non-threat messages before sending to Gemini ---
     _THREAT_KEYWORDS = {
@@ -431,248 +339,6 @@ class TelegramThreatMonitor:
 
 
 
-    def _handle_gemini_clearing(self, item: dict, confidence: Optional[int], threat_type: Optional[str], is_test: bool):
-        """Helper to process clearing actions from Gemini analysis."""
-        clearing_telemetry = item.get("clearing_telemetry", {})
-        targets = item.get("target_regions", [])
-        source_channel = item.get("source_channel", "AI")
-        text = item.get("text", "")
-        
-        if not targets:
-            # Global clearing — all regions
-            self.threat_manager.clear_all()
-            # Log clearing for each previously active region
-            for r_name in self.threat_manager.threats.keys():
-                from database.analytics_db import log_clearing_to_db
-                log_clearing_to_db(
-                    region=r_name,
-                    clearing_telemetry=clearing_telemetry,
-                    source_channel=source_channel,
-                    message_text=text,
-                    clearing_confidence=confidence,
-                    was_predictive=False
-                )
-            res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
-            print(f"🟢 [Gemini] Зняття загрози для ВСІХ областей (тип: {res_type})")
-        else:
-            for tgt in targets:
-                if isinstance(tgt, dict):
-                    region = tgt.get("name")
-                    was_pred = tgt.get("is_predictive", False)
-                else:
-                    region = tgt
-                    was_pred = False
-                
-                if not region:
-                    continue
-                
-                # Log clearing BEFORE clearing the threat (to capture original state)
-                from database.analytics_db import log_clearing_to_db
-                log_clearing_to_db(
-                    region=region,
-                    clearing_telemetry=clearing_telemetry,
-                    source_channel=source_channel,
-                    message_text=text,
-                    clearing_confidence=confidence,
-                    was_predictive=was_pred
-                )
-                
-                clearing_gid = clearing_telemetry.get("linked_group_id") if clearing_telemetry else None
-                self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type, group_id=clearing_gid)
-                self._cancel_clear_tasks(region, threat_type=threat_type, group_id=clearing_gid)
-                
-                # Enhanced clearing log
-                res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
-                pred_str = ""
-                if was_pred and clearing_telemetry:
-                    pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "unknown")
-                    pred_str = f" | предикція: {pred_hint}"
-                ad_eff = ""
-                if clearing_telemetry and clearing_telemetry.get("air_defense_effectiveness", "unknown") != "unknown":
-                    ad_eff = f" | ППО: {clearing_telemetry['air_defense_effectiveness']}"
-                print(f"🟢 [Gemini] Зняття загрози: {region} (тип: {res_type}{pred_str}{ad_eff})")
-
-    def _get_threat_type_delay_and_eta(self, threat_type: Optional[str], is_regex: bool = False) -> tuple[int, str]:
-        """Returns the default auto-clear delay and default ETA string for a given threat type."""
-        return get_threat_delay_and_eta(threat_type, is_regex)
-
-    def _calculate_auto_clear_delay(self, item: dict, telemetry: Optional[dict], threat_type: Optional[str]) -> tuple[int, Optional[str], Optional[int]]:
-        """Calculates dynamic/default auto-clear delay in seconds, ETA string, and ETA seconds."""
-        gemini_eta = item.get("eta", "")
-        delay, default_eta = self._get_threat_type_delay_and_eta(threat_type)
-        eta_str = gemini_eta if gemini_eta else default_eta
-        eta_seconds = None
-        
-        telemetry_delay = None
-        if telemetry and isinstance(telemetry, dict):
-            t_speed = telemetry.get("speed_kmh")
-            t_distance = telemetry.get("distance_to_target_km")
-            if t_speed and t_distance and t_speed > 0:
-                eta_seconds = int((t_distance / t_speed) * 3600)
-                
-                if not gemini_eta:
-                    buffer_minutes = 5
-                    if eta_seconds > 1800:
-                        buffer_minutes = 10
-                    if threat_type == "shahed":
-                        buffer_minutes = 20
-                    eta_minutes = int(eta_seconds / 60) + buffer_minutes
-                    eta_str = f"~{eta_minutes} хв"
-                
-                telemetry_delay = int(eta_seconds * 1.5)
-                telemetry_delay = max(300, min(telemetry_delay, 14400))  # clamp 5min-4hours
-        
-        if telemetry_delay:
-            delay = telemetry_delay
-
-        if eta_seconds is None and eta_str:
-            eta_seconds = parse_eta_seconds(eta_str)
-                
-        return delay, eta_str or None, eta_seconds
-
-    def _format_telemetry_info(self, telemetry: dict) -> list[str]:
-        """Formats the telemetry dict to Ukrainian user-friendly text lines."""
-        telemetry_info = []
-        if not telemetry or not isinstance(telemetry, dict):
-            return telemetry_info
-            
-        distance = telemetry.get("distance_to_target_km")
-        if distance:
-            telemetry_info.append(f"Відстань до цілі: ~{distance:.0f} км")
-            
-        target_count = telemetry.get("target_count")
-        if target_count:
-            telemetry_info.append(f"Кількість цілей: {target_count}")
-            
-        launch_origin = telemetry.get("launch_origin")
-        if launch_origin and launch_origin.lower() != "unknown":
-            telemetry_info.append(f"Напрямок запуску: {launch_origin}")
-                
-        weapon_subtype = telemetry.get("weapon_subtype")
-        if weapon_subtype and weapon_subtype.lower() != "unknown":
-            telemetry_info.append(f"Тип: {weapon_subtype}")
-                
-        speed = telemetry.get("speed_kmh")
-        if speed:
-            telemetry_info.append(f"Швидкість руху: ~{speed} км/год")
-                
-        alt = telemetry.get("altitude_category")
-        if alt and alt.lower() != "unknown":
-            alt_mapping = {"low": "мала", "medium": "середня", "high": "велика"}
-            alt_ukr = alt_mapping.get(alt.lower(), alt)
-            telemetry_info.append(f"Висота польоту: {alt_ukr}")
-            
-        return telemetry_info
-
-    def _apply_single_gemini_threat(self, item: dict, adjusted_level: str, threat_type: Optional[str], confidence: Optional[int], telemetry: Optional[dict], rules_applied: list, is_test: bool):
-        """Processes and sets a single threat event item."""
-        target_regions = item.get("target_regions", [])
-        group_id = telemetry.get("group_id") if telemetry else None
-        text = item.get("text", "")
-        
-        for tgt in target_regions:
-            if isinstance(tgt, dict):
-                region = tgt.get("name")
-                is_pred = tgt.get("is_predictive", False)
-            else:
-                region = tgt
-                is_pred = False
-            
-            if not region or region not in ALL_REGIONS or region in {"АР Крим", "Автономна Республіка Крим", "м. Севастополь", "Севастополь"}:
-                continue
-            
-            # If distance to target > 15 km, target is approaching/predictive UNLESS text indicates active flight in region
-            dist_km = telemetry.get("distance_to_target_km") if telemetry else None
-            text_lower = text.lower()
-            is_active_flight = any(k in text_lower for k in ["через область", "переліт", "в повітряному просторі", "у повітряному просторі", "в області", "в межах області", "у межах області"])
-            
-            if is_active_flight:
-                is_pred = False
-            elif dist_km and dist_km > 15:
-                is_pred = True
-
-            region_confidence = confidence
-            if is_pred and region_confidence is not None:
-                region_confidence = max(0, region_confidence - 20)
-            
-            delay, eta_str, eta_seconds = self._calculate_auto_clear_delay(item, telemetry, threat_type)
-            
-            detail = clean_user_facing_threat_detail(text)
-            if is_pred:
-                detail = sanitize_region_in_flight_text(detail)
-
-            telemetry_info = self._format_telemetry_info(telemetry)
-            if telemetry_info:
-                detail += "\n" + "\n".join(telemetry_info)
-            
-            if is_pred:
-                detail += f"\n⚠️ Ціль може прямувати через область."
-                if eta_str:
-                    detail += f" Очікуваний час: {eta_str}"
-            elif eta_str:
-                detail += f"\n(Очікуваний час: {eta_str})"
-
-            # Cross-Region Transit Handshake check
-            launch_origin = telemetry.get("launch_origin") if telemetry else None
-            if launch_origin:
-                for reg in ALL_REGIONS:
-                    if reg in launch_origin or launch_origin in reg:
-                        self._handle_cross_region_transit(reg, region, threat_type, group_id)
-                        break
-
-            # Bridge trajectory gaps from source_regions if provided (or extrapolate ingress for inland regions)
-            source_regions = item.get("source_regions", [])
-            if not source_regions and region in DEFAULT_INGRESS_CORRIDORS:
-                inferred_ingress = DEFAULT_INGRESS_CORRIDORS[region]
-                source_regions = [inferred_ingress]
-                print(f"✈️ [Extrapolated Ingress Corridor] Автоматично відновлено вхідний коридор для внутрішньої області {region} ➔ джерело: {inferred_ingress}")
-
-            for src in source_regions:
-                if isinstance(src, str) and src in ALL_REGIONS and src != region:
-                    self._bridge_trajectory_gaps(src, region, threat_type, group_id, confidence, is_test, rules_applied)
-
-            self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
-                                           confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
-                                           is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
-                                           eta_seconds=eta_seconds)
-            self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
-            
-            # Schedule ETA-based alarm escalation for all non-test threats (including predictive)
-            if not is_test:
-                eta_sec = eta_seconds
-                if eta_sec is None:
-                    eta_sec = THREAT_ETA_DEFAULTS_SECONDS.get(threat_type, 1800)
-                if eta_sec and eta_sec > 0:
-                    self._schedule_eta_escalation(region, eta_sec, adjusted_level, threat_type, group_id)
-            
-            if is_pred:
-                grace_period = 300
-                eta_sec = eta_seconds
-                if eta_sec is None:
-                    eta_sec = THREAT_ETA_DEFAULTS_SECONDS.get(threat_type, 1800)
-                
-                reeval_delay = eta_sec + grace_period
-                self._schedule_predictive_reevaluation(region, reeval_delay, threat_type, group_id)
-            else:
-                self._cancel_reevaluation_task(region, threat_type, group_id)
-            
-            conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
-            telem_str = ""
-            if telemetry and isinstance(telemetry, dict):
-                parts = []
-                if telemetry.get("group_id"):
-                    parts.append(f"група: {telemetry['group_id']}")
-                if telemetry.get("speed_kmh"):
-                    parts.append(f"швидкість: {telemetry['speed_kmh']} км/год")
-                if telemetry.get("engagement_status") and telemetry["engagement_status"] != "unknown":
-                    parts.append(f"статус: {telemetry['engagement_status']}")
-                if telemetry.get("target_count"):
-                    parts.append(f"цілей: {telemetry['target_count']}")
-                if parts:
-                    telem_str = f" | {', '.join(parts)}"
-            
-            print(f"🔴 [Gemini] Встановлено загрозу ({adjusted_level}) для: {region}{conf_str}{telem_str}")
-
     async def _apply_gemini_analysis(self, results, is_test: bool = False):
         """Applies Gemini AI analysis results with confidence-based filtering, level adjustment, and telemetry enrichment."""
         for item in results:
@@ -684,139 +350,290 @@ class TelegramThreatMonitor:
             if threat_type:
                 threat_type = threat_type.lower().strip()
             is_clear = item.get("is_clear", False)
+            source_channel = item.get("source_channel", "AI")
             text = item.get("text", "")
             confidence = item.get("confidence_score")
-            telemetry = item.get("telemetry")
+            telemetry = item.get("telemetry")  # Extract telemetry block
+            group_id = None
+            if telemetry and isinstance(telemetry, dict):
+                group_id = telemetry.get("group_id")
             rules_applied = item.get("rules_applied", [])
             
+            # Validate confidence as int
             if confidence is not None:
                 try:
                     confidence = int(confidence)
                 except (ValueError, TypeError):
                     confidence = None
             
+            # Обробка відбою з clearing_telemetry
             if is_clear:
-                self._handle_gemini_clearing(item, confidence, threat_type, is_test)
+                clearing_telemetry = item.get("clearing_telemetry", {})
+                targets = item.get("target_regions", [])
+                source_channel = item.get("source_channel", "AI")
+                text = item.get("text", "")
+                
+                if not targets:
+                    # Global clearing — all regions
+                    self.threat_manager.clear_all()
+                    # Log clearing for each previously active region
+                    for r_name, r_state in self.threat_manager.threats.items():
+                        if r_state.level != "none" or True:  # Log for all since we just cleared
+                            from database.analytics_db import log_clearing_to_db
+                            log_clearing_to_db(
+                                region=r_name,
+                                clearing_telemetry=clearing_telemetry,
+                                source_channel=source_channel,
+                                message_text=text,
+                                clearing_confidence=confidence,
+                                was_predictive=False
+                            )
+                    res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
+                    print(f"🟢 [Gemini] Зняття загрози для ВСІХ областей (тип: {res_type})")
+                else:
+                    for tgt in targets:
+                        if isinstance(tgt, dict):
+                            region = tgt.get("name")
+                            was_pred = tgt.get("is_predictive", False)
+                        else:
+                            region = tgt
+                            was_pred = False
+                        
+                        if not region:
+                            continue
+                        
+                        # Log clearing BEFORE clearing the threat (to capture original state)
+                        from database.analytics_db import log_clearing_to_db
+                        log_clearing_to_db(
+                            region=region,
+                            clearing_telemetry=clearing_telemetry,
+                            source_channel=source_channel,
+                            message_text=text,
+                            clearing_confidence=confidence,
+                            was_predictive=was_pred
+                        )
+                        
+                        clearing_gid = clearing_telemetry.get("linked_group_id") if clearing_telemetry else None
+                        self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type, group_id=clearing_gid)
+                        self._cancel_clear_tasks(region, threat_type=threat_type, group_id=clearing_gid)
+                        
+                        # Enhanced clearing log
+                        res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
+                        pred_str = ""
+                        if was_pred and clearing_telemetry:
+                            pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "unknown")
+                            pred_str = f" | предикція: {pred_hint}"
+                        ad_eff = ""
+                        if clearing_telemetry and clearing_telemetry.get("air_defense_effectiveness", "unknown") != "unknown":
+                            ad_eff = f" | ППО: {clearing_telemetry['air_defense_effectiveness']}"
+                        print(f"🟢 [Gemini] Зняття загрози: {region} (тип: {res_type}{pred_str}{ad_eff})")
                 continue
 
             if level == "none":
                 continue
 
+            # Фільтрація за порогом довіри ШІ (мінімум 40%)
             if confidence is not None and confidence < 40:
                 print(f"⚠️ [Gemini] Загроза відхилена (довіра {confidence}% < 40%): {text[:60]}...")
                 continue
                 
+            # Коригування рівня загрози на основі довіри
             adjusted_level = level
             if confidence is not None:
                 if confidence >= 85:
+                    # Висока довіра — зберігаємо оригінальний рівень
                     adjusted_level = level
                 elif confidence >= 60:
+                    # Середня довіра — знижуємо на один рівень
                     level_downgrade = {"critical": "high", "high": "medium", "medium": "low", "low": "low"}
                     adjusted_level = level_downgrade.get(level, level)
                 else:
+                    # Низька довіра (40-59%) — встановлюємо low
                     adjusted_level = "low"
                     
                 if adjusted_level != level:
                     print(f"📥 [Gemini] Рівень знижено {level} → {adjusted_level} (довіра {confidence}%)")
 
-            self._apply_single_gemini_threat(item, adjusted_level, threat_type, confidence, telemetry, rules_applied, is_test)
+            target_regions = item.get("target_regions", [])
+            for tgt in target_regions:
+                if isinstance(tgt, dict):
+                    region = tgt.get("name")
+                    is_pred = tgt.get("is_predictive", False)
+                else:
+                    region = tgt
+                    is_pred = False
+                
+                if not region or region not in ALL_REGIONS:
+                    continue
+                
+                # Знижуємо довіру для предиктивних регіонів
+                region_confidence = confidence
+                if is_pred and region_confidence is not None:
+                    region_confidence = max(0, region_confidence - 20)
+                
+                # ETA: prefer Gemini's AI-provided ETA, fallback to heuristic
+                gemini_eta = item.get("eta", "")
+                
+                # --- Dynamic auto-clear delay based on telemetry ---
+                delay = 3600  # default 1 hour
+                eta_str = gemini_eta if gemini_eta else ""
+                
+                # Try to calculate delay from telemetry speed + distance
+                telemetry_delay = None
+                eta_seconds = None
+                if telemetry and isinstance(telemetry, dict):
+                    t_speed = telemetry.get("speed_kmh")
+                    t_distance = telemetry.get("distance_to_target_km")
+                    if t_speed and t_distance and t_speed > 0:
+                        # Calculate ETA in seconds: distance/speed * 3600
+                        eta_seconds = int((t_distance / t_speed) * 3600)
+                        
+                        # Generate dynamic ETA string if not provided by Gemini
+                        if not eta_str:
+                            buffer_minutes = 5
+                            if eta_seconds > 1800:
+                                buffer_minutes = 10
+                            if threat_type == "shahed":
+                                buffer_minutes = 20
+                            eta_minutes = int(eta_seconds / 60) + buffer_minutes
+                            eta_str = f"~{eta_minutes} хв"
+                        
+                        # Calculate delay with 50% buffer
+                        telemetry_delay = int(eta_seconds * 1.5)
+                        telemetry_delay = max(300, min(telemetry_delay, 14400))  # clamp 5min-4hours
+                
+                if telemetry_delay:
+                    delay = telemetry_delay
+                elif threat_type == "mig31k":
+                    delay = 1800  # 30 хв
+                    if not eta_str:
+                        eta_str = "~40 хв"
+                elif threat_type == "ballistic":
+                    delay = 600   # 10 хв
+                    if not eta_str:
+                        eta_str = "~15 хв"
+                elif threat_type == "kab":
+                    delay = 1200  # 20 хв
+                    if not eta_str:
+                        eta_str = "~25 хв"
+                elif threat_type == "shahed":
+                    delay = 10800  # 3 години
+                    if not eta_str:
+                        eta_str = "~200 хв"
+                elif threat_type == "cruise_missile":
+                    delay = 2700  # 45 хв
+                    if not eta_str:
+                        eta_str = "~55 хв"
+                elif threat_type == "tu95":
+                    delay = 5400  # 1.5 год
+                    if not eta_str:
+                        eta_str = "~110 хв"
+                elif threat_type == "iskander":
+                    delay = 1200  # 20 хв
+                    if not eta_str:
+                        eta_str = "~25 хв"
+                elif threat_type == "artillery":
+                    delay = 1800  # 30 хв
+                    if not eta_str:
+                        eta_str = "~10 хв"
+                    
+                detail = clean_user_facing_threat_detail(text)
+                
+                # Append telemetry details in a readable format if available
+                telemetry_info = []
+                if telemetry and isinstance(telemetry, dict):
+                    # 1. Distance
+                    distance = telemetry.get("distance_to_target_km")
+                    if distance:
+                        telemetry_info.append(f"Відстань до цілі: ~{distance:.0f} км")
+                    
+                    # 2. Target Count (Кількість цілей)
+                    target_count = telemetry.get("target_count")
+                    if target_count:
+                        telemetry_info.append(f"Кількість цілей: {target_count}")
+                    
+                    # 3. Launch Origin (Район запуску)
+                    launch_origin = telemetry.get("launch_origin")
+                    if launch_origin and launch_origin.lower() != "unknown":
+                        telemetry_info.append(f"Напрямок запуску: {launch_origin}")
+                        
+                    # 4. Weapon Subtype (Конкретна модель)
+                    weapon_subtype = telemetry.get("weapon_subtype")
+                    if weapon_subtype and weapon_subtype.lower() != "unknown":
+                        telemetry_info.append(f"Тип: {weapon_subtype}")
+                        
+                    # 5. Speed (Швидкість)
+                    speed = telemetry.get("speed_kmh")
+                    if speed:
+                        telemetry_info.append(f"Швидкість руху: ~{speed} км/год")
+                        
+                    # 6. Altitude (Висота)
+                    alt = telemetry.get("altitude_category")
+                    if alt and alt.lower() != "unknown":
+                        alt_mapping = {"low": "мала", "medium": "середня", "high": "велика"}
+                        alt_ukr = alt_mapping.get(alt.lower(), alt)
+                        telemetry_info.append(f"Висота польоту: {alt_ukr}")
+                
+                if telemetry_info:
+                    detail += "\n" + "\n".join(telemetry_info)
+                
+                if is_pred:
+                    detail += f"\n⚠️ Ціль може прямувати через область."
+                    if eta_str:
+                        detail += f" Очікуваний час: {eta_str}"
+                elif eta_str:
+                    detail += f"\n(Очікуваний час: {eta_str})"
 
+                self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
+                                               confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
+                                               is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
+                                               eta_seconds=eta_seconds)
+                self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
+                
+                if is_pred:
+                    # Determine reevaluation delay (ETA in seconds + grace period)
+                    grace_period = 300  # 5 minutes
+                    eta_sec = eta_seconds
+                    if eta_sec is None:
+                        # Fallback default ETA times in seconds
+                        eta_defaults = {
+                            "mig31k": 1200,      # 20 mins
+                            "ballistic": 180,    # 3 mins
+                            "kab": 600,          # 10 mins
+                            "shahed": 5400,      # 1.5 hours
+                            "cruise_missile": 1200, # 20 mins
+                            "tu95": 3600,        # 1 hour
+                            "iskander": 180,     # 3 mins
+                            "artillery": 120,    # 2 mins
+                        }
+                        eta_sec = eta_defaults.get(threat_type, 1800)
+                    
+                    reeval_delay = eta_sec + grace_period
+                    self._schedule_predictive_reevaluation(region, reeval_delay, threat_type, group_id)
+                else:
+                    self._cancel_reevaluation_task(region, threat_type, group_id)
+                
+                # Enhanced logging with telemetry info
+                conf_str = f", довіра: {region_confidence}%" if region_confidence is not None else ""
+                telem_str = ""
+                if telemetry and isinstance(telemetry, dict):
+                    parts = []
+                    if telemetry.get("group_id"):
+                        parts.append(f"група: {telemetry['group_id']}")
+                    if telemetry.get("speed_kmh"):
+                        parts.append(f"швидкість: {telemetry['speed_kmh']} км/год")
+                    if telemetry.get("engagement_status") and telemetry["engagement_status"] != "unknown":
+                        parts.append(f"статус: {telemetry['engagement_status']}")
+                    if telemetry.get("target_count"):
+                        parts.append(f"цілей: {telemetry['target_count']}")
+                    if parts:
+                        telem_str = f" | {', '.join(parts)}"
+                
+                print(f"🔴 [Gemini] Встановлено загрозу ({adjusted_level}) для: {region}{conf_str}{telem_str}")
+
+        # === PREDICTIVE PROPAGATION ENGINE ===
+        # After all Gemini-set threats, propagate predictions to adjacent regions
         await self._propagate_predictive_threats()
-
-    def _bridge_trajectory_gaps(self, source_region: str, target_region: str, threat_type: Optional[str], group_id: Optional[str] = None, confidence: Optional[int] = None, is_test: bool = False, rules_applied: list = None):
-        """
-        Intelligent Trajectory Gap Stitching Engine:
-        Connects flight path vectors when a threat disappears/misses detection in intermediate regions
-        and reappears in a downstream target region. Automatically bridges intermediate gap regions
-        along the shortest topological path with a predictive transit corridor state.
-        """
-        if not source_region or not target_region or source_region == target_region:
-            return
-
-        path = self._find_path(source_region, target_region)
-        if not path or len(path) < 2:
-            return
-
-        # Regions along the flight path vector to bridge (including source_region and intermediate gap regions)
-        gap_regions = [r for r in path if r != target_region]
-        print(f"🌉 [Trajectory Stitching] Відновлення коридору між {source_region} ➔ {target_region}. Області коридору: {gap_regions}")
-
-        for inter_reg in gap_regions:
-            current_state = self.threat_manager.threats.get(inter_reg)
-            # Only fill gap if current region has no active threat
-            if not current_state or current_state.level == "none":
-                src_gen = get_genitive_region(source_region)
-                tgt_gen = get_genitive_region(target_region)
-                ukr_type = get_ukrainian_threat_type(threat_type)
-
-                origin_note = ""
-                INLAND_TRANSIT_OBLASTS = (
-                    "Чернігівська область", "Сумська область", "Житомирська область",
-                    "Черкаська область", "Полтавська область", "Кіровоградська область",
-                    "Вінницька область", "Київська область", "Хмельницька область"
-                )
-                if inter_reg in INLAND_TRANSIT_OBLASTS:
-                    origin_note = " (вхід з напрямку державного кордону/транзит)"
-
-                gap_detail = (
-                    f"🌉 Проміжний коридор транзиту ({ukr_type}): напрямок {src_gen} ➔ {tgt_gen}{origin_note}.\n"
-                    f"⚠️ Траєкторію відновлено після тимчасового розриву засікання рад/каналами."
-                )
-                gap_conf = max(60, (confidence or 75) - 15)
-
-                self.threat_manager.set_threat(
-                    region=inter_reg,
-                    level="medium",
-                    threat_type=threat_type,
-                    detail=gap_detail,
-                    confidence=gap_conf,
-                    eta="коридор",
-                    is_predictive=True,
-                    is_test=is_test,
-                    telemetry={
-                        "is_detection_gap": True,
-                        "is_transit_corridor": True,
-                        "gap_source_region": source_region,
-                        "gap_target_region": target_region,
-                        "group_id": group_id
-                    },
-                    rules_applied=rules_applied
-                )
-                # Auto clear for gap regions after 45 mins
-                self._schedule_auto_clear(inter_reg, 2700, threat_type=threat_type, group_id=group_id)
-
-    def _handle_cross_region_transit(self, source_region: str, target_region: str, threat_type: Optional[str], group_id: Optional[str]):
-        """
-        Обробляє транзит загрози з одного регіону в інший (Cross-Region Transit Handshake).
-        Гарантує, що ціль, яка пролітає через простір території, виставляє активну загрозу (is_predictive = False).
-        """
-        if source_region == target_region:
-            return
-
-        # Bridge intermediate topological gaps along trajectory path if non-adjacent
-        self._bridge_trajectory_gaps(source_region, target_region, threat_type, group_id)
-
-        print(f"✈️  [Transit Handshake] Переліт загрози ({threat_type or 'ціль'}): {source_region} ➔ {target_region}")
-
-        src_state = self.threat_manager.threats.get(source_region)
-        if src_state and src_state.level != "none":
-            source_genitive = get_genitive_region(source_region)
-            threat_type_ukr = get_ukrainian_threat_type(threat_type)
-            detail = f"🔴 Переліт цілі з {source_genitive} ({threat_type_ukr}) у повітряний простір области!"
-
-            self.threat_manager.set_threat(
-                region=target_region,
-                level=src_state.level if src_state.level != "none" else "high",
-                threat_type=threat_type,
-                detail=detail,
-                confidence=max(75, src_state.confidence or 80),
-                eta="в області",
-                is_predictive=False,
-                telemetry={"group_id": group_id} if group_id else None
-            )
-            tgt_state = self.threat_manager.threats.get(target_region)
-            if tgt_state:
-                tgt_state.is_active = True
 
 
     # --- Predictive Propagation Engine ---
@@ -901,7 +718,13 @@ class TelegramThreatMonitor:
             if telemetry and telemetry.get("speed_kmh"):
                 speed = telemetry["speed_kmh"]
             else:
-                speed = get_threat_speed(threat_type)
+                # Default speeds by threat type
+                speed_defaults = {
+                    "shahed": 165, "cruise_missile": 850, "ballistic": 4000,
+                    "mig31k": 2500, "kab": 300, "tu95": 800, "iskander": 4500,
+                    "artillery": 1200,
+                }
+                speed = speed_defaults.get(threat_type, 300)
                 
             # Pathfinding to final target cities
             path_boost_regions = set()
@@ -921,167 +744,186 @@ class TelegramThreatMonitor:
                 continue
             
             for adj_region in adjacent:
-                pred_dict = self._evaluate_prediction_candidate(
-                    source_region, state, adj_region, telemetry, bearing, speed, path_boost_regions
-                )
-                if not pred_dict:
+                # Skip if already has active (non-predictive) threat
+                adj_state = self.threat_manager.threats.get(adj_region)
+                if not adj_state:
+                    continue
+                if adj_state.level != "none" and not adj_state.is_predictive:
+                    continue  # Already red — skip
+                
+                # Calculate direction alignment score (0.0 - 1.0)
+                direction_score = 0.5  # Neutral if no bearing
+                if bearing is not None and source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
+                    src_coords = self.REGION_CENTROIDS[source_region]
+                    adj_coords = self.REGION_CENTROIDS[adj_region]
+                    
+                    # Calculate bearing from source to adjacent
+                    dlat = adj_coords[0] - src_coords[0]
+                    dlon = adj_coords[1] - src_coords[1]
+                    adj_bearing = math.degrees(math.atan2(dlon, dlat)) % 360
+                    
+                    # Angular difference (0-180)
+                    diff = abs(bearing - adj_bearing)
+                    if diff > 180:
+                        diff = 360 - diff
+                    
+                    # Convert to score: 0° diff = 1.0, 90° diff = 0.3, 180° diff = 0.0
+                    direction_score = max(0.0, 1.0 - (diff / 180.0))
+                    # Boost forward-aligned regions
+                    if diff < 45:
+                        direction_score = min(1.0, direction_score * 1.3)
+                
+                # Skip if direction is completely wrong (>120° off course)
+                if bearing is not None and direction_score < 0.2:
                     continue
                 
+                # Calculate distance and ETA
+                eta_seconds = None
+                distance_km = None
+                if source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
+                    src = self.REGION_CENTROIDS[source_region]
+                    
+                    # If target region has a specific final target city, use its exact coordinates!
+                    target_coords = None
+                    if telemetry and telemetry.get("final_target_cities"):
+                        for city in telemetry["final_target_cities"]:
+                            if self._city_to_region(city) == adj_region:
+                                target_coords = self._get_city_coordinates(city, telemetry)
+                                if target_coords:
+                                    break
+                    
+                    adj = target_coords if target_coords else self.REGION_CENTROIDS[adj_region]
+                    
+                    # Approximate distance in km (Haversine simplified)
+                    dlat = abs(src[0] - adj[0]) * 111
+                    dlon = abs(src[1] - adj[1]) * 111 * math.cos(math.radians((src[0] + adj[0]) / 2))
+                    distance_km = math.sqrt(dlat**2 + dlon**2)
+                    if speed and speed > 0:
+                        eta_seconds = int((distance_km / speed) * 3600)
+                
+                # Check historical patterns (known SHAHED routes)
+                route_boost = 0.0
+                
+                # Apply massive boost if region is on the path to a known final target
+                if adj_region in path_boost_regions:
+                    route_boost = 0.8
+                else:
+                    for route_name, route_regions in SHAHED_ROUTES.items():
+                        if source_region in route_regions and adj_region in route_regions:
+                            src_idx = route_regions.index(source_region)
+                            adj_idx = route_regions.index(adj_region)
+                            if adj_idx > src_idx:  # Forward in the route
+                                route_boost = 0.25
+                                break
+                
+                # Check DB for historical patterns
+                db_boost = self._get_historical_route_score(source_region, adj_region)
+                
+                # Calculate final prediction score
+                base_score = direction_score * 0.5 + 0.2  # 20-70% base from direction
+                
+                # Threat type weight (slow = more predictable trajectory)
+                type_weight = {"shahed": 0.15, "cruise_missile": 0.08, "mig31k": 0.05, "ballistic": 0.0, "kab": 0.02, "tu95": 0.10, "iskander": 0.0, "artillery": 0.01}
+                base_score += type_weight.get(threat_type, 0.05)
+                
+                # Apply boosts
+                total_score = min(1.0, base_score + route_boost + db_boost)
+                
+                # Threshold: only predict if score >= 0.4
+                if total_score < 0.4:
+                    continue
+                
+                # --- DIFFERENTIATED CONFIDENCE CALCULATION ---
+                # Non-linear base confidence from total_score
+                if total_score >= 0.85:
+                    base_conf = 75
+                elif total_score >= 0.70:
+                    base_conf = 65
+                elif total_score >= 0.55:
+                    base_conf = 55
+                elif total_score >= 0.45:
+                    base_conf = 45
+                else:
+                    base_conf = 35
+                
+                # Distance modifier (closer = higher confidence)
+                dist_mod = 0
+                if distance_km is not None:
+                    if distance_km < 80:
+                        dist_mod = 8
+                    elif distance_km < 150:
+                        dist_mod = 4
+                    elif distance_km < 250:
+                        dist_mod = 0
+                    elif distance_km < 400:
+                        dist_mod = -4
+                    else:
+                        dist_mod = -8
+                
+                # Route history modifier (known route = higher confidence)
+                route_mod = int(route_boost * 12)  # 0-9
+                
+                # DB pattern modifier
+                db_mod = int(db_boost * 8)  # 0-1
+                
+                # Time-of-day modifier
+                time_mod = self._get_time_of_day_modifier(threat_type)
+                
+                # Learned rules correction
+                rules_correction = 0
+                try:
+                    corrections = self.analyzer.load_confidence_corrections()
+                    if adj_region in corrections:
+                        rules_correction = corrections[adj_region].get(threat_type, 0)
+                except Exception:
+                    pass
+                
+                # Final confidence with all modifiers
+                raw_confidence = base_conf + dist_mod + route_mod + db_mod + time_mod + rules_correction
+                confidence = max(25, min(80, raw_confidence))
+                
+                # Ensure uniqueness: add small pseudo-random offset based on region name hash
+                region_hash_offset = (hash(adj_region) % 5) - 2  # -2 to +2
+                confidence = max(25, min(80, confidence + region_hash_offset))
+                
+                # Generate ETA string
+                eta_str = ""
+                if eta_seconds:
+                    if eta_seconds < 300:
+                        eta_str = "~2-5 хв"
+                    elif eta_seconds < 900:
+                        eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 10} хв"
+                    elif eta_seconds < 3600:
+                        eta_str = f"~{eta_seconds // 60}-{eta_seconds // 60 + 5} хв"
+                    else:
+                        h = eta_seconds // 3600
+                        m = (eta_seconds % 3600) // 60
+                        if m > 0:
+                            eta_str = f"~{h} год {m}-{m + 10} хв"
+                        else:
+                            eta_str = f"~{h} год"
+                
                 # Keep the best prediction for each region
-                if adj_region not in predictions or predictions[adj_region]["score"] < pred_dict["score"]:
-                    predictions[adj_region] = pred_dict
+                if adj_region not in predictions or predictions[adj_region]["score"] < total_score:
+                    predictions[adj_region] = {
+                        "score": total_score,
+                        "source_region": source_region,
+                        "threat_type": threat_type,
+                        "eta_str": eta_str,
+                        "eta_seconds": eta_seconds,
+                        "direction_score": direction_score,
+                        "distance_km": distance_km,
+                        "route_boost": route_boost,
+                        "db_boost": db_boost,
+                        "confidence": confidence,
+                        "source_level": state.level,
+                        "is_test": state.is_test,
+                    }
         
         # Apply predictions
-        self._apply_predictions(predictions)
-
-    def _format_prediction_eta_str(self, eta_seconds: Optional[int]) -> str:
-        """Helper to format prediction ETA seconds into Ukrainian readable text."""
-        return format_eta_seconds_to_str(eta_seconds)
-
-    def _calc_direction_score(self, source_region: str, adj_region: str, bearing: Optional[float]) -> float:
-        import math
-        direction_score = 0.5
-        if bearing is not None and source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
-            src_coords = self.REGION_CENTROIDS[source_region]
-            adj_coords = self.REGION_CENTROIDS[adj_region]
-            
-            dlat = adj_coords[0] - src_coords[0]
-            dlon = adj_coords[1] - src_coords[1]
-            adj_bearing = math.degrees(math.atan2(dlon, dlat)) % 360
-            
-            diff = abs(bearing - adj_bearing)
-            if diff > 180:
-                diff = 360 - diff
-            
-            direction_score = max(0.0, 1.0 - (diff / 180.0))
-            if diff < 45:
-                direction_score = min(1.0, direction_score * 1.3)
-        return direction_score
-
-    def _calc_distance_and_eta(self, source_region: str, adj_region: str, telemetry: Optional[dict], speed: float) -> tuple[Optional[float], Optional[int]]:
-        import math
-        eta_seconds = None
-        distance_km = None
-        if source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
-            src = self.REGION_CENTROIDS[source_region]
-            target_coords = None
-            if telemetry and telemetry.get("final_target_cities"):
-                for city in telemetry["final_target_cities"]:
-                    if self._city_to_region(city) == adj_region:
-                        target_coords = self._get_city_coordinates(city, telemetry)
-                        if target_coords:
-                            break
-            
-            adj = target_coords if target_coords else self.REGION_CENTROIDS[adj_region]
-            
-            dlat = abs(src[0] - adj[0]) * 111
-            dlon = abs(src[1] - adj[1]) * 111 * math.cos(math.radians((src[0] + adj[0]) / 2))
-            distance_km = math.sqrt(dlat**2 + dlon**2)
-            if speed and speed > 0:
-                eta_seconds = int((distance_km / speed) * 3600)
-        return distance_km, eta_seconds
-
-    def _calc_route_boost(self, source_region: str, adj_region: str, path_boost_regions: set) -> float:
-        route_boost = 0.0
-        if adj_region in path_boost_regions:
-            route_boost = 0.8
-        else:
-            for route_name, route_regions in SHAHED_ROUTES.items():
-                if source_region in route_regions and adj_region in route_regions:
-                    src_idx = route_regions.index(source_region)
-                    adj_idx = route_regions.index(adj_region)
-                    if adj_idx > src_idx:
-                        route_boost = 0.25
-                        break
-        return route_boost
-
-    def _calc_total_score(self, direction_score: float, route_boost: float, db_boost: float, threat_type: str) -> float:
-        base_score = direction_score * 0.5 + 0.2
-        base_score += THREAT_PREDICTIVE_WEIGHTS.get(threat_type, 0.05)
-        return min(1.0, base_score + route_boost + db_boost)
-
-    def _calc_confidence(self, total_score: float, distance_km: Optional[float], route_boost: float, db_boost: float, threat_type: str, adj_region: str) -> int:
-        if total_score >= 0.85: base_conf = 75
-        elif total_score >= 0.70: base_conf = 65
-        elif total_score >= 0.55: base_conf = 55
-        elif total_score >= 0.45: base_conf = 45
-        else: base_conf = 35
-        
-        dist_mod = 0
-        if distance_km is not None:
-            if distance_km < 80: dist_mod = 8
-            elif distance_km < 150: dist_mod = 4
-            elif distance_km < 250: dist_mod = 0
-            elif distance_km < 400: dist_mod = -4
-            else: dist_mod = -8
-            
-        route_mod = int(route_boost * 12)
-        db_mod = int(db_boost * 8)
-        time_mod = self._get_time_of_day_modifier(threat_type)
-        
-        rules_correction = 0
-        try:
-            corrections = self.analyzer.load_confidence_corrections()
-            if adj_region in corrections:
-                rules_correction = corrections[adj_region].get(threat_type, 0)
-        except Exception:
-            pass
-            
-        raw_confidence = base_conf + dist_mod + route_mod + db_mod + time_mod + rules_correction
-        confidence = max(25, min(80, raw_confidence))
-        
-        region_hash_offset = (hash(adj_region) % 5) - 2
-        return max(25, min(80, confidence + region_hash_offset))
-
-    def _evaluate_prediction_candidate(
-        self,
-        source_region: str,
-        state,
-        adj_region: str,
-        telemetry: Optional[dict],
-        bearing: Optional[float],
-        speed: float,
-        path_boost_regions: set
-    ) -> Optional[dict]:
-        """Evaluates prediction score and confidence from source_region to adj_region."""
-        adj_state = self.threat_manager.threats.get(adj_region)
-        if not adj_state or (adj_state.level != "none" and not adj_state.is_predictive):
-            return None
-
-        direction_score = self._calc_direction_score(source_region, adj_region, bearing)
-        if bearing is not None and direction_score < 0.2:
-            return None
-        
-        distance_km, eta_seconds = self._calc_distance_and_eta(source_region, adj_region, telemetry, speed)
-        route_boost = self._calc_route_boost(source_region, adj_region, path_boost_regions)
-        db_boost = self._get_historical_route_score(source_region, adj_region)
-        
-        total_score = self._calc_total_score(direction_score, route_boost, db_boost, state.threat_type)
-        if total_score < 0.4:
-            return None
-            
-        confidence = self._calc_confidence(total_score, distance_km, route_boost, db_boost, state.threat_type, adj_region)
-        eta_str = self._format_prediction_eta_str(eta_seconds)
-        
-        return {
-            "score": total_score,
-            "source_region": source_region,
-            "threat_type": state.threat_type,
-            "eta_str": eta_str,
-            "eta_seconds": eta_seconds,
-            "direction_score": direction_score,
-            "distance_km": distance_km,
-            "route_boost": route_boost,
-            "db_boost": db_boost,
-            "confidence": confidence,
-            "source_level": state.level,
-            "is_test": state.is_test,
-        }
-
-    def _apply_predictions(self, predictions: dict):
-        """Applies evaluated predictions to threat manager."""
         predictions_applied = 0
         for region, pred in predictions.items():
+            # Determine threat level for predictive zone
             pred_level = "low"
             if pred["score"] >= 0.75:
                 pred_level = "medium"
@@ -1119,7 +961,7 @@ class TelegramThreatMonitor:
                 eta=pred["eta_str"],
                 is_predictive=True,
                 is_test=pred.get("is_test", False),
-                telemetry={"group_id": pred_gid},
+                telemetry={"group_id": pred_gid},  # Pass group_id inside telemetry for precise deduplication
                 eta_seconds=pred.get("eta_seconds")
             )
             self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"], group_id=pred_gid)
@@ -1136,7 +978,8 @@ class TelegramThreatMonitor:
     def _get_latest_telemetry(self, region: str) -> dict:
         """Get the latest telemetry data for a region from the DB."""
         try:
-            conn = get_sqlite_connection(DB_PATH)
+            import sqlite3
+            conn = sqlite3.connect("threat_analytics.db")
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
@@ -1163,7 +1006,8 @@ class TelegramThreatMonitor:
     def _get_historical_route_score(self, source: str, target: str) -> float:
         """Check DB for historical threat progression from source → target region."""
         try:
-            conn = get_sqlite_connection(DB_PATH)
+            import sqlite3
+            conn = sqlite3.connect("threat_analytics.db")
             cursor = conn.cursor()
             # Look for clearings where target had a threat shortly after source
             cursor.execute('''
@@ -1236,11 +1080,26 @@ class TelegramThreatMonitor:
         cleared_all = False
 
         for segment in segments:
-            is_seg_clear, is_cleared_all = self._handle_regex_clearing(text, segment, is_test, cleared_regions)
-            if is_cleared_all:
-                cleared_all = True
+            is_seg_clear = any(re.search(kw, segment, re.IGNORECASE) for kw in CLEAR_KEYWORDS)
             
             if is_seg_clear:
+                seg_regions = self._extract_regions(segment)
+                if seg_regions:
+                    for region in seg_regions:
+                        self.threat_manager.clear_threat(region)
+                        self._cancel_clear_tasks(region)
+                        cleared_regions.add(region)
+                else:
+                    # If it says 'clear' but names no regions, it might be a general clear.
+                    # We only clear all if the entire message contains no other region mentions
+                    if not self._extract_regions(text):
+                        self.threat_manager.clear_all(only_test=is_test)
+                        cleared_all = True
+                    else:
+                        if "област" in segment or "всіх" in segment or not seg_regions:
+                            self.threat_manager.clear_all(only_test=is_test)
+                            cleared_all = True
+                
                 # Reset context on clear
                 context_level = None
                 context_type = None
@@ -1268,7 +1127,25 @@ class TelegramThreatMonitor:
                     regions = list(ALL_REGIONS)
             
             # Extract Vector Context (Predictive routing)
-            predictive_regions = self._extract_regex_predictive_regions(segment, regions, context_regions, level)
+            predictive_regions = set()
+            
+            # If we have regions in context from previous segment, maybe this is a vector
+            if context_regions and regions and not level:
+                # previous segment had regions, current segment has new regions
+                source_region = context_regions[-1]
+                target_region = regions[0]
+                path = self._find_path(source_region, target_region)
+                if len(path) > 2:
+                    for r in path[1:-1]:
+                        predictive_regions.add(r)
+            
+            # Also check if multiple regions are in the same segment
+            if len(regions) >= 2:
+                for i in range(len(regions) - 1):
+                    path = self._find_path(regions[i], regions[i+1])
+                    if len(path) > 2:
+                        for r in path[1:-1]:
+                            predictive_regions.add(r)
 
             # Update context_regions
             if regions:
@@ -1289,8 +1166,58 @@ class TelegramThreatMonitor:
             # Set threat for the detected regions
             if level and final_regions:
                 for region in final_regions:
+                    # Determine dynamic auto-clear delay and ETA based on threat type
+                    delay = 3600
+                    eta_str = ""
+                    if threat_type == "mig31k":
+                        delay = 2700
+                        eta_str = "~20-40 хв"
+                    elif threat_type == "ballistic":
+                        delay = 1800
+                        eta_str = "~2-5 хв"
+                    elif threat_type == "shahed":
+                        delay = 10800
+                        eta_str = "+1-2 год"
+                    elif threat_type == "cruise_missile":
+                        delay = 3600
+                        eta_str = "+15-30 хв"
+                    elif threat_type == "tu95":
+                        delay = 5400
+                        eta_str = "~30-90 хв"
+                    elif threat_type == "iskander":
+                        delay = 1800
+                        eta_str = "~2-5 хв"
+                    elif threat_type == "artillery":
+                        delay = 1800
+                        eta_str = "~0-5 хв"
+                        
                     is_pred = region in predictive_regions
-                    self._apply_regex_threat(region, level, threat_type, detail_text, is_pred, is_test, set_regions)
+                    
+                    # Default confidence scores for regex fallback (no AI)
+                    regex_confidence = 75  # Base confidence for regex
+                    if level == "critical":
+                        regex_confidence = 90
+                    elif level == "high":
+                        regex_confidence = 80
+                    elif level == "medium":
+                        regex_confidence = 65
+                    elif level == "low":
+                        regex_confidence = 50
+                    if is_pred:
+                        regex_confidence = max(0, regex_confidence - 20)
+                    
+                    detail = self._build_region_detail(detail_text, region, threat_type)
+                    detail = clean_user_facing_threat_detail(detail)
+                    if is_pred:
+                        detail += f" ⚠️ Ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Ціль може прямувати через область."
+                    elif eta_str:
+                        detail += f" (Очікуваний час: {eta_str})"
+
+                    self.threat_manager.set_threat(region, level, threat_type, detail,
+                                                  confidence=regex_confidence, eta=eta_str, is_predictive=is_pred,
+                                                  is_test=is_test)
+                    self._schedule_auto_clear(region, delay)
+                    set_regions[region] = level
 
         # Print consolidated status update for the logs
         if cleared_all:
@@ -1303,100 +1230,6 @@ class TelegramThreatMonitor:
                 matching = [r for r, l in set_regions.items() if l == lvl]
                 if matching:
                     print(f"🔴 [{channel}] Рівень {lvl.upper()} встановлено для {len(matching)} областей: {', '.join(matching)}")
-
-    def _handle_regex_clearing(self, text: str, segment: str, is_test: bool, cleared_regions: set) -> Tuple[bool, bool]:
-        """Handles clearing logic in regex processing. Returns (is_seg_clear, cleared_all)."""
-        is_seg_clear = any(re.search(kw, segment, re.IGNORECASE) for kw in CLEAR_KEYWORDS)
-        cleared_all = False
-        if is_seg_clear:
-            seg_regions = self._extract_regions(segment)
-            if seg_regions:
-                for region in seg_regions:
-                    self.threat_manager.clear_threat(region)
-                    self._cancel_clear_tasks(region)
-                    cleared_regions.add(region)
-            else:
-                # If it says 'clear' but names no regions, it might be a general clear.
-                # We only clear all if the entire message contains no other region mentions
-                if not self._extract_regions(text):
-                    self.threat_manager.clear_all(only_test=is_test)
-                    cleared_all = True
-                else:
-                    if "област" in segment or "всіх" in segment or not seg_regions:
-                        self.threat_manager.clear_all(only_test=is_test)
-                        cleared_all = True
-        return is_seg_clear, cleared_all
-
-    def _extract_regex_predictive_regions(self, segment: str, regions: list, context_regions: list, level: Optional[str]) -> set:
-        """Helper to extract predictive routing regions for regex processing."""
-        predictive_regions = set()
-        segment_lower = segment.lower() if segment else ""
-        
-        # 1. Detect regions following directional keywords ("у напрямку", "напрямком на", "вектор", "курсом на")
-        direction_keywords = ["напрямк", "вектор", "курсом", "прямує", "рух у", "рух на", "в бік", "у бік", "в напрям"]
-        has_direction = any(kw in segment_lower for kw in direction_keywords)
-        
-        if has_direction:
-            for kw in direction_keywords:
-                pos = segment_lower.find(kw)
-                if pos != -1:
-                    after_text = segment_lower[pos:]
-                    for r_name in regions:
-                        r_info = ALL_REGIONS.get(r_name, {})
-                        for r_kw in r_info.get("keywords", []):
-                            if re.search(re.escape(r_kw), after_text, re.IGNORECASE):
-                                predictive_regions.add(r_name)
-                                break
-
-        # 2. If we have regions in context from previous segment, maybe this is a vector
-        if context_regions and regions and not level:
-            source_region = context_regions[-1]
-            target_region = regions[0]
-            path = self._find_path(source_region, target_region)
-            if len(path) > 2:
-                for r in path[1:-1]:
-                    predictive_regions.add(r)
-        
-        # 3. Check intermediate path regions
-        if len(regions) >= 2:
-            for i in range(len(regions) - 1):
-                path = self._find_path(regions[i], regions[i+1])
-                if len(path) > 2:
-                    for r in path[1:-1]:
-                        predictive_regions.add(r)
-                        
-        return predictive_regions
-
-    def _apply_regex_threat(self, region: str, level: str, threat_type: str, detail_text: str, is_pred: bool, is_test: bool, set_regions: dict):
-        """Helper to set threat and auto-clear delay in regex processing."""
-        # Determine dynamic auto-clear delay and ETA based on threat type
-        delay, eta_str = self._get_threat_type_delay_and_eta(threat_type, is_regex=True)
-            
-        # Default confidence scores for regex fallback (no AI)
-        regex_confidence = 75  # Base confidence for regex
-        if level == "critical":
-            regex_confidence = 90
-        elif level == "high":
-            regex_confidence = 80
-        elif level == "medium":
-            regex_confidence = 65
-        elif level == "low":
-            regex_confidence = 50
-        if is_pred:
-            regex_confidence = max(0, regex_confidence - 20)
-        
-        detail = self._build_region_detail(detail_text, region, threat_type)
-        detail = clean_user_facing_threat_detail(detail)
-        if is_pred:
-            detail += f" ⚠️ Ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Ціль може прямувати через область."
-        elif eta_str:
-            detail += f" (Очікуваний час: {eta_str})"
-
-        self.threat_manager.set_threat(region, level, threat_type, detail,
-                                      confidence=regex_confidence, eta=eta_str, is_predictive=is_pred,
-                                      is_test=is_test)
-        self._schedule_auto_clear(region, delay)
-        set_regions[region] = level
 
     def _build_region_detail(self, text: str, region: str, threat_type: str) -> str:
         prefix = THREAT_TYPES.get(threat_type, "Загроза")
@@ -1442,7 +1275,24 @@ class TelegramThreatMonitor:
         return None
 
     def _detect_threat_type(self, text: str):
-        return detect_threat_type_from_text(text)
+        text_lower = text.lower()
+        if any(kw in text_lower for kw in ["міг-31", "міг31", "mig-31", "mig31", "кинджал", "х-47", "х47"]):
+            return "mig31k"
+        if any(kw in text_lower for kw in ["ту-95", "ту95", "tu-95", "tu95", "ту-22", "ту22", "tu-22", "tu22", "ту-160", "tu160"]):
+            return "tu95"
+        if any(kw in text_lower for kw in ["шахед", "shahed", "бпла", "дрон", "мопед", "гербер", "орлан", "supercam", "крило"]):
+            return "shahed"
+        if any(kw in text_lower for kw in ["іскандер", "iskander"]):
+            return "iskander"
+        if any(kw in text_lower for kw in ["балісти", "с-300", "с300", "с-400", "с400", "c-300", "c300", "c-400", "c400"]):
+            return "ballistic"
+        if any(kw in text_lower for kw in ["ракет", "крилат", "калібр", "х-101", "х101", "х-55", "х55", "х-555", "х555", "х-59", "х59", "х-69", "х69"]):
+            return "cruise_missile"
+        if any(kw in text_lower for kw in ["артилерія", "рсзв", "обстріл", "град", "смерч", "ураган", "міномет"]):
+            return "artillery"
+        if re.search(r"\bкаб(и|ів)?\b|авіабомб|фаб|уаб", text_lower) or any(kw in text_lower for kw in ["су-34", "су-35", "су-30", "су-57", "сушка", "сушки"]):
+            return "kab"
+        return "unknown"
 
     def _extract_regions(self, text: str):
         found = set()
@@ -1487,15 +1337,11 @@ class TelegramThreatMonitor:
             for r in east_regions:
                 found.add(r)
                 
-        # Crimea is an occupied launch origin / transit hub only, never a destination target region
-        crimea_names = {"АР Крим", "Автономна Республіка Крим", "м. Севастополь", "Севастополь"}
-        found = {r for r in found if r not in crimea_names}
         return list(found)
 
-    def _cancel_matching_tasks(self, tasks_dict: dict, region: str, threat_type: str = None, group_id: str = None):
-        """Cancels all tasks in the dict matching the region, type, and group_id."""
+    def _cancel_clear_tasks(self, region: str, threat_type: str = None, group_id: str = None):
         to_delete = []
-        for key, task in tasks_dict.items():
+        for key, task in self._clear_tasks.items():
             k_region, k_type, k_gid = key
             if k_region == region:
                 match = True
@@ -1507,11 +1353,23 @@ class TelegramThreatMonitor:
                     task.cancel()
                     to_delete.append(key)
         for key in to_delete:
-            del tasks_dict[key]
+            del self._clear_tasks[key]
 
-    def _cancel_clear_tasks(self, region: str, threat_type: str = None, group_id: str = None):
-        self._cancel_matching_tasks(self._clear_tasks, region, threat_type, group_id)
-        self._cancel_matching_tasks(self._reevaluation_tasks, region, threat_type, group_id)
+        # Cancel corresponding re-evaluation tasks
+        to_delete_reeval = []
+        for key, task in self._reevaluation_tasks.items():
+            k_region, k_type, k_gid = key
+            if k_region == region:
+                match = True
+                if threat_type and k_type != threat_type:
+                    match = False
+                if group_id and k_gid != group_id:
+                    match = False
+                if match:
+                    task.cancel()
+                    to_delete_reeval.append(key)
+        for key in to_delete_reeval:
+            del self._reevaluation_tasks[key]
 
     def _cancel_reevaluation_task(self, region: str, threat_type: str = None, group_id: str = None):
         key = (region, threat_type, group_id)
@@ -1519,43 +1377,29 @@ class TelegramThreatMonitor:
             self._reevaluation_tasks[key].cancel()
             del self._reevaluation_tasks[key]
 
-    def _schedule_task_helper(self, tasks_dict: dict, key: tuple, delay_seconds: float, callback_coro_or_func, description: str, *args, **kwargs):
-        """
-        Helper method to schedule an asynchronous task with a delay, after cancelling any existing task with the same key.
-        """
-        if key in tasks_dict:
-            tasks_dict[key].cancel()
-            
-        async def task_wrapper():
-            await asyncio.sleep(delay_seconds)
-            try:
-                if asyncio.iscoroutinefunction(callback_coro_or_func):
-                    await callback_coro_or_func(*args, **kwargs)
-                else:
-                    callback_coro_or_func(*args, **kwargs)
-            except Exception as e:
-                print(f"⚠️ [{description}] Error executing task: {e}")
-            tasks_dict.pop(key, None)
-            
-        try:
-            loop = asyncio.get_running_loop()
-            tasks_dict[key] = loop.create_task(task_wrapper())
-        except RuntimeError:
-            pass
-
     def _schedule_predictive_reevaluation(self, region: str, delay_seconds: float, threat_type: str, group_id: str):
         key = (region, threat_type, group_id)
-        self._schedule_task_helper(
-            self._reevaluation_tasks,
-            key,
-            delay_seconds,
-            self._run_predictive_reevaluation,
-            "Re-evaluation",
-            region,
-            threat_type,
-            group_id
-        )
+        if key in self._reevaluation_tasks:
+            self._reevaluation_tasks[key].cancel()
+            
+        async def reevaluate():
+            await asyncio.sleep(delay_seconds)
+            try:
+                await self._run_predictive_reevaluation(region, threat_type, group_id)
+            except Exception as e:
+                print(f"⚠️ [Re-evaluation] Error executing task for {region}: {e}")
+            self._reevaluation_tasks.pop(key, None)
+            
+        self._reevaluation_tasks[key] = asyncio.create_task(reevaluate())
         print(f"⏳ Заплановано переоцінку предиктивної загрози для {region} (тип: {threat_type}, група: {group_id}) через {int(delay_seconds)} сек")
+
+    def _on_official_alarm_ended(self, region: str):
+        """Реагує на зняття офіційної тривоги в області. Якщо в області залишилися активні об'єкти загроз, планує їх переоцінку."""
+        state = self.threat_manager.threats.get(region)
+        if state and state.active_threats:
+            print(f"🔔 [Alarm Ended] Офіційну тривогу скасовано для {region}, але залишаються об'єкти загроз ({len(state.active_threats)} шт). Плануємо переоцінку через 60 сек...")
+            for threat in list(state.active_threats):
+                self._schedule_predictive_reevaluation(region, 60.0, threat.threat_type, threat.group_id)
 
     async def _run_predictive_reevaluation(self, region: str, threat_type: str, group_id: str):
         state = self.threat_manager.threats.get(region)
@@ -1566,9 +1410,8 @@ class TelegramThreatMonitor:
         target_threat = None
         for t in state.active_threats:
             if (group_id and t.group_id == group_id) or (not group_id and t.threat_type == threat_type):
-                if t.is_predictive:
-                    target_threat = t
-                    break
+                target_threat = t
+                break
                     
         if not target_threat:
             return
@@ -1593,7 +1436,8 @@ class TelegramThreatMonitor:
             region=region,
             threat_type=threat_type,
             set_time=target_threat.since,
-            recent_messages=latest_msgs
+            recent_messages=latest_msgs,
+            is_official_alarm_active=state.is_active
         )
         
         if result and not result.get("is_active", True):
@@ -1620,7 +1464,7 @@ class TelegramThreatMonitor:
                 source_channel="Gemini_Reevaluation",
                 message_text=f"[Авто-переоцінка] {reasoning}",
                 clearing_confidence=target_threat.confidence,
-                was_predictive=True
+                was_predictive=getattr(target_threat, "is_predictive", False)
             )
             
             # Clear in manager
@@ -1629,74 +1473,18 @@ class TelegramThreatMonitor:
         else:
             print(f"🟡 [Re-evaluation] Gemini визначив загрозу як АКТИВНУ або не зміг відповісти для {region}. Залишаємо загрозу діяти.")
 
-    def _execute_auto_clear_callback(self, region: str, delay_seconds: float, threat_type: str, group_id: str):
-        self.threat_manager.clear_threat(region, threat_type=threat_type, group_id=group_id)
-        print(f"⏳ Автоматичне зняття загрози для {region} (тип: {threat_type or 'all'}, група: {group_id or 'all'}, таймаут {int(delay_seconds)} сек)")
-
     def _schedule_auto_clear(self, region: str, delay_seconds: float = 3600, threat_type: str = None, group_id: str = None):
         key = (region, threat_type, group_id)
-        self._schedule_task_helper(
-            self._clear_tasks,
-            key,
-            delay_seconds,
-            self._execute_auto_clear_callback,
-            "Auto-clear",
-            region,
-            delay_seconds,
-            threat_type,
-            group_id
-        )
-
-    def _schedule_eta_escalation(self, region: str, eta_seconds: float, current_level: str, threat_type: str = None, group_id: str = None):
-        """
-        Schedules a task to escalate the threat level and activate the air alarm 
-        once the ETA expires for a confirmed threat.
-        """
-        key = (region, threat_type, group_id)
-        if not hasattr(self, '_eta_escalation_tasks'):
-            self._eta_escalation_tasks = {}
-        self._schedule_task_helper(
-            self._eta_escalation_tasks,
-            key,
-            eta_seconds,
-            self._execute_eta_escalation_callback,
-            "ETA-Escalation",
-            region,
-            threat_type,
-            group_id,
-            current_level
-        )
-        print(f"⏱️  [ETA-Escalation] Заплановано активацію тривоги для {region} (тип: {threat_type}, ETA: {int(eta_seconds)} сек)")
-
-    def _execute_eta_escalation_callback(self, region: str, threat_type: str, group_id: str, original_level: str):
-        """
-        Fires when ETA expires for a threat.
-        If the official state alarm is NOT active, triggers Gemini re-evaluation for predictive threats.
-        Never forces critical red or fake alarms on unconfirmed threats.
-        """
-        state = self.threat_manager.threats.get(region)
-        if not state or state.level == "none":
-            print(f"⚠️  [ETA-Escalation] Загроза для {region} вже знята — ескалацію скасовано.")
-            return
-
-        is_official = getattr(state, "_is_official_active", False)
-        if is_official:
-            print(f"ℹ️  [ETA-Escalation] Офіційна тривога для {region} вже активна — пропускаємо.")
-            return
-
-        matching_threat = None
-        for t in state.active_threats:
-            if t.threat_type == threat_type and not t.is_test:
-                if group_id is None or t.group_id == group_id:
-                    matching_threat = t
-                    break
-
-        if not matching_threat:
-            print(f"⚠️  [ETA-Escalation] Активна загроза для {region} (тип: {threat_type}) не знайдена — ескалацію скасовано.")
-            return
-
-        print(f"⏳ [ETA-Escalation] Час ETA для загрози {region} минув, але офіційної тривоги немає. Запускаємо переоцінку...")
-        self._schedule_predictive_reevaluation(region, 0.0, threat_type, group_id)
+        if key in self._clear_tasks:
+            self._clear_tasks[key].cancel()
+        
+        async def auto_clear():
+            await asyncio.sleep(delay_seconds)
+            self.threat_manager.clear_threat(region, threat_type=threat_type, group_id=group_id)
+            print(f"⏳ Автоматичне зняття загрози для {region} (тип: {threat_type or 'all'}, група: {group_id or 'all'}, таймаут {int(delay_seconds)} сек)")
+            self._clear_tasks.pop(key, None)
+            
+        self._clear_tasks[key] = asyncio.create_task(auto_clear())
 
     def _schedule_initial_auto_clears(self):
         from datetime import datetime, timezone
@@ -1709,11 +1497,27 @@ class TelegramThreatMonitor:
                     if not since_str:
                         continue
                     is_pred = getattr(threat, "is_predictive", False)
+                    delay = 3600
                     if is_pred:
                         pred_eta = getattr(threat, "eta_seconds", None) or 1800
                         delay = pred_eta + 300  # ETA + 5 minutes grace period
                     else:
-                        delay, _ = self._get_threat_type_delay_and_eta(t_type)
+                        if t_type == "mig31k":
+                            delay = 1800
+                        elif t_type == "ballistic":
+                            delay = 600
+                        elif t_type == "kab":
+                            delay = 1200
+                        elif t_type == "shahed":
+                            delay = 10800
+                        elif t_type == "cruise_missile":
+                            delay = 2700
+                        elif t_type == "tu95":
+                            delay = 5400
+                        elif t_type == "iskander":
+                            delay = 1200
+                        elif t_type == "artillery":
+                            delay = 1800
                             
                     try:
                         since_str_normalized = since_str.replace("Z", "+00:00")
@@ -1721,14 +1525,14 @@ class TelegramThreatMonitor:
                         elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
                         remaining = delay - elapsed
                         
-                        if is_pred:
-                            if remaining <= 0:
+                        if is_pred or not state.is_active:
+                            if remaining <= 0 or not state.is_active:
                                 # Process immediately via reevaluation instead of silent clear
                                 self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
-                                print(f"⏳ Предиктивна загроза для {region} (тип: {t_type}) застаріла під час офлайну. Заплановано миттєву переоцінку.")
+                                print(f"⏳ Загроза для {region} (тип: {t_type}) застаріла або сирена неактивна. Заплановано миттєву переоцінку.")
                             else:
                                 self._schedule_predictive_reevaluation(region, remaining, t_type, t_gid)
-                                print(f"⏳ Відновлено таймер переоцінки предиктивної загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
+                                print(f"⏳ Відновлено таймер переоцінки загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
                         else:
                             if remaining <= 0:
                                 self.threat_manager.clear_threat(region, threat_type=t_type, group_id=t_gid)
@@ -1736,63 +1540,48 @@ class TelegramThreatMonitor:
                             else:
                                 self._schedule_auto_clear(region, remaining, threat_type=t_type, group_id=t_gid)
                                 print(f"⏳ Заплановано автозняття загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
-                                
-                                # Re-arm ETA escalation if ETA hasn't fired yet
-                                eta_sec = getattr(threat, "eta_seconds", None)
-                                is_official = getattr(state, "_is_official_active", False)
-                                if eta_sec and eta_sec > 0 and not is_official and not threat.is_test:
-                                    since_str_n = since_str.replace("Z", "+00:00")
-                                    since_dt2 = datetime.fromisoformat(since_str_n)
-                                    elapsed2 = (datetime.now(timezone.utc) - since_dt2).total_seconds()
-                                    eta_remaining = eta_sec - elapsed2
-                                    if eta_remaining > 0:
-                                        self._schedule_eta_escalation(region, eta_remaining, threat.level, t_type, t_gid)
-                                    else:
-                                        # ETA already expired while offline — escalate immediately
-                                        self._execute_eta_escalation_callback(region, t_type, t_gid, threat.level)
-                                        print(f"🚨 [ETA-Escalation] ETA для {region} (тип: {t_type}) вже минув під час офлайну — миттєва ескалація.")
                     except Exception as e:
                         print(f"⚠️ Помилка відновлення таймерів для {region}: {e}")
-                        if is_pred:
+                        if is_pred or not state.is_active:
                             self._schedule_predictive_reevaluation(region, float(delay), t_type, t_gid)
                         else:
                             self._schedule_auto_clear(region, float(delay), threat_type=t_type, group_id=t_gid)
 
-    def _get_time_of_day_modifier(self, threat_type: str) -> int:
-        """Returns a confidence modifier based on current time of day and threat type.
-        Night attacks with shaheds are statistically more common → boost confidence."""
+    def _check_stale_threats_without_alarm(self):
+        """Перевіряє наявність об'єктів загроз в областях без офіційної тривоги і планує переоцінку."""
         from datetime import datetime, timezone
-        try:
-            import zoneinfo
-            kyiv_tz = zoneinfo.ZoneInfo("Europe/Kiev")
-        except ImportError:
-            return 0
-        
-        hour = datetime.now(kyiv_tz).hour
-        
-        # Shaheds predominantly attack at night (22:00-06:00)
-        if threat_type == THREAT_SHAHED:
-            if 22 <= hour or hour < 6:
-                return 5  # Night shahed attack — boost
-            elif 6 <= hour < 9:
-                return 2  # Early morning — still possible
-            else:
-                return -3  # Daytime shahed — less likely
-        
-        # Ballistic and cruise missiles — any time, slight daytime bias
-        if threat_type in (THREAT_BALLISTIC, THREAT_ISKANDER, THREAT_CRUISE_MISSILE):
-            if 5 <= hour < 8:
-                return 3  # Dawn attacks are historically common
-            return 0
-        
-        # KABs — primarily daytime (requires visual targeting)
-        if threat_type == THREAT_KAB:
-            if 7 <= hour < 17:
-                return 3  # Daytime — prime KAB window
-            else:
-                return -4  # Night — unlikely for KABs
-        
-        return 0
+        for region, state in self.threat_manager.threats.items():
+            if not state.is_active and state.active_threats:
+                for threat in list(state.active_threats):
+                    t_type = threat.threat_type
+                    t_gid = threat.group_id
+                    since_str = threat.since
+                    if not since_str:
+                        continue
+                    try:
+                        since_str_normalized = since_str.replace("Z", "+00:00")
+                        since_dt = datetime.fromisoformat(since_str_normalized)
+                        elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
+                        if elapsed > 300:
+                            key = (region, t_type, t_gid)
+                            if key not in self._reevaluation_tasks:
+                                print(f"⚠️ [Stale Threat Detected] Об'єкт {t_type} в {region} перебуває без офіційної тривоги {int(elapsed)} сек. Запускаємо переоцінку...")
+                                self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
+                    except Exception:
+                        pass
+
+    async def _periodic_cleanup_loop(self):
+        """Періодичний фоновий цикл (кожні 60 сек) для виявлення та переоцінки застарілих загроз."""
+        while self.is_running:
+            await asyncio.sleep(60)
+            try:
+                self.restore_scheduled_clears()
+                self._check_stale_threats_without_alarm()
+            except Exception as e:
+                print(f"⚠️ [Cleanup Loop] Помилка очищення застарілих загроз: {e}")
+
+    def _get_time_of_day_modifier(self, threat_type: str) -> int:
+        return get_time_of_day_modifier(threat_type)
 
     async def _rules_learner_loop(self):
         """Background task that analyzes paired events every 6 hours to derive new rules."""
@@ -1815,72 +1604,3 @@ class TelegramThreatMonitor:
         if self.analyzer and hasattr(self.analyzer, 'run_rules_learner'):
             return self.analyzer.run_rules_learner()
         return 0
-
-    async def _confidence_decay_loop(self):
-        """
-        Фоновий цикл загасання довіри (Confidence Decay).
-        Кожні 60 секунд перевіряє загрози. Якщо загроза не оновлювалася > 10 хвилин,
-        зменшує confidence на 10%. Якщо confidence < 20%, виконує авто-очищення (lost_contact).
-        """
-        while self.is_running:
-            try:
-                await asyncio.sleep(60)
-                self._apply_confidence_decay_step()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                print(f"⚠️  [Confidence Decay] Помилка в циклі загасання: {e}")
-
-    def _apply_confidence_decay_step(self):
-        """Виконує один крок перевірки та зменшення довіри загроз."""
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        
-        for region, state in list(self.threat_manager.threats.items()):
-            if state.level == "none" or not state.active_threats:
-                continue
-                
-            for threat in list(state.active_threats):
-                updated_str = getattr(threat, "last_updated_at", None) or threat.since
-                if not updated_str:
-                    continue
-                    
-                try:
-                    dt_updated = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
-                    idle_seconds = (now - dt_updated).total_seconds()
-                except Exception:
-                    continue
-                    
-                if idle_seconds >= 600:
-                    old_conf = threat.confidence or 50
-                    new_conf = threat.apply_confidence_decay(10)
-                    print(f"📉 [Confidence Decay] {region} ({threat.threat_type}): confidence {old_conf}% -> {new_conf}% (немає оновлень {int(idle_seconds/60)} хв)")
-                    
-                    if new_conf < 20:
-                        print(f"🧹 [Confidence Decay] {region} ({threat.threat_type}): confidence < 20% -> авто-зняття (lost_contact)")
-                        clearing_telemetry = {
-                            "linked_group_id": threat.group_id,
-                            "resolution_type": "lost_contact",
-                            "prediction_accuracy_hint": "overestimated",
-                            "damage_assessment": "none",
-                            "impact_confirmed": False,
-                            "clearing_context_tags": ["confidence_decay", "lost_contact"]
-                        }
-                        try:
-                            from database.analytics_db import log_clearing_to_db
-                            log_clearing_to_db(
-                                region=region,
-                                clearing_telemetry=clearing_telemetry,
-                                source_channel="ConfidenceDecay",
-                                message_text="[Decay] Втрачено контакт з ціллю (відсутні оновлення понад 15 хв).",
-                                clearing_confidence=new_conf,
-                                was_predictive=threat.is_predictive
-                            )
-                        except Exception:
-                            pass
-                        self.threat_manager.clear_threat(
-                            region,
-                            clearing_telemetry=clearing_telemetry,
-                            threat_type=threat.threat_type,
-                            group_id=threat.group_id
-                        )

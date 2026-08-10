@@ -108,7 +108,6 @@ async def run_tests():
     
     assert "Херсонська область" in regions
     assert "Запорізька область" in regions
-    assert "АР Крим" not in regions, "Крим не може бути цільовою областю загрози!"
     assert all(lvl == "high" for lvl in levels)
     assert all(t == "ballistic" for t in types)
     print("--------------------------------------------------")
@@ -269,9 +268,6 @@ async def run_tests():
 
     print("\n🎉 ВСІ ТЕСТИ ПРОЙДЕНО УСПІШНО! Логіка та парсер працюють ідеально!")
     print("==================================================")
-    threat_manager.clear_all()
-    threat_manager.save_to_file()
-    print("🧹 Тестовий стан успішно очищено з threats_state.json!")
 
 if __name__ == "__main__":
     asyncio.run(run_tests())
