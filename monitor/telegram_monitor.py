@@ -748,8 +748,9 @@ class TelegramThreatMonitor:
             if not adjacent:
                 continue
             
+            from core.regions import PERMANENTLY_OCCUPIED_REGIONS
             for adj_region in adjacent:
-                if adj_region in ("АР Крим", "Автономна Республіка Крим", "Крим", "Луганська область", "Луганська обл."):
+                if adj_region in PERMANENTLY_OCCUPIED_REGIONS:
                     continue
                 # Skip if already has active (non-predictive) threat
                 adj_state = self.threat_manager.threats.get(adj_region)

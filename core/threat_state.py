@@ -460,8 +460,8 @@ class MockThreatManager:
                    telemetry: dict = None,
                    rules_applied: list = None,
                    eta_seconds: Optional[int] = None) -> bool:
-        occupied_set = {"АР Крим", "Автономна Республіка Крим", "Крим", "Луганська область", "Луганська обл."}
-        if region not in self.threats or region in occupied_set:
+        from core.regions import PERMANENTLY_OCCUPIED_REGIONS
+        if region not in self.threats or region in PERMANENTLY_OCCUPIED_REGIONS:
             return False
 
         old_state = self.threats[region]
