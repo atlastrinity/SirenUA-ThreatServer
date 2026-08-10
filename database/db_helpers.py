@@ -297,16 +297,12 @@ async def fcm_queue_worker():
                 item["level"],
                 item["threat_type"],
                 item["detail"],
-                item["play_sound"],
                 item["confidence"],
                 item["eta"],
                 item.get("is_official_alarm", False),
                 item.get("is_test", False)
             )
-            if item.get("play_sound", True):
-                await asyncio.sleep(1.5)
-            else:
-                await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
             fcm_queue.task_done()
         except asyncio.CancelledError:
             break
@@ -323,7 +319,8 @@ async def start_fcm_worker():
         fcm_worker_task = asyncio.create_task(fcm_queue_worker())
         print("🚀 FCM Queue Worker успішно запущено.")
 
-def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False, is_test: bool = False):
+def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False, is_test: bool = False, **kwargs):
+    """Надсилає тихий data-push через FCM. Звук визначається клієнтом."""
     global fcm_queue
     if fcm_queue is not None:
         try:
@@ -335,7 +332,6 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
                     "level": level,
                     "threat_type": threat_type,
                     "detail": detail,
-                    "play_sound": play_sound,
                     "confidence": confidence,
                     "eta": eta,
                     "is_official_alarm": is_official_alarm,
@@ -345,9 +341,14 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
             return
         except RuntimeError:
             pass
-    _send_fcm_notification_sync(region, level, threat_type, detail, play_sound, confidence, eta, is_official_alarm, is_test)
+    _send_fcm_notification_sync(region, level, threat_type, detail, confidence, eta, is_official_alarm, is_test)
 
-def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, play_sound: bool = True, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False, is_test: bool = False):
+def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False, is_test: bool = False):
+    """
+    Надсилає тихий FCM data-push БЕЗ звуку.
+    Звук, вібрація та рівень переривання визначаються виключно iOS-клієнтом
+    на основі локальних налаштувань користувача (6 рубільників).
+    """
     if not HAS_FIREBASE:
         return
 
@@ -360,46 +361,42 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     if not topic:
         return
 
+    # --- Формування title/body (для банера) ---
     if level == "none":
         title = f"🟢 Відбій: {region}"
         body = "Загрозу знято."
-        sound = "vidbiy.wav" if play_sound else None
     else:
         if is_official_alarm:
             title = f"🔴 Повітряна тривога: {region}"
             body = detail if detail else "Пройдіть в укриття!"
-            sound = "siren.wav" if play_sound else None
         else:
             level_ukr = {"critical": "КРИТИЧНА", "high": "ВИСОКА", "medium": "СЕРЕДНЯ", "low": "НИЗЬКА"}.get(level, level)
             type_str = f" ({threat_type})" if threat_type else ""
             title = f"⚠️ Загроза {level_ukr}: {region}{type_str}"
             body = detail if detail else "Зафіксовано рух ворожих цілей."
-            sound = "warning.wav" if play_sound else None
 
     try:
-        android_config = None
-        if sound:
-            android_config = messaging.AndroidConfig(
-                notification=messaging.AndroidNotification(
-                    sound=sound,
-                    channel_id="sirenua_alarms_channel"
+        # Тихий APNS push — без звуку, без critical.
+        # iOS-клієнт сам вирішує чи грати звук на основі своїх налаштувань.
+        apns_config = messaging.APNSConfig(
+            headers={
+                "apns-priority": "10",
+                "apns-push-type": "alert",
+            },
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(
+                    sound=None,
+                    content_available=True,
+                    mutable_content=True,
+                    badge=0 if level == "none" else 1,
                 )
             )
-        
-        apns_config = None
-        if sound:
-            crit_sound = messaging.CriticalSound(
-                name=sound,
-                volume=1.0,
-                critical=True
-            )
-            apns_config = messaging.APNSConfig(
-                payload=messaging.APNSPayload(
-                    aps=messaging.Aps(
-                        sound=crit_sound
-                    )
-                )
-            )
+        )
+
+        # Android: data-only, без звуку
+        android_config = messaging.AndroidConfig(
+            priority="high",
+        )
 
         message = messaging.Message(
             notification=messaging.Notification(
@@ -421,7 +418,7 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         )
 
         response = messaging.send(message)
-        print(f"🔔 FCM Push надіслано в топік {topic} (відповідь: {response})")
+        print(f"🔔 FCM Push (silent) надіслано в топік {topic} (відповідь: {response})")
     except Exception as e:
         logger.error(f"Помилка відправки FCM Push для {region}: {e}")
         _log_error("database_helpers", f"Помилка відправки FCM Push для {region}: {e}", "send_fcm_notification", context=f"region={region}, topic={topic}", error_type="firebase_error")

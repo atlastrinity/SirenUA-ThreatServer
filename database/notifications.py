@@ -61,9 +61,9 @@ def get_fcm_topic(raw_topic: str) -> str:
 
 def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dict = None, **kwargs):
     """
-    Асинхронно відправляє FCM сповіщення (Firebase Cloud Messaging).
-    Підтримує APNs Критичні Сповіщення (Critical Alerts) зі звуком сирени/відбою,
-    що обходять безшумний режим iOS.
+    Надсилає тихий FCM data-push БЕЗ звуку.
+    Звук, вібрація та рівень переривання визначаються виключно iOS-клієнтом
+    на основі локальних налаштувань користувача (6 рубільників).
     """
     fcm_topic = get_fcm_topic(topic)
 
@@ -74,14 +74,12 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
         _log_error("database_helpers", "firebase_admin не встановлено", "send_fcm_notification", error_type="firebase_error")
         return False
 
-    play_sound = kwargs.get("play_sound", True)
     is_clear = (title == "none" or topic == "none" or kwargs.get("level") == "none")
 
     # Format user-facing title and body
     if is_clear:
         final_title = f"🟢 ВІДБІЙ ТРИВОГИ — {topic}"
         final_body = "Загрозу нейтралізовано. Можна залишати укриття." if not body or body == "none" else body
-        sound_file = "vidbiy.wav"
     else:
         if title in ("high", "critical", "moderate", "low", "warning"):
             final_title = f"🚨 ПОВІТРЯНА ТРИВОГА — {topic}"
@@ -99,14 +97,10 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
             threat_name = kwargs.get("threat_type") or "Повітряна загроза"
             final_body = f"Виявлено загрозу ({threat_name}). Прямуйте в укриття!"
 
-        sound_file = "siren.wav"
-
     def _send():
         try:
             fcm_data = {
                 "region": topic,
-                "sound_name": sound_file if play_sound else "",
-                "is_critical": "true" if play_sound else "false",
                 "level": "none" if is_clear else kwargs.get("level", "high"),
             }
             if isinstance(data, dict):
@@ -116,38 +110,21 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
                 if v is not None and k not in fcm_data:
                     fcm_data[k] = str(v)
 
-            # APNs Payload for iOS Critical Alerts & Custom Sounds
-            apns_config = None
-            if play_sound:
-                critical_sound = messaging.CriticalSound(
-                    name=sound_file,
-                    critical=True,
-                    volume=1.0
-                )
-                aps = messaging.Aps(
-                    sound=critical_sound,
-                    content_available=True,
-                    mutable_content=True,
-                    badge=0 if is_clear else 1,
-                    custom_data={"interruption-level": "critical"}
-                )
-                apns_config = messaging.APNSConfig(
-                    headers={
-                        "apns-priority": "10",
-                        "apns-push-type": "alert",
-                    },
-                    payload=messaging.APNSPayload(aps=aps)
-                )
-            else:
-                aps = messaging.Aps(
-                    sound=None,
-                    content_available=True,
-                    badge=0 if is_clear else 1,
-                )
-                apns_config = messaging.APNSConfig(
-                    headers={"apns-priority": "5"},
-                    payload=messaging.APNSPayload(aps=aps)
-                )
+            # Тихий APNS push — без звуку, без critical.
+            # iOS-клієнт сам вирішує чи грати звук на основі своїх налаштувань.
+            aps = messaging.Aps(
+                sound=None,
+                content_available=True,
+                mutable_content=True,
+                badge=0 if is_clear else 1,
+            )
+            apns_config = messaging.APNSConfig(
+                headers={
+                    "apns-priority": "10",
+                    "apns-push-type": "alert",
+                },
+                payload=messaging.APNSPayload(aps=aps)
+            )
 
             message = messaging.Message(
                 notification=messaging.Notification(
@@ -159,7 +136,7 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
                 apns=apns_config,
             )
             response = messaging.send(message)
-            logger.info(f"🔔 [FCM Sent] Успішно відправлено в топік {fcm_topic} (raw: {topic}, sound: {sound_file if play_sound else 'silent'}): {response}")
+            logger.info(f"🔔 [FCM Sent] Надіслано (silent) в топік {fcm_topic} (raw: {topic}): {response}")
             return True
         except Exception as e:
             logger.error(f"Помилка відправки FCM у топік {fcm_topic} (raw: {topic}): {e}")

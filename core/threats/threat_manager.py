@@ -34,7 +34,7 @@ class MockThreatManager:
 
     def __init__(self):
         self.threats: dict[str, ThreatState] = {}
-        self.last_sound_time: float = 0.0
+
         self.real_threats_backup: dict = {}
         self._clear_lock = threading.Lock()
         self._batch_mode: bool = False
@@ -419,20 +419,12 @@ class MockThreatManager:
             self.threats[region]._is_official_active = True
         
         if has_changed:
-            now = time.time()
-            play_sound = True
-            if now - self.last_sound_time < 10.0:
-                play_sound = False
-            else:
-                self.last_sound_time = now
-            
             if self._batch_mode:
                 self._fcm_batch_buffer.append({
                     "region": region,
                     "level": level,
                     "threat_type": threat_type,
                     "detail": detail,
-                    "play_sound": play_sound,
                     "confidence": confidence,
                     "eta": eta,
                     "is_official_alarm": self.threats[region].is_active,
@@ -445,7 +437,6 @@ class MockThreatManager:
                         target=send_fcm_notification,
                         args=(region, level, threat_type, detail),
                         kwargs={
-                            "play_sound": play_sound,
                             "confidence": confidence,
                             "eta": eta,
                             "is_official_alarm": self.threats[region].is_active,
@@ -468,20 +459,18 @@ class MockThreatManager:
         items = list(self._fcm_batch_buffer)
         self._fcm_batch_buffer.clear()
         
-        for i, item in enumerate(items):
-            play_sound = (i == 0)
+        for item in items:
             send_fcm_notification(
                 item["region"],
                 item["level"],
                 item["threat_type"],
                 item["detail"],
-                play_sound=play_sound,
                 confidence=item["confidence"],
                 eta=item["eta"],
                 is_official_alarm=item["is_official_alarm"],
                 is_test=item["is_test"]
             )
-        print(f"🚀 FCM batch flush: {len(items)} сповіщень (звук тільки у першому)")
+        print(f"🚀 FCM batch flush: {len(items)} сповіщень")
 
     def clear_threat(self, region: str, clearing_telemetry: dict = None,
                       group_id: str = None, threat_type: str = None) -> bool:
@@ -516,16 +505,9 @@ class MockThreatManager:
             self.save_real_threats_to_db()
 
         if has_changed:
-            now = time.time()
-            play_sound = True
-            if now - self.last_sound_time < 10.0:
-                play_sound = False
-            else:
-                self.last_sound_time = now
-
             current_level = old_state.level
             if current_level == "none":
-                send_fcm_notification(region, "none", play_sound=play_sound,
+                send_fcm_notification(region, "none",
                                       is_official_alarm=old_state.is_active,
                                       is_test=removed_threat.is_test if removed_threat else False)
 
@@ -555,14 +537,7 @@ class MockThreatManager:
                         is_test_flag = state.is_test
                         state.clear()
                         
-                        now = time.time()
-                        play_sound = True
-                        if now - self.last_sound_time < 10.0:
-                            play_sound = False
-                        else:
-                            self.last_sound_time = now
-                            
-                        send_fcm_notification(region, "none", play_sound=play_sound, is_test=is_test_flag)
+                        send_fcm_notification(region, "none", is_test=is_test_flag)
                         
                         if not is_test_flag:
                             self.real_threats_backup[region] = state.to_dict()
