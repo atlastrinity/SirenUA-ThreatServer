@@ -87,3 +87,39 @@ def get_ukrainian_threat_type(threat_type: str) -> str:
         "artillery": "обстріл",
     }
     return mapping.get(threat_type, threat_type)
+
+
+# Макро-регіони України
+WEST_REGIONS = ["Львівська область", "Волинська область", "Рівненська область", "Тернопільська область", "Хмельницька область", "Івано-Франківська область", "Закарпатська область", "Чернівецька область"]
+NORTH_REGIONS = ["Київська область", "м. Київ", "Чернігівська область", "Сумська область", "Житомирська область"]
+CENTER_REGIONS = ["Черкаська область", "Кіровоградська область", "Полтавська область", "Вінницька область", "Дніпропетровська область"]
+SOUTH_REGIONS = ["Одеська область", "Миколаївська область", "Херсонська область", "Запорізька область"]
+EAST_REGIONS = ["Харківська область", "Донецька область", "Дніпропетровська область", "Запорізька область"]
+
+MACRO_REGIONS = {
+    "west": WEST_REGIONS,
+    "north": NORTH_REGIONS,
+    "center": CENTER_REGIONS,
+    "south": SOUTH_REGIONS,
+    "east": EAST_REGIONS
+}
+
+
+def normalize_region_name(raw_name: str) -> str:
+    """
+    Приводить будь-яку розпізнану фразу, скорочення чи назву міста до офіційного канонічного імені області.
+    """
+    if not raw_name:
+        return raw_name
+    name_clean = raw_name.strip()
+    if name_clean in ALL_REGIONS:
+        return name_clean
+    if name_clean in PERMANENTLY_OCCUPIED_REGIONS:
+        return "АР Крим" if ("крим" in name_clean.lower() or "севастопол" in name_clean.lower()) else "Луганська область"
+        
+    name_lower = name_clean.lower()
+    for canonical_name, data in ALL_REGIONS.items():
+        for kw in data["keywords"]:
+            if kw in name_lower:
+                return canonical_name
+    return raw_name

@@ -1309,14 +1309,14 @@ class TelegramThreatMonitor:
                 if re.search(kw, text, re.IGNORECASE):
                     found.add(region)
                     
-        # Macro-directions mapping
+        # Macro-directions mapping from core.regions
         text_lower = text.lower()
-        
-        west_regions = ["Львівська область", "Волинська область", "Рівненська область", "Тернопільська область", "Хмельницька область", "Івано-Франківська область", "Закарпатська область", "Чернівецька область"]
-        north_regions = ["Київська область", "м. Київ", "Чернігівська область", "Сумська область", "Житомирська область"]
-        center_regions = ["Черкаська область", "Кіровоградська область", "Полтавська область", "Вінницька область", "Дніпропетровська область"]
-        south_regions = ["Одеська область", "Миколаївська область", "Херсонська область", "Запорізька область"]
-        east_regions = ["Харківська область", "Донецька область", "Дніпропетровська область", "Запорізька область"]
+        from core.regions import MACRO_REGIONS
+        west_regions = MACRO_REGIONS["west"]
+        north_regions = MACRO_REGIONS["north"]
+        center_regions = MACRO_REGIONS["center"]
+        south_regions = MACRO_REGIONS["south"]
+        east_regions = MACRO_REGIONS["east"]
 
         # Check for West
         if re.search(r"\bзахідн\w*\b|\bзаході\b|\bзахід\b", text_lower):
