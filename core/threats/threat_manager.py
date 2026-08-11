@@ -443,6 +443,7 @@ class MockThreatManager:
                         any_changed = True
                         if not state.active_threats:
                             state.clear()
+                            send_fcm_notification(region, "none", is_test=True)
                         else:
                             state.is_test = any(t.is_test for t in state.active_threats)
                 else:
