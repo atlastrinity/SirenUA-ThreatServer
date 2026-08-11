@@ -90,7 +90,7 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
             # Тихий APNS push — без звуку, без critical.
             # iOS-клієнт сам вирішує чи грати звук на основі своїх налаштувань.
             aps = messaging.Aps(
-                sound=None,
+                sound="default",
                 content_available=True,
                 mutable_content=True,
                 badge=0 if is_clear else 1,

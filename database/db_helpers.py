@@ -346,7 +346,7 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
             },
             payload=messaging.APNSPayload(
                 aps=messaging.Aps(
-                    sound=None,
+                    sound="default",
                     content_available=True,
                     mutable_content=True,
                     badge=0 if level == "none" else 1,
