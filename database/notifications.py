@@ -7,38 +7,11 @@ from database.connection import _log_error
 from core.config import logger
 
 
-# Mapping of Ukrainian region/city names to FCM topic slugs.
-# Must match iOS client NotificationManager.swift topicMapping.
-REGION_TOPIC_MAP: dict[str, str] = {
-    "Вінницька область":        "region_vinnytsia",
-    "Волинська область":         "region_volyn",
-    "Дніпропетровська область":  "region_dnipro",
-    "Донецька область":          "region_donetsk",
-    "Житомирська область":       "region_zhytomyr",
-    "Закарпатська область":      "region_zakarpattya",
-    "Запорізька область":        "region_zaporizhzhya",
-    "Івано-Франківська область": "region_if",
-    "Київська область":          "region_kyiv_oblast",
-    "м. Київ":                   "region_kyiv_city",
-    "Кіровоградська область":    "region_kirovohrad",
-    "Луганська область":         "region_luhansk",
-    "Львівська область":         "region_lviv",
-    "Миколаївська область":      "region_mykolaiv",
-    "Одеська область":           "region_odesa",
-    "Полтавська область":        "region_poltava",
-    "Рівненська область":        "region_rivne",
-    "Сумська область":           "region_sumy",
-    "Тернопільська область":     "region_ternopil",
-    "Харківська область":        "region_kharkiv",
-    "Херсонська область":        "region_kherson",
-    "Хмельницька область":       "region_khmelnytskyi",
-    "Черкаська область":         "region_cherkasy",
-    "Чернівецька область":       "region_chernivtsi",
-    "Чернігівська область":      "region_chernihiv",
-    "Автономна Республіка Крим": "region_crimea",
-    "АР Крим":                   "region_crimea",
-    "м. Севастополь":            "region_sevastopol",
-}
+# Re-use the canonical topic mapping from db_helpers (single source of truth).
+# Occupied territories (Crimea, Luhansk) are present in the mapping for lookup
+# purposes, but upstream guards in ThreatState/MockThreatManager prevent
+# threats from ever reaching this layer for those regions.
+from database.db_helpers import TOPIC_MAPPING as REGION_TOPIC_MAP
 
 
 def get_fcm_topic(raw_topic: str) -> str:

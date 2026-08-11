@@ -9,7 +9,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 from core.threat_state import ThreatState
-from core.regions import ALL_REGIONS, get_genitive_region, get_ukrainian_threat_type
+from core.regions import ALL_REGIONS, PERMANENTLY_OCCUPIED_REGIONS, get_genitive_region, get_ukrainian_threat_type
 from core.threat_state import THREAT_TYPES
 from core.topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
 from analyzer.gemini_analyzer import GeminiThreatAnalyzer
@@ -464,7 +464,7 @@ class TelegramThreatMonitor:
                     region = tgt
                     is_pred = False
                 
-                if not region or region not in ALL_REGIONS or region in ("АР Крим", "Луганська область"):
+                if not region or region not in ALL_REGIONS or region in PERMANENTLY_OCCUPIED_REGIONS:
                     continue
                 
                 # Знижуємо довіру для предиктивних регіонів

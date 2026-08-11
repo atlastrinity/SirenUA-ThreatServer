@@ -247,7 +247,9 @@ def test_fcm_topic_mapping():
     assert get_fcm_topic("м. Київ") == "region_kyiv_city"
     assert get_fcm_topic("Вінницька область") == "region_vinnytsia"
     assert get_fcm_topic("Полтавська область") == "region_poltava"
-    assert get_fcm_topic("Автономна Республіка Крим") == "region_crimea"
+    # Occupied territories are NOT in topic mapping — fall through to sanitization
+    crimea_topic = get_fcm_topic("Автономна Республіка Крим")
+    assert crimea_topic != "region_crimea", "Occupied territories should NOT have dedicated FCM topics"
 
     # Already valid topics pass through
     assert get_fcm_topic("region_sumy") == "region_sumy"

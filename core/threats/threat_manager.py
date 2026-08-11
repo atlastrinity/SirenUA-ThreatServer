@@ -375,8 +375,9 @@ class MockThreatManager:
                    rules_applied: list = None,
                    eta_seconds: Optional[int] = None) -> bool:
         from core.config import REGION_ALIASES
+        from core.regions import PERMANENTLY_OCCUPIED_REGIONS
         norm_region = REGION_ALIASES.get(region, region)
-        if norm_region not in self.threats:
+        if norm_region not in self.threats or norm_region in PERMANENTLY_OCCUPIED_REGIONS:
             return False
         region = norm_region
 
@@ -474,7 +475,8 @@ class MockThreatManager:
 
     def clear_threat(self, region: str, clearing_telemetry: dict = None,
                       group_id: str = None, threat_type: str = None) -> bool:
-        if region not in self.threats:
+        from core.regions import PERMANENTLY_OCCUPIED_REGIONS
+        if region not in self.threats or region in PERMANENTLY_OCCUPIED_REGIONS:
             return False
         old_state = self.threats[region]
         had_threats = len(old_state.active_threats) > 0
@@ -562,7 +564,8 @@ class MockThreatManager:
         }
 
     def set_alarm_active(self, region: str, is_active: bool) -> bool:
-        if region not in self.threats:
+        from core.regions import PERMANENTLY_OCCUPIED_REGIONS
+        if region not in self.threats or region in PERMANENTLY_OCCUPIED_REGIONS:
             return False
         
         if region in self.real_threats_backup:
