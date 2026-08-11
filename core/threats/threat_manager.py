@@ -437,11 +437,14 @@ class MockThreatManager:
             for region, state in self.threats.items():
                 if only_test:
                     original_count = len(state.active_threats)
+                    had_test_flag = state.is_test
                     state.active_threats = [t for t in state.active_threats if not t.is_test]
-                    if len(state.active_threats) < original_count:
+                    if len(state.active_threats) < original_count or had_test_flag:
                         any_changed = True
                         if not state.active_threats:
                             state.clear()
+                        else:
+                            state.is_test = any(t.is_test for t in state.active_threats)
                 else:
                     has_changed = (state.level != "none")
                     if has_changed:
@@ -457,12 +460,13 @@ class MockThreatManager:
             if any_changed:
                 self._execute_save_to_db()
                 self._execute_save_real_threats_to_db()
-                if only_test:
-                    try:
-                        delete_test_history_from_sqlite()
-                        delete_test_history_from_firestore()
-                    except Exception as e:
-                        print(f"⚠️ Помилка очищення тестової історії: {e}")
+
+            if only_test:
+                try:
+                    delete_test_history_from_sqlite()
+                    delete_test_history_from_firestore()
+                except Exception as e:
+                    print(f"⚠️ Помилка очищення тестової історії: {e}")
         finally:
             self._clear_lock.release()
 
