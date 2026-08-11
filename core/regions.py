@@ -349,9 +349,14 @@ MACRO_REGIONS = {
 }
 
 
+# Нижній регістр для регістронезалежної миттєвої нормалізації (O(1))
+REGION_ALIASES_LOWER = {k.lower(): v for k, v in REGION_ALIASES.items()}
+
+
 def normalize_region_name(raw_name: str) -> str:
     """
     Приводить будь-яку розпізнану фразу, скорочення чи назву міста до офіційного канонічного імені області.
+    Підтримує точний та регістронезалежний O(1) пошук.
     """
     if not raw_name:
         return raw_name
@@ -360,10 +365,14 @@ def normalize_region_name(raw_name: str) -> str:
         return name_clean
     if name_clean in REGION_ALIASES:
         return REGION_ALIASES[name_clean]
-    if name_clean in PERMANENTLY_OCCUPIED_REGIONS:
-        return "АР Крим" if ("крим" in name_clean.lower() or "севастопол" in name_clean.lower()) else "Луганська область"
         
     name_lower = name_clean.lower()
+    if name_lower in REGION_ALIASES_LOWER:
+        return REGION_ALIASES_LOWER[name_lower]
+
+    if name_clean in PERMANENTLY_OCCUPIED_REGIONS:
+        return "АР Крим" if ("крим" in name_lower or "севастопол" in name_lower) else "Луганська область"
+        
     for canonical_name, data in ALL_REGIONS.items():
         for kw in data["keywords"]:
             if kw in name_lower:
