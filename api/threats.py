@@ -72,22 +72,15 @@ async def set_mock_threat(request: ThreatSetRequest):
 
 @router.post("/api/threats/scenario")
 async def set_scenario(request: ScenarioRequest):
-    """Запустити тестовий сценарій."""
-    valid_scenarios = {
-        "mig_takeoff", "shaheds_south", "cruise_missiles_west",
-        "massive_attack", "ballistic_kharkiv", "clear"
-    }
-    if request.scenario not in valid_scenarios:
+    """Запустити тестовий сценарій або очистити тестові загрози."""
+    from testing import VALID_SCENARIOS, test_scenario_manager
+    if request.scenario not in VALID_SCENARIOS:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid scenario '{request.scenario}'. Valid: {valid_scenarios}"
+            detail=f"Invalid scenario '{request.scenario}'. Valid: {VALID_SCENARIOS}"
         )
 
-    if request.scenario == "clear":
-        await asyncio.to_thread(threat_manager.clear_all, only_test=True)
-    else:
-        await asyncio.to_thread(threat_manager.set_scenario, request.scenario)
-
+    await asyncio.to_thread(test_scenario_manager.apply_scenario, request.scenario, threat_manager)
     return {"status": "ok", "scenario": request.scenario}
 
 @router.post("/api/threats/clear")

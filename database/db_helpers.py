@@ -244,50 +244,8 @@ def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> b
         _log_error("database_helpers", f"Error checking duplicate history: {e}", "is_duplicate_event", error_type="firebase_error")
     return False
 
-def delete_test_history_from_firestore():
-    db = get_db()
-    if not db:
-        return
-    try:
-        docs = db.collection('sirenua_history').where('is_test', '==', True).get()
-        deleted_count = 0
-        for doc in docs:
-            doc.reference.delete()
-            deleted_count += 1
-        print(f"🧹 Видалено {deleted_count} тестових записів з історії Firestore")
-    except Exception as e:
-        logger.error(f"Помилка видалення тестової історії з Firestore: {e}")
-        _log_error("database_helpers", f"Помилка видалення тестової історії: {e}", "delete_test_history_from_firestore", error_type="firebase_error")
-
-def delete_test_history_from_sqlite():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            DELETE FROM paired_events 
-            WHERE threat_event_id IN (SELECT id FROM threat_history WHERE is_test = 1)
-               OR clearing_event_id IN (SELECT id FROM threat_clearings WHERE is_test = 1)
-        ''')
-        paired_deleted = cursor.rowcount
-
-        cursor.execute('''
-            DELETE FROM telemetry_data 
-            WHERE threat_event_id IN (SELECT id FROM threat_history WHERE is_test = 1)
-        ''')
-        
-        cursor.execute("DELETE FROM threat_history WHERE is_test = 1")
-        threats_deleted = cursor.rowcount
-        
-        cursor.execute("DELETE FROM threat_clearings WHERE is_test = 1")
-        clearings_deleted = cursor.rowcount
-        
-        conn.commit()
-        conn.close()
-        print(f"🧹 Видалено тестові записи з SQLite: {threats_deleted} загроз, {clearings_deleted} відбоїв, {paired_deleted} зв'язаних подій")
-    except Exception as e:
-        logger.error(f"Помилка видалення тестової історії з SQLite: {e}")
-        _log_error("database_helpers", f"Помилка видалення тестової історії з SQLite: {e}", "delete_test_history_from_sqlite", error_type="database_error")
+# Re-export testing cleanup functions from testing package for backward compatibility
+from testing import delete_test_history_from_firestore, delete_test_history_from_sqlite
 
 async def fcm_queue_worker():
     global fcm_queue
