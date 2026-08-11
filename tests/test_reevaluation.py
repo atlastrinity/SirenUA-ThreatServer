@@ -15,7 +15,7 @@ from monitor.telegram_monitor import TelegramThreatMonitor
 from database.analytics_db import init_analytics_db, DB_PATH, on_threat_changed
 import google.generativeai as genai
 
-class TestThreatManager(MockThreatManager):
+class MockReevaluationThreatManager(MockThreatManager):
     def __init__(self):
         super().__init__()
         self.sent_notifications = []
@@ -60,7 +60,7 @@ async def main():
     conn.commit()
     conn.close()
 
-    threat_manager = TestThreatManager()
+    threat_manager = MockReevaluationThreatManager()
     threat_manager.on_change = on_threat_changed
     
     monitor = TelegramThreatMonitor(threat_manager)
@@ -160,6 +160,9 @@ async def main():
         print(dict(r))
         
     conn.close()
+
+def test_reevaluation_pipeline():
+    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())

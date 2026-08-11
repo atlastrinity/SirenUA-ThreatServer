@@ -4,13 +4,13 @@ import asyncio
 import re
 
 # Add threat_server path to sys.path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.threat_state import MockThreatManager
 from core.regions import ALL_REGIONS
 from monitor.telegram_monitor import TelegramThreatMonitor
 
-class TestThreatManager(MockThreatManager):
+class MockPipelineThreatManager(MockThreatManager):
     def __init__(self):
         super().__init__()
         self.sent_notifications = []
@@ -47,10 +47,11 @@ class TestThreatManager(MockThreatManager):
 
 async def run_tests():
     print("==================================================")
-    print("🧪 Запуск тестування повного циклу парсингу та логіки")
+    print("🧪 Запуск повного пайплайну аналізу новин SirenUA")
     print("==================================================\n")
+    os.environ["GEMINI_API_KEYS"] = ""
 
-    threat_manager = TestThreatManager()
+    threat_manager = MockPipelineThreatManager()
     monitor = TelegramThreatMonitor(threat_manager)
     monitor.is_running = True
 
@@ -268,6 +269,9 @@ async def run_tests():
 
     print("\n🎉 ВСІ ТЕСТИ ПРОЙДЕНО УСПІШНО! Логіка та парсер працюють ідеально!")
     print("==================================================")
+
+def test_full_pipeline_execution():
+    asyncio.run(run_tests())
 
 if __name__ == "__main__":
     asyncio.run(run_tests())

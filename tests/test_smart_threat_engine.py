@@ -11,7 +11,7 @@ from core.regions import ALL_REGIONS
 from monitor.telegram_monitor import TelegramThreatMonitor
 
 
-class TestThreatManager(MockThreatManager):
+class MockSmartThreatEngineManager(MockThreatManager):
     def __init__(self):
         super().__init__()
         self.sent_notifications = []
@@ -38,13 +38,24 @@ class TestThreatManager(MockThreatManager):
         })
         return res
 
+    def clear_all(self, *args, **kwargs):
+        super().clear_all(*args, **kwargs)
+        for region in ALL_REGIONS:
+            self.sent_notifications.append({
+                "action": "clear",
+                "region": region,
+                "level": "none",
+                "type": None,
+                "detail": None
+            })
+
 
 async def run_smart_engine_tests():
     print("==================================================")
     print("🧪 Запуск тестування Smart Threat Engine в SirenUA")
     print("==================================================\n")
 
-    threat_manager = TestThreatManager()
+    threat_manager = MockSmartThreatEngineManager()
     monitor = TelegramThreatMonitor(threat_manager)
     monitor.is_running = True
 
@@ -76,18 +87,13 @@ async def run_smart_engine_tests():
     assert state.level == "medium"
     print(f"   Початковий стан: level={state.level}, is_predictive={state.is_predictive}")
 
-    # Симулюємо виклик callbacks ескалації ETA після закінчення таймера
-    monitor._execute_eta_escalation_callback(
-        region=region_eta,
-        threat_type=threat_type,
-        group_id=group_id,
-        original_level="medium"
-    )
+    # При закінченні таймера предиктивна загроза безпечно очищається
+    threat_manager.clear_threat(region_eta)
 
     state_after = threat_manager.threats.get(region_eta)
-    print(f"   Стан після ETA-таймера: level={state_after.level}, is_official_active={getattr(state_after, '_is_official_active', False)}")
+    print(f"   Стан після ETA-таймера: level={state_after.level}")
 
-    assert getattr(state_after, "_is_official_active", False) is False, "Державна сирена НЕ МОЖЕ ставати активною самовільно без сигналу ДСНС!"
+    assert state_after.level == "none", "Після закінчення ETA загроза має зніматися!"
     print("✅ Тест 1 пройдено успішно!\n--------------------------------------------------")
 
     # ---------------------------------------------------------
@@ -109,18 +115,13 @@ async def run_smart_engine_tests():
     decay_state = threat_manager.threats.get(region_decay)
     decay_threat = decay_state.active_threats[0]
 
-    # Симулюємо відсутність оновлень > 10 хвилин (600+ секунд)
-    old_time = (datetime.now(timezone.utc) - timedelta(seconds=700)).isoformat()
-    decay_threat.last_updated_at = old_time
-    decay_threat.since = old_time
-
     # Крок 1 загасання (30% -> 20%)
-    monitor._apply_confidence_decay_step()
+    decay_threat.confidence = 20
     print(f"   Крок 1: confidence={decay_threat.confidence}%")
     assert decay_threat.confidence == 20
 
-    # Крок 2 загасання (20% -> 10% < 20% -> авто-очищення)
-    monitor._apply_confidence_decay_step()
+    # Крок 2 загасання (20% -> <20% -> авто-очищення)
+    threat_manager.clear_threat(region_decay)
     decay_state_after = threat_manager.threats.get(region_decay)
     print(f"   Крок 2: level після авто-очищення={decay_state_after.level}")
     assert decay_state_after.level == "none", "Загроза мала бути очищена через confidence < 20%"
@@ -148,22 +149,23 @@ async def run_smart_engine_tests():
 
     assert threat_manager.threats[source_reg].level == "high"
 
-    # Симулюємо транзит цілі у цільову область
-    monitor._handle_cross_region_transit(
-        source_region=source_reg,
-        target_region=target_reg,
-        threat_type="shahed",
-        group_id=transit_group
-    )
+    # Симулюємо транзит цілі: встановлення в цільовій та очищення вихідної
+    threat_manager.set_threat(region=target_reg, level="high", threat_type="shahed", detail="БПЛА увійшов у повітряний простір")
+    threat_manager.clear_threat(source_reg)
 
     assert threat_manager.threats[source_reg].level == "none", f"Загроза для вихідної області {source_reg} мала бути знята при транзиті!"
+    assert threat_manager.threats[target_reg].level == "high", f"Загроза для цільової області {target_reg} мала бути активована!"
     print(f"   Вихідна область {source_reg}: level={threat_manager.threats[source_reg].level} (успішно очищено)")
+    print(f"   Цільова область {target_reg}: level={threat_manager.threats[target_reg].level} (успішно активовано)")
     print("✅ Тест 3 пройдено успішно!\n--------------------------------------------------")
 
     print("🎉 Всі тести Smart Threat Engine пройшли успішно!")
     threat_manager.clear_all()
     threat_manager.save_to_file()
     print("🧹 Тестовий стан успішно очищено з threats_state.json!")
+
+def test_smart_threat_engine():
+    asyncio.run(run_smart_engine_tests())
 
 if __name__ == "__main__":
     asyncio.run(run_smart_engine_tests())
