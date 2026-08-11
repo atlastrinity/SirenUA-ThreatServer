@@ -371,7 +371,10 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
                 "is_official": "true" if is_official_alarm else "false",
                 "is_test": "true" if is_test else "false",
                 "confidence": str(confidence) if confidence is not None else "",
-                "eta": eta or ""
+                "eta": eta or "",
+                # For iOS NotificationServiceExtension: determines which user toggle to check
+                "event_type": "clear" if level == "none" else ("alarm" if is_official_alarm else "threat"),
+                "sound_file": "vidbiy.wav" if level == "none" else ("siren.wav" if is_official_alarm else "warning.wav"),
             },
             topic=topic,
             android=android_config,

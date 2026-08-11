@@ -72,9 +72,13 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
 
     def _send():
         try:
+            is_official = kwargs.get("is_official", False) or kwargs.get("is_official_alarm", False)
             fcm_data = {
                 "region": topic,
                 "level": "none" if is_clear else kwargs.get("level", "high"),
+                # For iOS NotificationServiceExtension: determines which user toggle to check
+                "event_type": "clear" if is_clear else ("alarm" if is_official else "threat"),
+                "sound_file": "vidbiy.wav" if is_clear else ("siren.wav" if is_official else "warning.wav"),
             }
             if isinstance(data, dict):
                 for k, v in data.items():
