@@ -3,7 +3,7 @@ SirenUA Global Managers Registry.
 Holds singleton instances of managers to prevent circular dependency loops.
 """
 
-from core.threat_state import MockThreatManager
+from core.threats.threat_manager import MockThreatManager
 from database.shelter_manager import ShelterManager
 
 threat_manager = MockThreatManager()
