@@ -78,14 +78,26 @@ def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds
         return False
 
 
-def execute_query_as_dicts(query: str, params: tuple = ()) -> List[Dict[str, Any]]:
+def execute_query_as_dicts(query: str, params: tuple = (), json_fields: list = None) -> List[Dict[str, Any]]:
     """Допоміжна функція для виконання SQL-запитів і повернення результату у вигляді списку словників."""
+    import json
     conn = get_sqlite_connection(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     try:
         cursor.execute(query, params)
         rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            row_dict = dict(row)
+            if json_fields:
+                for jf in json_fields:
+                    if jf in row_dict and isinstance(row_dict[jf], str) and row_dict[jf]:
+                        try:
+                            row_dict[jf] = json.loads(row_dict[jf])
+                        except Exception:
+                            pass
+            result.append(row_dict)
+        return result
     finally:
         conn.close()
