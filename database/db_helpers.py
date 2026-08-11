@@ -21,6 +21,9 @@ try:
 except ImportError:
     HAS_FIREBASE = False
 
+# Re-export helper functions from firestore_sync for backward compatibility
+from database.firestore_sync import run_firestore_with_retry, local_sqlite_restore
+
 # Map of Ukrainian region names to corresponding Firebase FCM topics
 TOPIC_MAPPING = {
     "Вінницька область": "region_vinnytsia",
