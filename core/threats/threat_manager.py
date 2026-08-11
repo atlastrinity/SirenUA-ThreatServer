@@ -374,8 +374,7 @@ class MockThreatManager:
                    telemetry: dict = None,
                    rules_applied: list = None,
                    eta_seconds: Optional[int] = None) -> bool:
-        from core.config import REGION_ALIASES
-        from core.regions import PERMANENTLY_OCCUPIED_REGIONS
+        from core.regions import REGION_ALIASES, PERMANENTLY_OCCUPIED_REGIONS
         norm_region = REGION_ALIASES.get(region, region)
         if norm_region not in self.threats or norm_region in PERMANENTLY_OCCUPIED_REGIONS:
             return False
