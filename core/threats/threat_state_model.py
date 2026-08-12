@@ -174,6 +174,8 @@ class ThreatState:
             return False
 
         if level == "none":
+            if threat_type == "official_alarm":
+                self._is_official_active = False
             if threat_type:
                 self.clear_by_type(threat_type)
             else:
@@ -181,6 +183,8 @@ class ThreatState:
             return True
 
         self.is_test = is_test
+        if threat_type == "official_alarm":
+            self._is_official_active = True
 
         if group_id:
             for existing in self.active_threats:
