@@ -5,7 +5,7 @@ Creates all SQLite tables, indexes, and seeds mock data in dev mode.
 
 import sqlite3
 
-from core.config import DB_PATH, IS_LIVE_MODE
+from core.config import DB_PATH
 from database.db_helpers import get_sqlite_connection
 
 

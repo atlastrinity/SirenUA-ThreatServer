@@ -13,7 +13,6 @@ from fastapi import FastAPI
 
 from core.config import IS_LIVE_MODE, logger
 from core.globals import threat_manager, shelter_manager
-import core.globals
 from core.firebase_init import init_firebase
 from database.error_logger import log_error_to_db
 from database.analytics_db import last_logged_states

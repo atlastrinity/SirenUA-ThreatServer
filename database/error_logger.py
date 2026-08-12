@@ -5,8 +5,7 @@ Functions: log_error_to_db, log_rule_audit_to_db, safe_run_task.
 
 import asyncio
 
-from core.config import DB_PATH
-from database.db_helpers import get_sqlite_connection, execute_write
+from database.db_helpers import execute_write
 
 # Global reference to the main event loop (set from lifespan)
 main_loop = None
