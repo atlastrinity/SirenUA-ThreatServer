@@ -16,9 +16,9 @@ from database.db_helpers import send_fcm_notification
 # Якщо загроза знімається в межах 5.0с — пуші загрози та відбою не надсилаються
 AI_THREAT_VERIFICATION_DELAY: float = 5.0
 
-# Затримка верифікації для офіційних тривог (alerts.in.ua / API): 2.0 секунди
+# Затримка верифікації для офіційних тривог (alerts.in.ua / API): 5.0 секунд
 # Запобігає микро-флікерам при нестабільному зв'язку з джерелом даних
-OFFICIAL_ALARM_VERIFICATION_DELAY: float = 2.0
+OFFICIAL_ALARM_VERIFICATION_DELAY: float = 5.0
 
 # Вікно утримання для відбоїв
 CLEARANCE_HOLD_WINDOW: float = 10.0

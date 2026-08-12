@@ -454,6 +454,7 @@ class MockThreatManager:
                         is_test_flag = state.is_test
                         state.clear()
                         
+                        self.fcm_scheduler.cancel_pending(region)
                         send_fcm_notification(region, "none", is_test=is_test_flag)
                         
                         if not is_test_flag:
