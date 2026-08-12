@@ -4,7 +4,6 @@ Serves as the single source of truth for all departure and arrival threat object
 """
 
 from typing import Dict, Tuple, Optional, List, Any
-import math
 
 # ==============================================================================
 # 1. THREAT TYPE IDENTIFIER CONSTANTS (Single Source of Truth)

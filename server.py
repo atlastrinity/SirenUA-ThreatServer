@@ -4,12 +4,10 @@ Modularized entrypoint for the FastAPI threat server.
 """
 
 import os
-import sys
 import asyncio
-from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -18,17 +16,15 @@ import uvicorn
 import aiohttp
 
 # Core and Config
-from core.config import IS_LIVE_MODE, DB_PATH, logger
+from core.config import IS_LIVE_MODE, logger
 from core.globals import threat_manager, shelter_manager
-import core.globals
 import time
 
 # Database and Helpers
-from database.db_helpers import HAS_FIREBASE, get_db
+from database.db_helpers import HAS_FIREBASE
 from database.analytics_db import (
     init_analytics_db,
     log_error_to_db,
-    log_rule_audit_to_db,
     last_logged_states,
     on_threat_changed,
     safe_run_task,
