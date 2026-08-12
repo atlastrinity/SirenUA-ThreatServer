@@ -364,16 +364,21 @@ class MockThreatManager:
                                   detail: Optional[str], confidence: Optional[int], eta: Optional[str],
                                   is_official_alarm: bool, is_test: bool):
         """
-        Відправка FCM пушів із 5-секундною верифікаційною паузою для не-офіційних ШІ-загроз.
-        Якщо загроза знімається в межах 5 секунд — пуш загрози та відбою НІКОЛИ не відправляються.
+        Відправка FCM пушів із централізованою верифікаційною паузою (core/notification_policy.py).
+        - ШІ-загрози: 5.0с верифікації (запобігає флікерам при короткочасних курсах цілей)
+        - Офіційні сирени: 2.0с верифікації (запобігає микро-обривам при миготливому зв'язку)
+        - Ручні тести: 0.0с (миттєво)
         """
+        from core.notification_policy import get_verification_delay
+
         with self._pending_fcm_lock:
             existing_timer = self._pending_fcm_timers.pop(region, None)
             if existing_timer:
                 existing_timer.cancel()
 
-        # Офіційні сирени, відбої та тестові сценарії відправляються МИТТЄВО (без затримки)
-        if is_official_alarm or is_test or level == "none":
+        delay = get_verification_delay(is_official_alarm, is_test, level)
+
+        if delay <= 0.0:
             try:
                 import threading
                 threading.Thread(
@@ -391,7 +396,8 @@ class MockThreatManager:
                 print(f"⚠️ Помилка старту фонової відправки FCM: {fcm_err}")
             return
 
-        # ШІ-загрози затримуються на 5 секунд для верифікації
+        label = "Офіційну тривогу" if is_official_alarm else "ШІ-загрозу"
+
         def _execute_send():
             with self._pending_fcm_lock:
                 self._pending_fcm_timers.pop(region, None)
@@ -402,15 +408,15 @@ class MockThreatManager:
                         confidence=confidence, eta=eta,
                         is_official_alarm=is_official_alarm, is_test=is_test
                     )
-                    print(f"🛡️ [Threat Buffer] Верифіковано та відправлено загрозу для {region} (після 5с перевірки)")
+                    print(f"🛡️ [NotificationPolicy] Верифіковано та відправлено {label} для {region} (після {delay}с перевірки)")
                 except Exception as err:
-                    print(f"⚠️ Помилка відправки верифікованої загрози: {err}")
+                    print(f"⚠️ Помилка відправки верифікованого сповіщення: {err}")
 
-        timer = threading.Timer(5.0, _execute_send)
+        timer = threading.Timer(delay, _execute_send)
         with self._pending_fcm_lock:
             self._pending_fcm_timers[region] = timer
         timer.start()
-        print(f"⏳ [Threat Buffer] Загрозу для {region} поставлено на 5с верифікаційну паузу...")
+        print(f"⏳ [NotificationPolicy] {label} для {region} поставлено на {delay}с верифікаційну паузу...")
 
     def flush_fcm_batch(self):
         if not self._fcm_batch_buffer:
