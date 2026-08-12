@@ -21,15 +21,10 @@ class ThreatState:
 
     @property
     def is_active(self) -> bool:
-        """Повертає True якщо активна офіційна тривога, це АР Крим (постійно в червоній зоні) або є підтверджена висока/критична загроза."""
-        if self.region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь"]:
+        """Повертає True ТІЛЬКИ якщо активна офіційна тривога або це АР Крим/Луганщина (офіційні червоні зони)."""
+        if self.region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь", "Луганська область"]:
             return True
-        if self._is_official_active:
-            return True
-        for t in self.active_threats:
-            if not t.is_predictive and t.level in ["critical", "high"]:
-                return True
-        return False
+        return self._is_official_active
 
     @is_active.setter
     def is_active(self, value: bool):
