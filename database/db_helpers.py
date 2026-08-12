@@ -13,6 +13,12 @@ from datetime import datetime, timezone
 from typing import Optional
 from core.config import DB_PATH, logger
 from database.connection import get_db
+from database.connection import (
+    get_db,
+    get_sqlite_connection,
+    execute_query_as_dicts,
+    execute_write,
+)
 
 try:
     import firebase_admin

@@ -27,7 +27,7 @@ MAX_FLIGHT_TIMEOUT_SECONDS = {
     THREAT_BALLISTIC: 300,      # 5 хвилин (Іскандер-М / Кинжал / С-300)
     THREAT_MIG31K: 450,         # 7.5 хвилин
     THREAT_ISKANDER: 300,       # 5 хвилин
-    THREAT_KAB: 420,            # 7 хвилин (КАБ / ФАБGlide)
+    THREAT_KAB: 300,            # 5 хвилин (КАБ / УМПК / УМПБ)
     THREAT_CRUISE_MISSILE: 900,  # 15 хвилин для одного транзитного сектора
     THREAT_TU95: 1200,          # 20 хвилин
     THREAT_ARTILLERY: 180,      # 3 хвилини
@@ -37,7 +37,7 @@ MAX_FLIGHT_TIMEOUT_SECONDS = {
 def get_missile_max_flight_seconds(threat_type: Optional[str], distance_km: float = 150.0) -> int:
     """
     Обчислює максимальний реалістичний час польоту загрози у секундах.
-    Якщо вказано конкретну відстань, використовується кінематичний розрахунок з допуском 3 хв buffer.
+    Якщо вказано конкретну відстань, використовується кінематичний розрахунок з допуском 2-3 хв buffer.
     """
     if not threat_type:
         return 900  # 15 min default fallback
@@ -48,6 +48,8 @@ def get_missile_max_flight_seconds(threat_type: Optional[str], distance_km: floa
     try:
         kinematic_sec, _ = calculate_kinematic_eta(distance_km, t_type)
         if kinematic_sec is not None and kinematic_sec > 0:
+            if THREAT_KAB in t_type:
+                return min(kinematic_sec + 120, 300)
             # Додаємо 3 хвилини буфера на протиповітряні маневри
             return min(kinematic_sec + 180, 2700)
     except Exception:

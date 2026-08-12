@@ -122,7 +122,7 @@ THREAT_AUTO_CLEAR_DELAYS: Dict[str, Tuple[int, int]] = {
     THREAT_CRUISE_MISSILE: (2700, 3600),   # 45-60 mins
     THREAT_BALLISTIC: (600, 1800),         # 10-30 mins
     THREAT_MIG31K: (1800, 2700),           # 30-45 mins
-    THREAT_KAB: (420, 600),                # 7-10 mins max TTL (glide bomb physical flight limit)
+    THREAT_KAB: (300, 420),                # 5-7 mins max TTL (glide bomb physical flight limit)
     THREAT_TU95: (5400, 5400),             # 90 mins
     THREAT_TU22M3: (3600, 3600),           # 60 mins
     THREAT_SU35: (2700, 3600),             # 45 mins
@@ -141,7 +141,7 @@ THREAT_DEFAULT_ETAS: Dict[str, Tuple[str, str]] = {
     THREAT_CRUISE_MISSILE: ("~55 хв", "+15-30 хв"),
     THREAT_BALLISTIC: ("~15 хв", "~2-5 хв"),
     THREAT_MIG31K: ("~40 хв", "~20-40 хв"),
-    THREAT_KAB: ("~10 хв", "~3-7 хв"),
+    THREAT_KAB: ("~5 хв", "~3-5 хв"),
     THREAT_TU95: ("~110 хв", "~30-90 хв"),
     THREAT_TU22M3: ("~15 хв", "~3-10 хв"),
     THREAT_SU35: ("~20 хв", "~5-15 хв"),
@@ -179,7 +179,7 @@ THREAT_ETA_DEFAULTS_SECONDS: Dict[str, int] = {
     THREAT_CRUISE_MISSILE: 1200,
     THREAT_BALLISTIC: 180,
     THREAT_MIG31K: 1200,
-    THREAT_KAB: 420,
+    THREAT_KAB: 300,
     THREAT_TU95: 3600,
     THREAT_TU22M3: 300,
     THREAT_SU35: 900,
