@@ -3,16 +3,11 @@ SirenUA Database & Push Notification Helpers.
 Handles Firebase / Firestore clients, backups, and FCM queue worker.
 """
 
-import os
-import json
 import sqlite3
-import gzip
-import base64
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from core.config import DB_PATH, logger
-from database.connection import get_db
 from database.connection import (
     get_db,
     get_sqlite_connection,
@@ -27,8 +22,14 @@ try:
 except ImportError:
     HAS_FIREBASE = False
 
-# Re-export helper functions from firestore_sync for backward compatibility
-from database.firestore_sync import run_firestore_with_retry, local_sqlite_restore
+# Re-export Firestore sync helpers for backward compatibility.
+# The canonical implementations live in database.firestore_sync.
+from database.firestore_sync import (
+    run_firestore_with_retry,
+    local_sqlite_restore,
+    backup_sqlite_to_firestore,
+    restore_sqlite_from_firestore,
+)
 
 # Map of Ukrainian region names to corresponding Firebase FCM topics
 TOPIC_MAPPING = {
@@ -78,148 +79,6 @@ def get_db():
         logger.error(f"Помилка отримання Firestore клієнта: {e}")
         _log_error("database_helpers", f"Помилка отримання Firestore клієнта: {e}", "get_db", error_type="firebase_error")
         return None
-
-def backup_sqlite_to_firestore():
-    """Стискає всю локальну базу даних SQLite та робить резервну копію у Firestore."""
-        
-    db = get_db()
-    if not db:
-        print("⚠️ [Backup] Firebase не ініціалізовано, пропуск резервного копіювання SQLite.")
-        return False
-        
-    try:
-        if not os.path.exists(DB_PATH):
-            return False
-            
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        # Перевірка наявності таблиць перед зчитуванням
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables_in_db = [r["name"] for r in cursor.fetchall()]
-        
-        backup_data = {}
-        target_tables = ["gemini_rules", "paired_events", "threat_history", "threat_clearings", "telemetry_data", "gemini_rules_audit", "error_log"]
-        
-        for table in target_tables:
-            if table in tables_in_db:
-                cursor.execute(f"SELECT * FROM {table}")
-                backup_data[table] = [dict(row) for row in cursor.fetchall()]
-            else:
-                backup_data[table] = []
-                
-        conn.close()
-        
-        # Додаємо мітку часу
-        backup_data["backup_timestamp"] = str(datetime.now(timezone.utc))
-        
-        json_str = json.dumps(backup_data, ensure_ascii=False)
-        compressed = gzip.compress(json_str.encode('utf-8'))
-        encoded = base64.b64encode(compressed).decode('utf-8')
-        
-        db.collection('sirenua_backup').document('sqlite_compressed').set({
-            "data": encoded,
-            "size_kb": round(len(encoded) / 1024, 2),
-            "updated_at": firestore.SERVER_TIMESTAMP
-        })
-        print(f"💾 [Backup] SQLite успішно збережено у Firestore (розмір: {len(encoded) / 1024:.2f} KB)")
-        return True
-    except Exception as e:
-        logger.error(f"Помилка резервного копіювання SQLite у Firestore: {e}")
-        _log_error("database_helpers", f"Помилка резервного копіювання SQLite: {e}", "backup_sqlite_to_firestore", error_type="database_error")
-        return False
-
-def restore_sqlite_from_firestore(force: bool = False):
-    """Відновлює локальну базу даних SQLite зі стиснутого бекапу в Firestore."""
-        
-    db = get_db()
-    if not db:
-        print("⚠️ [Restore] Firebase не ініціалізовано, пропуск відновлення SQLite.")
-        return False
-        
-    try:
-        # Перевіряємо чи є дані локально. Якщо правила чи зв'язані події вже є — пропуск відновлення (якщо не примусово)
-        if os.path.exists(DB_PATH):
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            
-            # Перевіряємо наявність таблиць
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gemini_rules'")
-            has_rules_table = cursor.fetchone()
-            
-            rules_count = 0
-            events_count = 0
-            if has_rules_table:
-                cursor.execute("SELECT COUNT(*) FROM gemini_rules")
-                rules_count = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM paired_events")
-                events_count = cursor.fetchone()[0]
-            conn.close()
-            
-            if not force and (rules_count > 0 or events_count > 0):
-                print("💾 [Restore] Локальна SQLite вже містить дані (rules чи events), пропуск відновлення.")
-                return False
-                
-        doc_ref = db.collection('sirenua_backup').document('sqlite_compressed')
-        doc = doc_ref.get()
-        if not doc.exists:
-            print("⚠️ [Restore] Бекап SQLite не знайдено у Firestore.")
-            return False
-            
-        payload = doc.to_dict()
-        encoded = payload.get("data")
-        if not encoded:
-            print("⚠️ [Restore] Дані бекапу SQLite порожні.")
-            return False
-            
-        compressed = base64.b64decode(encoded)
-        json_str = gzip.decompress(compressed).decode('utf-8')
-        backup_data = json.loads(json_str)
-        
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        tables = [
-            ("gemini_rules", ["id", "created_at", "updated_at", "rule_type", "source_region", "target_region", "threat_type", "rule_text", "rule_json", "evidence_count", "accuracy_score", "is_active", "last_validated"]),
-            ("paired_events", ["id", "created_at", "region", "threat_event_id", "telemetry_id", "clearing_event_id", "lifecycle_status", "threat_level", "threat_type", "confidence_at_set", "confidence_at_clear", "was_predictive", "prediction_accuracy", "duration_seconds", "gemini_group_id", "rules_applied"]),
-            ("threat_history", ["id", "timestamp", "region", "threat_level", "threat_type", "detail", "confidence", "is_test"]),
-            ("threat_clearings", ["id", "timestamp", "region", "original_threat_event_id", "linked_group_id", "linked_correlation_group", "resolution_type", "intercepted_count", "total_targets_in_wave", "impact_confirmed", "damage_assessment", "civilian_casualties_reported", "infrastructure_hit", "air_defense_effectiveness", "threat_duration_assessment", "prediction_accuracy_hint", "was_predictive", "original_threat_level", "original_threat_type", "original_confidence", "clearing_confidence", "clearing_context_tags", "source_reliability", "time_of_day_category", "clearing_source_channel", "clearing_message_text", "threat_set_timestamp", "threat_duration_seconds", "is_test"]),
-            ("telemetry_data", ["id", "threat_event_id", "group_id", "attack_vector", "target_count", "speed_kmh", "altitude_category", "heading_degrees", "distance_to_target_km", "launch_origin", "weapon_subtype", "engagement_status", "air_defense_active", "multiple_waves", "wave_number", "time_of_day_category", "weather_factor", "source_reliability", "message_context_tags", "strategic_priority", "civilian_risk_level", "event_phase", "correlation_group", "target_cities_coords"]),
-            ("gemini_rules_audit", ["id", "timestamp", "action", "rule_type", "rule_text", "source_region", "target_region", "threat_type", "reason"]),
-            ("error_log", ["id", "timestamp", "source", "error_type", "message", "endpoint", "context"])
-        ]
-        
-        cursor.execute("PRAGMA foreign_keys = OFF")
-        
-        for table_name, columns in tables:
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
-            if not cursor.fetchone():
-                continue
-                
-            rows = backup_data.get(table_name, [])
-            if not rows:
-                continue
-                
-            cursor.execute(f"DELETE FROM {table_name}")
-            
-            for row in rows:
-                row_keys = [k for k in row.keys() if k in columns]
-                placeholders = ", ".join(["?"] * len(row_keys))
-                cols_str = ", ".join(row_keys)
-                vals = [row[k] for k in row_keys]
-                
-                cursor.execute(f"INSERT OR REPLACE INTO {table_name} ({cols_str}) VALUES ({placeholders})", vals)
-                
-        cursor.execute("PRAGMA foreign_keys = ON")
-        conn.commit()
-        conn.close()
-        print("💾 [Restore] SQLite успішно відновлено з бекапу Firestore!")
-        return True
-    except Exception as e:
-        logger.error(f"Помилка відновлення SQLite з Firestore: {e}")
-        _log_error("database_helpers", f"Помилка відновлення SQLite: {e}", "restore_sqlite_from_firestore", error_type="database_error")
-        return False
 
 def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> bool:
     """Checks local SQLite and Firestore to see if a similar history event was already logged within the last 20 seconds."""

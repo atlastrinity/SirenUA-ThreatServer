@@ -91,10 +91,11 @@ async def get_region_history(
     Час фільтрується суворо за Київською добою (00:00:00 — 23:59:59 Europe/Kiev).
     
     Дані джерел:
-      - Firestore (sirenua_history) — основне джерело. Містить і загрози, і відбої
+      - SQLite (threat_history) — основне джерело. Миттєва локальна вибірка без
+        обмежень квот та мережевих затримок. Містить і загрози, і відбої
         (clearing_logger записує відбій як threat_level="none" прямо сюди).
-      - SQLite (threat_history) — резервне джерело (фолбек), використовується лише
-        якщо Firestore повернув 0 подій. Також містить і загрози, і відбої.
+      - Firestore (sirenua_history) — резервне джерело (фолбек), використовується лише
+        якщо SQLite повернув 0 подій (наприклад, новий контейнер до відновлення бекапу).
     
     Args:
         region: Назва області (URL-encoded)
@@ -135,53 +136,53 @@ async def get_region_history(
     # --- Отримання подій ---
     events = []
     
-    # 1. Firestore (основне джерело) — sirenua_history містить і загрози, і відбої
-    db = get_db()
-    if db:
-        try:
-            docs = await asyncio.to_thread(
-                lambda: db.collection('sirenua_history')
-                          .where('region', '==', region)
-                          .get()
-            )
-            for doc in docs:
-                d = doc.to_dict()
-                ts = d.get('timestamp', '')
-                if utc_start <= ts <= utc_end:
-                    events.append(d)
-        except Exception as e:
-            print(f"⚠️ [History API] Firestore fetch failed: {e}")
+    # 1. SQLite (основне джерело) — миттєва локальна вибірка без обмежень квот та мережевих затримок
+    try:
+        def _fetch_sqlite():
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, timestamp, region, threat_level, threat_type, detail, confidence
+                FROM threat_history
+                WHERE region = ? AND timestamp >= ? AND timestamp <= ? AND is_test = 0
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (region, utc_start, utc_end, min(limit, 200)))
+            rows = cursor.fetchall()
+            conn.close()
+            return [{
+                "id": str(row["id"]),
+                "timestamp": row["timestamp"],
+                "region": row["region"],
+                "threat_level": row["threat_level"],
+                "threat_type": row["threat_type"],
+                "detail": row["detail"],
+                "confidence": row["confidence"]
+            } for row in rows]
 
-    # 2. SQLite фолбек — лише якщо Firestore порожній
-    #    threat_history також містить і загрози, і відбої (clearing_logger дублює їх сюди)
+        events = await asyncio.to_thread(_fetch_sqlite)
+    except Exception as e:
+        print(f"⚠️ [History API] SQLite fetch failed: {e}")
+
+    # 2. Firestore фолбек — лише якщо SQLite порожній (наприклад, новий контейнер до відновлення)
     if not events:
-        try:
-            def _fetch_sqlite():
-                conn = sqlite3.connect(DB_PATH)
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, timestamp, region, threat_level, threat_type, detail, confidence
-                    FROM threat_history
-                    WHERE region = ? AND timestamp >= ? AND timestamp <= ? AND is_test = 0
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                """, (region, utc_start, utc_end, min(limit, 200)))
-                rows = cursor.fetchall()
-                conn.close()
-                return [{
-                    "id": str(row["id"]),
-                    "timestamp": row["timestamp"],
-                    "region": row["region"],
-                    "threat_level": row["threat_level"],
-                    "threat_type": row["threat_type"],
-                    "detail": row["detail"],
-                    "confidence": row["confidence"]
-                } for row in rows]
-
-            events = await asyncio.to_thread(_fetch_sqlite)
-        except Exception as e:
-            print(f"⚠️ [History API] SQLite fallback fetch failed: {e}")
+        db = get_db()
+        if db:
+            try:
+                docs = await asyncio.to_thread(
+                    lambda: db.collection('sirenua_history')
+                              .where('region', '==', region)
+                              .limit(min(limit, 200))
+                              .get()
+                )
+                for doc in docs:
+                    d = doc.to_dict()
+                    ts = d.get('timestamp', '')
+                    if utc_start <= ts <= utc_end:
+                        events.append(d)
+            except Exception as e:
+                print(f"⚠️ [History API] Firestore fallback fetch failed: {e}")
 
     # --- Сортування та дедуплікація ---
     events.sort(key=lambda x: str(x.get('timestamp', '')), reverse=True)
