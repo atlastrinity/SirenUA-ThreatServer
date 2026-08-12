@@ -1526,27 +1526,42 @@ class TelegramThreatMonitor:
                         elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
                         remaining = delay - elapsed
                         
-                        if is_pred or not state.is_active:
-                            if remaining <= 0 or not state.is_active:
-                                # Process immediately via reevaluation instead of silent clear
-                                self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
-                                print(f"⏳ Загроза для {region} (тип: {t_type}) застаріла або сирена неактивна. Заплановано миттєву переоцінку.")
+                        key = (region, t_type, t_gid)
+                        if is_pred:
+                            if remaining <= 0:
+                                if key not in self._reevaluation_tasks:
+                                    self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
+                                    print(f"⏳ Предиктивна загроза для {region} (тип: {t_type}) застаріла (ETA минув). Заплановано миттєву переоцінку.")
                             else:
-                                self._schedule_predictive_reevaluation(region, remaining, t_type, t_gid)
-                                print(f"⏳ Відновлено таймер переоцінки загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
+                                if key not in self._reevaluation_tasks:
+                                    self._schedule_predictive_reevaluation(region, remaining, t_type, t_gid)
+                                    print(f"⏳ Відновлено таймер переоцінки загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
+                        elif not state.is_active:
+                            if remaining <= 0:
+                                if key not in self._reevaluation_tasks:
+                                    self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
+                                    print(f"⏳ Пряма загроза для {region} (тип: {t_type}) застаріла без сирени. Заплановано миттєву переоцінку.")
+                            else:
+                                if key not in self._reevaluation_tasks:
+                                    self._schedule_predictive_reevaluation(region, remaining, t_type, t_gid)
+                                    print(f"⏳ Заплановано переоцінку загрози без сирени для {region} (тип: {t_type}) через {int(remaining)} сек.")
                         else:
                             if remaining <= 0:
                                 self.threat_manager.clear_threat(region, threat_type=t_type, group_id=t_gid)
                                 print(f"⏳ Офіційна загроза для {region} (тип: {t_type}) застаріла під час офлайну. Очищено.")
                             else:
-                                self._schedule_auto_clear(region, remaining, threat_type=t_type, group_id=t_gid)
-                                print(f"⏳ Заплановано автозняття загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
+                                if key not in self._clear_tasks:
+                                    self._schedule_auto_clear(region, remaining, threat_type=t_type, group_id=t_gid)
+                                    print(f"⏳ Заплановано автозняття загрози для {region} (тип: {t_type}) через {int(remaining)} сек.")
                     except Exception as e:
                         print(f"⚠️ Помилка відновлення таймерів для {region}: {e}")
+                        key = (region, t_type, t_gid)
                         if is_pred or not state.is_active:
-                            self._schedule_predictive_reevaluation(region, float(delay), t_type, t_gid)
+                            if key not in self._reevaluation_tasks:
+                                self._schedule_predictive_reevaluation(region, float(delay), t_type, t_gid)
                         else:
-                            self._schedule_auto_clear(region, float(delay), threat_type=t_type, group_id=t_gid)
+                            if key not in self._clear_tasks:
+                                self._schedule_auto_clear(region, float(delay), threat_type=t_type, group_id=t_gid)
 
     def _check_stale_threats_without_alarm(self):
         """Перевіряє наявність об'єктів загроз в областях без офіційної тривоги і планує переоцінку."""
@@ -1554,6 +1569,9 @@ class TelegramThreatMonitor:
         for region, state in self.threat_manager.threats.items():
             if not state.is_active and state.active_threats:
                 for threat in list(state.active_threats):
+                    if getattr(threat, "is_predictive", False):
+                        # Predictive threats have their own ETA-based reevaluation schedule
+                        continue
                     t_type = threat.threat_type
                     t_gid = threat.group_id
                     since_str = threat.since

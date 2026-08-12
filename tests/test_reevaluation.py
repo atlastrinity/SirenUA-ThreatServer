@@ -161,8 +161,34 @@ async def main():
         
     conn.close()
 
+async def async_test_predictive_threat_timer_preservation():
+    """Verify that predictive threats retain their full ETA timer when restore_scheduled_clears() runs."""
+    threat_manager = MockReevaluationThreatManager()
+    monitor = TelegramThreatMonitor(threat_manager)
+    monitor.is_running = True
+
+    region = "Вінницька область"
+    threat_manager.set_threat(
+        region, "low", threat_type="shahed", detail="Predictive threat test",
+        confidence=70, eta="~30 хв", eta_seconds=1800, is_predictive=True
+    )
+    
+    # Run periodic cleanup routines
+    monitor.restore_scheduled_clears()
+    monitor._check_stale_threats_without_alarm()
+
+    reeval_key = (region, "shahed", None)
+    assert reeval_key in monitor._reevaluation_tasks, "Reevaluation task must be scheduled for predictive threat"
+    
+    task = monitor._reevaluation_tasks[reeval_key]
+    assert not task.done(), "Predictive reevaluation task should not complete immediately"
+
+def test_predictive_threat_timer_preservation():
+    asyncio.run(async_test_predictive_threat_timer_preservation())
+
 def test_reevaluation_pipeline():
     asyncio.run(main())
 
 if __name__ == "__main__":
+    test_predictive_threat_timer_preservation()
     asyncio.run(main())
