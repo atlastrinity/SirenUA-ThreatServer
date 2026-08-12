@@ -222,7 +222,28 @@ def restore_sqlite_from_firestore(force: bool = False):
         return False
 
 def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> bool:
-    """Checks Firestore to see if a similar history event was already logged within the last 20 seconds."""
+    """Checks local SQLite and Firestore to see if a similar history event was already logged within the last 20 seconds."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT threat_level, threat_type, timestamp 
+            FROM threat_history 
+            WHERE region = ? 
+            ORDER BY id DESC LIMIT 1
+        ''', (region,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            latest_level, latest_type, latest_time_str = row[0], row[1], row[2]
+            if latest_level == level and latest_type == threat_type and latest_time_str:
+                latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                current_time = datetime.now(timezone.utc)
+                if abs((current_time - latest_time).total_seconds()) < 20:
+                    return True
+    except Exception as sq_err:
+        logger.warning(f"SQLite duplicate check warning: {sq_err}")
+
     db = get_db()
     if not db:
         return False
