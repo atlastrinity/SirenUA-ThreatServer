@@ -2,7 +2,6 @@
 MockThreatManager state coordinator and DB persistence manager.
 """
 
-from datetime import datetime, timezone
 import os
 import json
 import time
@@ -10,7 +9,6 @@ import threading
 from typing import Optional
 
 from core.regions import ALL_REGIONS
-from core.threats.single_threat import SingleThreat
 from core.threats.threat_state_model import ThreatState
 from database.db_helpers import (
     get_db,
@@ -20,15 +18,6 @@ from database.db_helpers import (
     send_fcm_notification,
     run_firestore_with_retry,
 )
-from core.threat_types import (
-    THREAT_SHAHED,
-    THREAT_CRUISE_MISSILE,
-    THREAT_BALLISTIC,
-    THREAT_MIG31K,
-    THREAT_TU95,
-)
-
-
 from core.notification_policy import FCMNotificationScheduler
 
 
