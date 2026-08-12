@@ -298,21 +298,79 @@ def restore_sqlite_from_firestore(force: bool = False):
             context_info="fetching_sqlite_compressed",
             max_retries=3
         )
-        if not doc.exists:
-            print("⚠️ [Restore] Бекап SQLite не знайдено у Firestore.")
-            return False
+        if not doc or not doc.exists:
+            print("⚠️ [Restore] Бекап sqlite_compressed не знайдено, спроба завантаження з колекції sirenua_history...")
+            return _restore_from_sirenua_history_collection(db)
             
-        payload = doc.to_dict()
+        payload = doc.to_dict() or {}
         encoded = payload.get("data")
         if not encoded:
-            print("⚠️ [Restore] Дані бекапу SQLite порожні.")
-            return False
+            print("⚠️ [Restore] Дані бекапу SQLite порожні, спроба завантаження з колекції sirenua_history...")
+            return _restore_from_sirenua_history_collection(db)
             
         success = _restore_from_payload(encoded)
         if success:
             print("💾 [Restore] SQLite успішно відновлено з бекапу Firestore!")
+        else:
+            print("⚠️ [Restore] Не вдалося відновити з payload, спроба завантаження з колекції sirenua_history...")
+            success = _restore_from_sirenua_history_collection(db)
         return success
     except Exception as e:
         logger.error(f"Помилка відновлення SQLite з Firestore: {e}")
         _log_error("database_helpers", f"Помилка відновлення SQLite: {e}", "restore_sqlite_from_firestore", error_type="database_error")
+        return _restore_from_sirenua_history_collection(db)
+
+
+def _restore_from_sirenua_history_collection(db) -> bool:
+    """Підтягує записи історії з колекції sirenua_history в локальну базі SQLite, якщо стиснутий бекап відсутній."""
+    try:
+        conn = get_sqlite_connection(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS threat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                region TEXT,
+                threat_level TEXT,
+                threat_type TEXT,
+                detail TEXT,
+                confidence INTEGER,
+                is_test BOOLEAN DEFAULT 0
+            )
+        ''')
+        conn.commit()
+
+        docs = db.collection('sirenua_history').limit(500).get()
+        restored_count = 0
+        for doc in docs:
+            d = doc.to_dict()
+            region = d.get('region')
+            level = d.get('threat_level')
+            threat_type = d.get('threat_type')
+            detail = d.get('detail')
+            confidence = d.get('confidence')
+            timestamp = d.get('timestamp')
+            is_test = 1 if d.get('is_test') else 0
+            
+            if region and timestamp and level:
+                cursor.execute(
+                    "SELECT 1 FROM threat_history WHERE region = ? AND timestamp = ? AND threat_level = ?",
+                    (region, timestamp, level)
+                )
+                if not cursor.fetchone():
+                    cursor.execute(
+                        "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, timestamp, is_test) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (region, level, threat_type, detail, confidence, timestamp, is_test)
+                    )
+                    restored_count += 1
+        
+        conn.commit()
+        conn.close()
+        if restored_count > 0:
+            print(f"💾 [Restore] Успішно відновлено {restored_count} подій з колекції sirenua_history в SQLite!")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Помилка відновлення з sirenua_history: {e}")
         return False
