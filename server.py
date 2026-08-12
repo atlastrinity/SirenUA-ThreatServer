@@ -97,6 +97,20 @@ async def poll_aerial_alerts():
         sleep_interval = 15.0 if token else 30.0
         await asyncio.sleep(sleep_interval)
 
+async def periodic_sqlite_backup():
+    """Фонова задача регулярного стиснутого бекапу SQLite в Firestore кожні 15 хвилин."""
+    while True:
+        try:
+            await asyncio.sleep(900)  # 15 хвилин
+            from database.db_helpers import backup_sqlite_to_firestore
+            await asyncio.to_thread(backup_sqlite_to_firestore)
+            logger.info("⏰ [Periodic Backup] Автоматичний бекап SQLite успішно збережено в Firestore.")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"⚠️ [Periodic Backup] Помилка періодичного бекапу: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager — запуск/зупинка Telegram моніторингу."""
@@ -160,6 +174,9 @@ async def lifespan(app: FastAPI):
     # Запуск фонового опитування офіційного API
     aerial_alerts_task = asyncio.create_task(poll_aerial_alerts())
 
+    # Запуск періодичного бекапу SQLite в Firestore кожні 15 хвилин
+    periodic_backup_task = asyncio.create_task(periodic_sqlite_backup())
+
     if IS_LIVE_MODE:
         from monitor.telegram_monitor import TelegramThreatMonitor
         core.globals.telegram_monitor = TelegramThreatMonitor(threat_manager)
@@ -170,7 +187,8 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Зупинка фонового опитування
+    # Зупинка фонового бекапу та опитування
+    periodic_backup_task.cancel()
     if aerial_alerts_task:
         aerial_alerts_task.cancel()
         try:
