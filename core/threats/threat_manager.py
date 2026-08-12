@@ -340,7 +340,7 @@ class MockThreatManager:
                     eta=eta,
                     is_official_alarm=self.threats[region].is_active,
                     is_test=self.threats[region].is_test,
-                    active_check_fn=lambda r: r in self.threats and self.threats[r].level != "none"
+                    active_check_fn=lambda r: r in self.threats and (self.threats[r].level != "none" if level != "none" else self.threats[r].level == "none")
                 )
             
             self.save_to_db()
