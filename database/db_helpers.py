@@ -12,7 +12,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from core.config import DB_PATH, logger
-from database.connection import get_db, get_sqlite_connection, execute_query_as_dicts, execute_write
+from database.connection import get_db
 
 try:
     import firebase_admin

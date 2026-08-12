@@ -6,7 +6,6 @@ FastAPI routes for current threat status feed, scenarios, and overrides.
 import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from core.config import IS_LIVE_MODE
 from core.globals import threat_manager
