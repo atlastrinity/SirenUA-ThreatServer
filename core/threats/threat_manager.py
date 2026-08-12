@@ -491,6 +491,16 @@ class MockThreatManager:
             has_changed = (current_official != is_active)
             self.threats[region].is_active = is_active
             if has_changed:
+                level_str = "high" if is_active else "none"
+                detail_str = "Повітряна тривога" if is_active else "Відбій повітряної тривоги"
+                send_fcm_notification(
+                    region=region,
+                    level=level_str,
+                    threat_type="official_alarm",
+                    detail=detail_str,
+                    is_official_alarm=is_active,
+                    is_test=False
+                )
                 self.save_real_threats_to_db()
                 self.save_to_db()
                 if hasattr(self, 'on_change'):
