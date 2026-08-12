@@ -10,9 +10,7 @@ from fastapi import APIRouter, HTTPException
 
 from core.config import get_kyiv_tz_modifier
 from core.topology import REGION_CENTROIDS, SHAHED_ROUTES
-from core.threat_types import THREAT_TYPES
-from database.db_helpers import execute_query_as_dicts, execute_write, get_sqlite_connection
-from core.config import DB_PATH
+from database.db_helpers import execute_query_as_dicts, execute_write
 
 import time
 

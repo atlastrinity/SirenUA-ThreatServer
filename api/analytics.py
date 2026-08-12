@@ -6,9 +6,7 @@ FastAPI routes for heatmap data, telemetry, wave group analysis, pattern mapping
 import sqlite3
 import json
 import asyncio
-import time
-from typing import Optional, List, Dict
-from datetime import datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from core.config import DB_PATH

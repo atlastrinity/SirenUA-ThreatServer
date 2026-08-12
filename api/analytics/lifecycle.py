@@ -3,10 +3,8 @@ Analytics Lifecycle & Telemetry API.
 Endpoints: per-region telemetry, attack groups, lifecycle data, paired events.
 """
 
-import json
 from fastapi import APIRouter, HTTPException
 
-from core.config import DB_PATH
 from database.db_helpers import execute_query_as_dicts
 from database.query_builder import build_and_execute_query
 
