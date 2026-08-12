@@ -34,6 +34,7 @@ async def get_admin_errors(source: str = None, error_type: str = None, days: int
 
 
 @router.get("/api/admin/errors/summary")
+@router.get("/api/admin/errors/stats")
 async def get_admin_errors_summary(days: int = 7):
     """Отримує зведення та статистику помилок сервера."""
     day_filter = f"-{days} days"

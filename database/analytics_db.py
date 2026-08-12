@@ -201,6 +201,21 @@ def init_analytics_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_error_ts ON error_log(timestamp)')
     
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS palantir_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            report_date DATE NOT NULL,
+            threat_assessment_summary TEXT,
+            palantir_vectors_json TEXT,
+            launch_hubs_json TEXT,
+            risk_matrix_json TEXT,
+            confidence_index REAL DEFAULT 0.95,
+            generated_by TEXT DEFAULT 'palantir_engine'
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_palantir_reports_date ON palantir_reports(report_date)')
+
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS gemini_rules_audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
