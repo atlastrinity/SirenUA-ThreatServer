@@ -17,6 +17,7 @@ import aiohttp
 
 # Core and Config
 from core.config import IS_LIVE_MODE, logger
+import core.globals
 from core.globals import threat_manager, shelter_manager
 import time
 
