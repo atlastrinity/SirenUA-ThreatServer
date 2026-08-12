@@ -2,7 +2,7 @@
 Telemetry calculation utilities for Telegram threat monitor.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 def get_time_of_day_modifier(threat_type: str) -> int:

@@ -3,7 +3,7 @@ Text cleaning and regex parsing utilities for Telegram threat monitor.
 """
 
 import re
-from typing import List, Tuple, Optional
+from typing import List
 
 
 def clean_user_facing_threat_detail(text: str) -> str:

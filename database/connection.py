@@ -2,7 +2,6 @@
 SQLite Connection & Data Execution Helpers.
 """
 
-import os
 import sqlite3
 from typing import List, Dict, Any
 from core.config import DB_PATH, logger

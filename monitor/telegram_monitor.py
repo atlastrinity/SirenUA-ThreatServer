@@ -1,14 +1,12 @@
 import asyncio
 import os
 import re
-import sys
 import time
 from typing import Optional
 from telethon import TelegramClient, events
 import aiohttp
 from bs4 import BeautifulSoup
 
-from core.threat_state import ThreatState
 from core.regions import ALL_REGIONS, PERMANENTLY_OCCUPIED_REGIONS, get_genitive_region, get_ukrainian_threat_type
 from core.threat_state import THREAT_TYPES
 from core.topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
@@ -25,7 +23,7 @@ from core.config import (
 )
 
 from monitor.parser import clean_user_facing_threat_detail
-from monitor.telemetry import get_time_of_day_modifier, get_default_auto_clear_delay
+from monitor.telemetry import get_time_of_day_modifier
 
 class TelegramThreatMonitor:
     def __init__(self, threat_manager):

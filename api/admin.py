@@ -4,12 +4,11 @@ FastAPI routes for errors, dashboard aggregated stats, rules history, threat his
 """
 
 import sqlite3
-import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from core.config import DB_PATH
-from database.db_helpers import get_db, get_db_cursor, get_kyiv_tz_modifier, query_all, query_one, execute_non_query
+from database.db_helpers import get_db, get_db_cursor, get_kyiv_tz_modifier
 
 router = APIRouter()
 
