@@ -48,11 +48,16 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
         return False
 
     is_clear = (title == "none" or topic == "none" or kwargs.get("level") == "none")
+    is_official = kwargs.get("is_official", False) or kwargs.get("is_official_alarm", False)
 
     # Format user-facing title and body
     if is_clear:
-        final_title = f"🟢 ВІДБІЙ ТРИВОГИ — {topic}"
-        final_body = "Загрозу нейтралізовано. Можна залишати укриття." if not body or body == "none" else body
+        if is_official:
+            final_title = f"🟢 ВІДБІЙ ТРИВОГИ — {topic}"
+            final_body = "Офіційну тривогу завершено." if not body or body == "none" else body
+        else:
+            final_title = f"🟢 ВІДБІЙ ЗАГРОЗИ — {topic}"
+            final_body = "Загрозу нейтралізовано. Можна залишати укриття." if not body or body == "none" else body
     else:
         if title in ("high", "critical", "moderate", "low", "warning"):
             final_title = f"🚨 ПОВІТРЯНА ТРИВОГА — {topic}"
@@ -72,13 +77,20 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
 
     def _send():
         try:
-            is_official = kwargs.get("is_official", False) or kwargs.get("is_official_alarm", False)
+            if is_clear:
+                event_type = "clear" if is_official else "threat_clear"
+                sound_file = "vidbiy.wav" if is_official else "clearance.wav"
+            else:
+                event_type = "alarm" if is_official else "threat"
+                sound_file = "siren.wav" if is_official else "warning.wav"
+
             fcm_data = {
                 "region": topic,
                 "level": "none" if is_clear else kwargs.get("level", "high"),
+                "is_official": "true" if is_official else "false",
                 # For iOS NotificationServiceExtension: determines which user toggle to check
-                "event_type": "clear" if is_clear else ("alarm" if is_official else "threat"),
-                "sound_file": "vidbiy.wav" if is_clear else ("siren.wav" if is_official else "warning.wav"),
+                "event_type": event_type,
+                "sound_file": sound_file,
             }
             if isinstance(data, dict):
                 for k, v in data.items():

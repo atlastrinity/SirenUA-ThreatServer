@@ -322,19 +322,32 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     if not topic:
         return
 
-    # --- Формування title/body (для банера) ---
-    if level == "none":
-        title = f"🟢 Відбій: {region}"
-        body = "Загрозу знято."
+    # --- Формування title/body (для банера) та event_type/sound_file ---
+    is_clear = (level == "none")
+    if is_clear:
+        if is_official_alarm:
+            title = f"🟢 Відбій тривоги: {region}"
+            body = "Офіційну тривогу завершено." if not detail else detail
+            event_type = "clear"
+            sound_file = "vidbiy.wav"
+        else:
+            title = f"🟢 Відбій загрози: {region}"
+            body = "Загрозу знято." if not detail else detail
+            event_type = "threat_clear"
+            sound_file = "clearance.wav"
     else:
         if is_official_alarm:
             title = f"🔴 Повітряна тривога: {region}"
             body = detail if detail else "Пройдіть в укриття!"
+            event_type = "alarm"
+            sound_file = "siren.wav"
         else:
             level_ukr = {"critical": "КРИТИЧНА", "high": "ВИСОКА", "medium": "СЕРЕДНЯ", "low": "НИЗЬКА"}.get(level, level)
             type_str = f" ({threat_type})" if threat_type else ""
             title = f"⚠️ Загроза {level_ukr}: {region}{type_str}"
             body = detail if detail else "Зафіксовано рух ворожих цілей."
+            event_type = "threat"
+            sound_file = "warning.wav"
 
     try:
         # Тихий APNS push — без звуку, без critical.
@@ -349,7 +362,7 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
                     sound="default",
                     content_available=True,
                     mutable_content=True,
-                    badge=0 if level == "none" else 1,
+                    badge=0 if is_clear else 1,
                 )
             )
         )
@@ -373,8 +386,8 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
                 "confidence": str(confidence) if confidence is not None else "",
                 "eta": eta or "",
                 # For iOS NotificationServiceExtension: determines which user toggle to check
-                "event_type": "clear" if level == "none" else ("alarm" if is_official_alarm else "threat"),
-                "sound_file": "vidbiy.wav" if level == "none" else ("siren.wav" if is_official_alarm else "warning.wav"),
+                "event_type": event_type,
+                "sound_file": sound_file,
             },
             topic=topic,
             android=android_config,
