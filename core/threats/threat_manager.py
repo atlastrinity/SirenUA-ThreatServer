@@ -318,9 +318,6 @@ class MockThreatManager:
             eta_seconds=eta_seconds, telemetry=telemetry
         )
         
-        if level in ["critical", "high"] and not is_predictive:
-            self.threats[region]._is_official_active = True
-        
         if has_changed:
             if self._batch_mode:
                 self._fcm_batch_buffer.append({
