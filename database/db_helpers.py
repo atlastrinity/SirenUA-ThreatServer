@@ -230,17 +230,24 @@ def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> b
             SELECT threat_level, threat_type, timestamp 
             FROM threat_history 
             WHERE region = ? 
-            ORDER BY id DESC LIMIT 1
+            ORDER BY id DESC LIMIT 2
         ''', (region,))
-        row = cursor.fetchone()
+        rows = cursor.fetchall()
         conn.close()
-        if row:
-            latest_level, latest_type, latest_time_str = row[0], row[1], row[2]
-            if latest_level == level and latest_type == threat_type and latest_time_str:
-                latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                current_time = datetime.now(timezone.utc)
-                if abs((current_time - latest_time).total_seconds()) < 20:
-                    return True
+        if rows:
+            current_time = datetime.now(timezone.utc)
+            for row in rows:
+                latest_level, latest_type, latest_time_str = row[0], row[1], row[2]
+                if latest_time_str:
+                    try:
+                        latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        continue
+                    time_diff = abs((current_time - latest_time).total_seconds())
+                    # Only treat as duplicate if a previous event matching level was logged between 2s and 20s ago
+                    if 2.0 <= time_diff < 20.0 and latest_level == level and latest_type == threat_type:
+                        return True
+            return False
     except Exception as sq_err:
         logger.warning(f"SQLite duplicate check warning: {sq_err}")
 
