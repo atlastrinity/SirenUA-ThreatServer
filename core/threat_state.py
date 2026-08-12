@@ -9,13 +9,12 @@ import os
 import json
 import time
 import threading
-from typing import Optional, List, Dict
+from typing import Optional
 
 from core.regions import ALL_REGIONS
 from database.db_helpers import (
     get_db,
     backup_sqlite_to_firestore,
-    restore_sqlite_from_firestore,
     delete_test_history_from_sqlite,
     delete_test_history_from_firestore,
     send_fcm_notification,
