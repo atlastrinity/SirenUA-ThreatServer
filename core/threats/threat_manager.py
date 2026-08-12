@@ -43,6 +43,8 @@ class MockThreatManager:
         self._save_real_timer = None
         self._save_lock = threading.Lock()
         self._fcm_batch_buffer = []
+        self._pending_fcm_timers: dict[str, threading.Timer] = {}
+        self._pending_fcm_lock = threading.Lock()
         
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState(region)
@@ -341,27 +343,74 @@ class MockThreatManager:
                     "is_test": self.threats[region].is_test
                 })
             else:
-                try:
-                    import threading
-                    threading.Thread(
-                        target=send_fcm_notification,
-                        args=(region, level, threat_type, detail),
-                        kwargs={
-                            "confidence": confidence,
-                            "eta": eta,
-                            "is_official_alarm": self.threats[region].is_active,
-                            "is_test": self.threats[region].is_test
-                        },
-                        daemon=True
-                    ).start()
-                except Exception as fcm_err:
-                    print(f"⚠️ Помилка старту фонової відправки FCM: {fcm_err}")
+                self._schedule_fcm_notification(
+                    region=region,
+                    level=level,
+                    threat_type=threat_type,
+                    detail=detail,
+                    confidence=confidence,
+                    eta=eta,
+                    is_official_alarm=self.threats[region].is_active,
+                    is_test=self.threats[region].is_test
+                )
             
             self.save_to_db()
             if hasattr(self, 'on_change'):
                 self.on_change(region, self.threats[region], telemetry=telemetry)
             return True
         return False
+
+    def _schedule_fcm_notification(self, region: str, level: str, threat_type: Optional[str],
+                                  detail: Optional[str], confidence: Optional[int], eta: Optional[str],
+                                  is_official_alarm: bool, is_test: bool):
+        """
+        Відправка FCM пушів із 5-секундною верифікаційною паузою для не-офіційних ШІ-загроз.
+        Якщо загроза знімається в межах 5 секунд — пуш загрози та відбою НІКОЛИ не відправляються.
+        """
+        with self._pending_fcm_lock:
+            existing_timer = self._pending_fcm_timers.pop(region, None)
+            if existing_timer:
+                existing_timer.cancel()
+
+        # Офіційні сирени, відбої та тестові сценарії відправляються МИТТЄВО (без затримки)
+        if is_official_alarm or is_test or level == "none":
+            try:
+                import threading
+                threading.Thread(
+                    target=send_fcm_notification,
+                    args=(region, level, threat_type, detail),
+                    kwargs={
+                        "confidence": confidence,
+                        "eta": eta,
+                        "is_official_alarm": is_official_alarm,
+                        "is_test": is_test
+                    },
+                    daemon=True
+                ).start()
+            except Exception as fcm_err:
+                print(f"⚠️ Помилка старту фонової відправки FCM: {fcm_err}")
+            return
+
+        # ШІ-загрози затримуються на 5 секунд для верифікації
+        def _execute_send():
+            with self._pending_fcm_lock:
+                self._pending_fcm_timers.pop(region, None)
+            if region in self.threats and self.threats[region].level != "none":
+                try:
+                    send_fcm_notification(
+                        region, level, threat_type, detail,
+                        confidence=confidence, eta=eta,
+                        is_official_alarm=is_official_alarm, is_test=is_test
+                    )
+                    print(f"🛡️ [Threat Buffer] Верифіковано та відправлено загрозу для {region} (після 5с перевірки)")
+                except Exception as err:
+                    print(f"⚠️ Помилка відправки верифікованої загрози: {err}")
+
+        timer = threading.Timer(5.0, _execute_send)
+        with self._pending_fcm_lock:
+            self._pending_fcm_timers[region] = timer
+        timer.start()
+        print(f"⏳ [Threat Buffer] Загрозу для {region} поставлено на 5с верифікаційну паузу...")
 
     def flush_fcm_batch(self):
         if not self._fcm_batch_buffer:
@@ -418,9 +467,20 @@ class MockThreatManager:
         if has_changed:
             current_level = old_state.level
             if current_level == "none":
-                send_fcm_notification(region, "none",
-                                      is_official_alarm=old_state.is_active,
-                                      is_test=removed_threat.is_test if removed_threat else False)
+                # Перевіряємо чи була загроза в пендінгу на 5с паузі
+                was_pending = False
+                with self._pending_fcm_lock:
+                    pending_timer = self._pending_fcm_timers.pop(region, None)
+                    if pending_timer:
+                        pending_timer.cancel()
+                        was_pending = True
+
+                if was_pending:
+                    print(f"🔇 [Threat Buffer] Загрозу для {region} скасовано в межах 5с паузи! Пуш загрози та відбою НІКОЛИ не надсилалися.")
+                else:
+                    send_fcm_notification(region, "none",
+                                          is_official_alarm=old_state.is_active,
+                                          is_test=removed_threat.is_test if removed_threat else False)
 
             if not self._batch_mode:
                 self.save_to_db()
