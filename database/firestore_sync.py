@@ -15,16 +15,16 @@ from database.connection import get_sqlite_connection, _log_error
 
 try:
     import firebase_admin
+    from firebase_admin import firestore
     HAS_FIREBASE = True
 except ImportError:
     HAS_FIREBASE = False
+    firestore = None
 
 
 def get_db():
     """Отримує Firestore клієнта."""
-    try:
-        from firebase_admin import firestore
-    except ImportError:
+    if not HAS_FIREBASE or firestore is None:
         logger.error("firebase_admin не встановлено")
         _log_error("database_helpers", "firebase_admin не встановлено", "get_db", error_type="firebase_error")
         return None
@@ -67,7 +67,9 @@ def run_firestore_with_retry(operation_func, operation_name="firestore_op", cont
         context=context_info,
         error_type="firebase_error"
     )
-    raise last_exception
+    if last_exception:
+        raise last_exception
+    raise RuntimeError(f"Firestore operation {operation_name} failed")
 
 
 def _get_backup_paths(db_path: str = None):
