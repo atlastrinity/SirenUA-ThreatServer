@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from core.config import IS_LIVE_MODE, logger
 from core.globals import threat_manager, shelter_manager
+import core.globals
 from core.firebase_init import init_firebase
 from database.error_logger import log_error_to_db
 from database.analytics_db import last_logged_states
@@ -138,6 +139,21 @@ async def lifespan(app: FastAPI):
             logger.error(f"Помилка завантаження укриттів: {e}")
 
     asyncio.create_task(load_shelters_background())
+
+    # Background auto-restore retry loop (if startup restore was blocked by Firestore quota)
+    async def auto_restore_retry_loop():
+        for _ in range(24):  # Try up to 2 hours (every 5 min)
+            await asyncio.sleep(300)
+            try:
+                from database.firestore_sync import try_background_restore_if_empty
+                restored = await asyncio.to_thread(try_background_restore_if_empty)
+                if restored:
+                    logger.info("💾 [AutoRestore] Успішно підтягнуто історичні дані з Firestore у фоновому режимі!")
+                    break
+            except Exception as e:
+                logger.warning(f"⚠️ [AutoRestore] Спроба фонового відновлення: {e}")
+
+    asyncio.create_task(auto_restore_retry_loop())
 
     # Aerial alerts polling
     aerial_alerts_task = asyncio.create_task(poll_aerial_alerts())

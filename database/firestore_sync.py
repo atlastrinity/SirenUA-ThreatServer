@@ -376,3 +376,19 @@ def _restore_from_sirenua_history_collection(db) -> bool:
     except Exception as e:
         logger.error(f"Помилка відновлення з sirenua_history: {e}")
         return False
+
+
+def try_background_restore_if_empty() -> bool:
+    """Перевіряє, чи SQLite містить мало записів (наприклад, через 429 ліміти при старті), і намагається підтягнути бекап."""
+    try:
+        conn = get_sqlite_connection(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM threat_history")
+        count = cursor.fetchone()[0]
+        conn.close()
+        if count < 10:
+            print(f"🔄 [AutoRestore] У SQLite лише {count} подій. Спроба відновлення з Firestore...")
+            return restore_sqlite_from_firestore(force=True)
+    except Exception as e:
+        logger.warning(f"⚠️ [AutoRestore] Помилка фонового відновлення: {e}")
+    return False
