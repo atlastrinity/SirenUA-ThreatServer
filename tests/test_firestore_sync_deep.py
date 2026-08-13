@@ -17,7 +17,7 @@ from database.firestore_sync import (
     restore_sqlite_from_firestore,
     delete_test_history_from_firestore,
 )
-from database.threat_logger import log_threat_to_db, log_threat_to_firestore
+from database.threat_logger import log_threat_to_db, log_threat_to_firestore, flush_history_batch
 from database.connection import get_sqlite_connection, DB_PATH
 from core.threat_state import MockThreatManager
 
@@ -101,6 +101,7 @@ def test_history_event_sync():
         detail=unique_detail,
         is_test=True
     )
+    flush_history_batch()
 
     # Перевірка в Firestore
     docs = list(db.collection("sirenua_history").where("detail", "==", unique_detail).get())

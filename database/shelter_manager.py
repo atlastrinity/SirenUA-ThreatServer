@@ -212,11 +212,16 @@ async def _fetch_osm_shelters() -> List[Shelter]:
     logger.info("📡 Завантаження укриттів з OpenStreetMap (Overpass API)...")
     t0 = time.time()
 
+    headers = {
+        "User-Agent": "SirenUA-ThreatServer/1.0 (https://sirenua.com)",
+        "Accept": "application/json",
+    }
     async with aiohttp.ClientSession() as session:
         async with session.post(
             OVERPASS_URL,
             data={"data": OVERPASS_QUERY},
-            timeout=aiohttp.ClientTimeout(total=180),
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=20),
         ) as resp:
             if resp.status != 200:
                 text = await resp.text()

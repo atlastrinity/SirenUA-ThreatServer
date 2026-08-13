@@ -200,7 +200,13 @@ async def lifespan(app: FastAPI):
     if core.globals.telegram_monitor:
         await core.globals.telegram_monitor.stop()
 
-    # Фінальний бекап SQLite
+    # Фінальний скид черги історії та бекап SQLite
+    try:
+        from database.threat_logger import flush_history_batch
+        flush_history_batch()
+    except Exception as e:
+        logger.error(f"⚠️ [Lifespan Shutdown] Помилка скиду черги історії: {e}")
+
     try:
         from database.db_helpers import backup_sqlite_to_firestore
         await asyncio.to_thread(backup_sqlite_to_firestore)

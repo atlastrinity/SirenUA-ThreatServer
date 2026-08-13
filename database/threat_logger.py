@@ -11,8 +11,27 @@ from core.config import DB_PATH
 from database.db_helpers import get_db, is_duplicate_event, get_sqlite_connection, run_firestore_with_retry
 from database.error_logger import log_error_to_db
 
-# Firestore history batch buffer — collects writes during batch mode for one flush
+import threading
+
+# Firestore history batch buffer — collects writes and commits them in batches
 _history_batch_buffer = []
+_batch_lock = threading.Lock()
+_batch_timer = None
+
+
+def queue_history_for_batch(doc_data: dict, region: str):
+    """Adds a history document to the in-memory batch buffer and schedules a flush."""
+    global _batch_timer
+    with _batch_lock:
+        _history_batch_buffer.append((doc_data, region))
+        if len(_history_batch_buffer) >= 20:
+            if _batch_timer:
+                _batch_timer.cancel()
+                _batch_timer = None
+            threading.Thread(target=flush_history_batch, daemon=True).start()
+        elif _batch_timer is None:
+            _batch_timer = threading.Timer(1.0, flush_history_batch)
+            _batch_timer.start()
 
 
 def log_threat_to_db(
@@ -110,13 +129,12 @@ def log_threat_to_firestore(
     telemetry: dict = None,
     is_test: bool = False,
 ):
-    """Log threat event to Firebase Firestore with retry on quota errors."""
+    """Buffers threat event for atomic batched write to Firebase Firestore."""
     db = get_db()
     if not db:
         return
 
     if not is_test and is_duplicate_event(region, level, threat_type):
-        print(f"⚠️ Duplicate history event detected for {region} ({level}, {threat_type}), skipping write to Firestore.")
         return
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -135,39 +153,29 @@ def log_threat_to_firestore(
     if telemetry:
         doc_data["telemetry"] = telemetry
 
-    try:
-        run_firestore_with_retry(
-            lambda: db.collection('sirenua_history').add(doc_data),
-            operation_name="log_threat_to_firestore",
-            context_info=f"region={region}"
-        )
-        print(f"🔥 Logged history event to Firestore for {region}: {level} ({threat_type}, is_test={is_test})")
-    except Exception as e:
-        if "429" in str(e) or "Quota" in str(e):
-            print(f"⚠️ [Firestore History] Skipped writing event for {region} (Firestore 429 Quota Exceeded). History is safely saved in local SQLite.")
-        else:
-            print(f"❌ Firestore history write failed for {region}: {e}")
-
+    queue_history_for_batch(doc_data, region)
 
 
 def flush_history_batch():
     """Flush all buffered Firestore history writes in a single batch operation."""
-    global _history_batch_buffer
-    if not _history_batch_buffer:
-        return
+    global _batch_timer, _history_batch_buffer
+    with _batch_lock:
+        if _batch_timer:
+            _batch_timer.cancel()
+            _batch_timer = None
+        if not _history_batch_buffer:
+            return
+        items = list(_history_batch_buffer)
+        _history_batch_buffer.clear()
 
     db = get_db()
     if not db:
-        _history_batch_buffer.clear()
         return
-
-    items = list(_history_batch_buffer)
-    _history_batch_buffer.clear()
 
     try:
         def perform_batch():
             batch = db.batch()
-            for doc_data in items:
+            for doc_data, _ in items:
                 ref = db.collection('sirenua_history').document()
                 batch.set(ref, doc_data)
             batch.commit()
@@ -177,9 +185,15 @@ def flush_history_batch():
             operation_name="flush_history_batch",
             context_info=f"batch_size={len(items)}"
         )
-        print(f"🔥 Batch flush: {len(items)} history записів за один Firestore write")
-    except Exception:
-        pass
+        regions_list = sorted({r for _, r in items})
+        summary_str = ", ".join(regions_list[:5]) + (f" +ще {len(regions_list)-5}" if len(regions_list) > 5 else "")
+        print(f"🔥 [Firestore Batch] Збережено {len(items)} подій історії в одному пакеті ({summary_str})")
+    except Exception as e:
+        if "429" in str(e) or "Quota" in str(e):
+            print(f"⚠️ [Firestore Batch] Quota 429 при пакетному записі {len(items)} подій. Історія надійно збережена в локальній SQLite.")
+        else:
+            print(f"❌ [Firestore Batch] Помилка пакетного запису {len(items)} подій: {e}")
+            log_error_to_db("firebase", str(e), endpoint="flush_history_batch", context=f"count={len(items)}")
 
 
 def validate_prediction_on_alarm(region: str):
