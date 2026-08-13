@@ -5,7 +5,7 @@ Encapsulates all logic for purging test records from SQLite, Firestore, and RAM.
 
 import sqlite3
 from core.config import DB_PATH, logger
-from database.connection import get_db
+from database.db_helpers import get_db as get_firestore_db
 
 def delete_test_history_from_sqlite() -> dict:
     """Видаляє всі тестові записи (is_test = 1) з SQLite таблиць аналітики."""
@@ -24,6 +24,7 @@ def delete_test_history_from_sqlite() -> dict:
             DELETE FROM telemetry_data 
             WHERE threat_event_id IN (SELECT id FROM threat_history WHERE is_test = 1)
         ''')
+        telemetry_deleted = cursor.rowcount
         
         cursor.execute("DELETE FROM threat_history WHERE is_test = 1")
         threats_deleted = cursor.rowcount
@@ -37,6 +38,7 @@ def delete_test_history_from_sqlite() -> dict:
         stats = {
             "threats": threats_deleted,
             "clearings": clearings_deleted,
+            "telemetry": telemetry_deleted,
             "paired": paired_deleted
         }
         logger.info(f"🧹 [TestingCleaner] Видалено з SQLite: {threats_deleted} загроз, {clearings_deleted} відбоїв, {paired_deleted} зв'язаних подій")
@@ -47,7 +49,7 @@ def delete_test_history_from_sqlite() -> dict:
 
 def delete_test_history_from_firestore() -> int:
     """Видаляє всі тестові записи (is_test == True) з хмарної колекції Firestore sirenua_history за допомогою батчів."""
-    db = get_db()
+    db = get_firestore_db()
     if not db:
         return 0
     try:

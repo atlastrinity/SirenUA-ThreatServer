@@ -496,6 +496,7 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                 SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
                 FROM threat_history th
                 LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
+                WHERE th.region = ? AND th.threat_type = 'official_alarm' AND tc.id IS NULL
                 ORDER BY th.timestamp DESC LIMIT 1
             ''', (region,))
             row = cursor.fetchone()
