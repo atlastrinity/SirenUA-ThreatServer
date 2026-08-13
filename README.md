@@ -145,13 +145,21 @@ graph TD
 - `GET /api/admin/dashboard/stats` — Загальна статистика точності, кількість активних загроз та сумарна аналітика за 7 днів.
 - `GET /api/admin/chronology/v2` — Повна хронологія зшитих парних сесій (Paired Events) життєвого циклу тривог.
 - `GET /api/admin/palantir/overview` — Комплексний зріз розвідки Palantir (хаби запуску, матриця ризиків для 26 областей).
+- `GET /api/admin/palantir/chains` — Багатокрокові ланцюжки польотів Маркова (Markov Chains) та ймовірності на вузлових роздоріжжях.
+- `GET /api/admin/palantir/attrition` — Матриця виснаження цілей та оцінка щільності ППО по областях.
 - `GET /api/admin/errors/stats` та `GET /api/admin/errors/recent` — Моніторинг та фільтрація системних помилок (`gemini`, `telegram`, `fcm`, `server`).
 - `GET /api/analytics/rules` та `GET /api/admin/rules/history` — Перелік активних емпіричних правил та історія їх навчання.
 - `GET /api/analytics/heatmap` — Дані історичної активності загроз по областях за останні N днів.
 
+### Самонавчання та автономні процеси (AI Feedback Loop)
+
+- `POST /api/admin/rules/post_mortem?hours=4` — Запуск поглибленої рефлексії після атак (Post-Mortem reflection) та синтезу нових правил.
+- `POST /api/analytics/predictions/learn` — Фоновий 6-годинний статистичний аналізатор завершених сесій та калібрувальник ETA.
+- `POST /api/admin/seed_history` — Генерація синтетичної демо-історії для тестування аналітики.
+
 ### Тестування та симуляції
 
-- `POST /api/threats/mock` — Вручну встановити загрозу для конкретної області.
+- `POST /api/threats/mock` — Вручну встановити кастомну загрозу (з підтримкою телеметрії: швидкість, курс, вектор, впевненість).
 - `POST /api/threats/scenario` — Запуск комплексних симуляційних сценаріїв (`mig_takeoff`, `shaheds_south`, `cruise_missiles_west`, `massive_attack`, `ballistic_kharkiv`, `clear`).
 
 ---
