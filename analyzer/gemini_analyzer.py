@@ -23,7 +23,7 @@ class GeminiThreatAnalyzer:
                 single_key = os.environ.get("GEMINI_API_KEY", "")
                 self.api_keys = [single_key] if single_key else []
             
-        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
         self.current_key_idx = 0
         
         if self.api_keys:
@@ -254,6 +254,11 @@ class GeminiThreatAnalyzer:
                 error_msg = str(e)
                 print(f"❌ Gemini API Error (Attempt {attempt + 1}/{max_attempts}): {error_msg}")
                 self.last_error = error_msg
+                
+                if "404" in error_msg or "no longer available" in error_msg.lower():
+                    print("🔄 Автоматичне перемикання моделі на gemini-flash-latest...")
+                    self.model_name = "gemini-flash-latest"
+                    self.model = genai.GenerativeModel(self.model_name)
                 
                 if len(self.api_keys) > 1 and attempt < max_attempts - 1:
                     # Switch key
@@ -532,7 +537,11 @@ Here are the latest Telegram messages:
                 print(f"❌ Gemini Re-evaluation API Error (Attempt {attempt + 1}/{max_attempts}): {error_msg}")
                 is_rate_limit = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower()
                 
-                if is_rate_limit and len(self.api_keys) > 1:
+                if "404" in error_msg or "no longer available" in error_msg.lower():
+                    self.model_name = "gemini-flash-latest"
+                    self.model = genai.GenerativeModel(self.model_name)
+                
+                if (is_rate_limit or "404" in error_msg) and len(self.api_keys) > 1 and attempt < max_attempts - 1:
                     self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
                     print(f"🔄 Перемикання на наступний API ключ (Індекс {self.current_key_idx})")
                     genai.configure(api_key=self.api_keys[self.current_key_idx])
