@@ -120,17 +120,39 @@ graph TD
 - **Бекап при зупинці (Graceful Shutdown)**: Під час перезапуску сервера або перебудови контейнера на Render, життєвий цикл FastAPI (`lifespan shutdown`) автоматично робить фінальний бекап бази у Firestore.
 - **Автовідновлення при старті**: При запуску контейнера (`lifespan startup`) сервер автоматично завантажує та розпаковує останній бекап з Firestore, зберігаючи історію тривог та вивчені правила.
 
+### 7. 4-Рівнева глобальна система логування та аудиту (Global Logging)
+
+Для забезпечення 100% прозорості функціонування сервера впроваджено 4-рівневу систему збору та аудиту даних:
+
+1. **Рівень 1 (Live Streaming)**: Middleware логування кожного HTTP-запиту (IP, метод, шлях, статус, тривалість), стрім подій Telegram-скрейпера, інжекції правил Gemini та відправки FCM пушів.
+2. **Рівень 2 (Реляційне сховище `threat_analytics.db`)**: 9 спеціалізованих таблиць (`threat_history`, `telemetry_data`, `threat_clearings`, `paired_events`, `gemini_rules`, `gemini_rules_audit`, `error_log`, `palantir_reports`, `analytics_reports`).
+3. **Рівень 3 (Хмарне дзеркалювання в Firestore)**: Реальний стрім історії у `sirenua_threats_history` та 15-хвилинні атомарні GZIP бекапи у `sirenua_database_backup/sqlite_tables`.
+4. **Рівень 4 (Діагностичні API)**: Адміністративні інтерфейси для моніторингу помилок, правил та геопросторових кореляцій.
+
 ---
 
 ## 🚀 API ендпоінти
 
-- `GET /` — Статус сервісу, режим роботи (live/mock) та стан підключення до Telegram.
-- `GET /api/threats` — Поточний стан загроз та офіційних тривог по всіх областях України.
-- `GET /api/gemini/status` — Діагностика статусу роботи API Gemini.
+### Загальні та моніторингові
+
+- `GET /` або `/health` — Статус сервісу, режим роботи (live/mock) та стан підключення до Telegram.
+- `GET /api/threats` — Поточний стан загроз та офіційних тривог по всіх областях України (з розрахунком ETA та векторів).
+- `GET /api/gemini/status` — Діагностика статусу роботи API Gemini, активних ключів та моделі.
+- `POST /api/telegram/test` — Миттєвий тестовий прогін повідомлення через Gemini AI.
+
+### Адміністративні та аналітичні (Admin Console)
+
+- `GET /api/admin/dashboard/stats` — Загальна статистика точності, кількість активних загроз та сумарна аналітика за 7 днів.
+- `GET /api/admin/chronology/v2` — Повна хронологія зшитих парних сесій (Paired Events) життєвого циклу тривог.
+- `GET /api/admin/palantir/overview` — Комплексний зріз розвідки Palantir (хаби запуску, матриця ризиків для 26 областей).
+- `GET /api/admin/errors/stats` та `GET /api/admin/errors/recent` — Моніторинг та фільтрація системних помилок (`gemini`, `telegram`, `fcm`, `server`).
+- `GET /api/analytics/rules` та `GET /api/admin/rules/history` — Перелік активних емпіричних правил та історія їх навчання.
 - `GET /api/analytics/heatmap` — Дані історичної активності загроз по областях за останні N днів.
-- `GET /api/analytics/rules` — Список активних вивчених ШІ правил.
-- `POST /api/threats/mock` — Вручну встановити загрозу для тестування (лише в Mock-режимі).
-- `POST /api/threats/scenario` — Запуск симуляційних сценаріїв (зліт МіГ-31К, атака Шахедів, крилаті ракети тощо).
+
+### Тестування та симуляції
+
+- `POST /api/threats/mock` — Вручну встановити загрозу для конкретної області.
+- `POST /api/threats/scenario` — Запуск комплексних симуляційних сценаріїв (`mig_takeoff`, `shaheds_south`, `cruise_missiles_west`, `massive_attack`, `ballistic_kharkiv`, `clear`).
 
 ---
 
