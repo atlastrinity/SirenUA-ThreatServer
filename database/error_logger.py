@@ -53,6 +53,11 @@ def log_error_to_db(
     error_type: str = None,
 ):
     """Log an error event to the error_log table with automatic type classification and print a structured error banner."""
+    import os
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("TESTING") == "1":
+        # Не записуємо синтетичні помилки юніт-тестів у робочу базу аналітики
+        return
+
     error_msg = str(message)
 
     if not error_type or error_type in ["general", "systemic"]:
