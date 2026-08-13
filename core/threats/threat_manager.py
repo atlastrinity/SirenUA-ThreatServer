@@ -73,11 +73,14 @@ class MockThreatManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT p.region, p.threat_level, p.threat_type, p.confidence_at_set, p.gemini_group_id,
-                       t.attack_vector, t.speed_kmh, t.heading_degrees, t.distance_to_target_km, t.target_cities_coords
+                SELECT p.region, p.threat_level, p.threat_type, p.confidence_at_set, p.gemini_group_id, p.was_predictive,
+                       t.attack_vector, t.speed_kmh, t.heading_degrees, t.distance_to_target_km, t.target_cities_coords,
+                       th.detail as threat_detail
                 FROM paired_events p
                 LEFT JOIN telemetry_data t ON p.telemetry_id = t.id
+                LEFT JOIN threat_history th ON p.threat_event_id = th.id
                 WHERE p.lifecycle_status = 'active'
+                ORDER BY p.id ASC
             """)
             rows = cursor.fetchall()
             conn.close()
@@ -102,15 +105,18 @@ class MockThreatManager:
                                 except Exception:
                                     pass
 
-                        self.set_threat(
-                            region=region,
+                        self.threats[region].set_threat(
                             level=row["threat_level"],
                             threat_type=row["threat_type"],
+                            detail=row["threat_detail"] or f"Загроза {row['threat_type']}",
                             confidence=row["confidence_at_set"],
+                            is_predictive=bool(row["was_predictive"]),
+                            group_id=row["gemini_group_id"],
                             telemetry=telemetry
                         )
                         restored_count += 1
-                print(f"💾 Відновлено {restored_count} активних загроз з локальної SQLite.")
+                self._execute_save_to_db()
+                print(f"💾 Відновлено {restored_count} активних загроз та траєкторій з локальної SQLite.")
                 return True
         except Exception as e:
             print(f"⚠️ Помилка відновлення активних загроз з SQLite: {e}")
@@ -138,7 +144,9 @@ class MockThreatManager:
         if not loaded:
             loaded = self.load_from_file()
 
-        if not loaded or not any(s.is_active for s in self.threats.values()):
+        # Always check if active threats need to be restored from SQLite
+        has_active_threats = any(len(s.active_threats) > 0 for s in self.threats.values())
+        if not has_active_threats:
             self.load_from_sqlite()
 
         self.load_real_threats_from_db()
