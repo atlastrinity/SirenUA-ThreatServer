@@ -15,6 +15,14 @@ from monitor.telegram_monitor import TelegramThreatMonitor
 from database.analytics_db import init_analytics_db, DB_PATH, on_threat_changed
 import google.generativeai as genai
 
+import tempfile
+
+TEMP_TEST_DB = os.path.join(tempfile.gettempdir(), "test_reeval_analytics.db")
+import core.config
+core.config.DB_PATH = TEMP_TEST_DB
+import database.analytics_db
+database.analytics_db.DB_PATH = TEMP_TEST_DB
+
 class MockReevaluationThreatManager(MockThreatManager):
     def __init__(self):
         super().__init__()
@@ -47,11 +55,16 @@ async def main():
     print("🧪 Запуск тестування авто-переоцінки загроз")
     print("==================================================\n")
 
-    # Ініціалізуємо аналітичну БД
+    if os.path.exists(TEMP_TEST_DB):
+        try:
+            os.remove(TEMP_TEST_DB)
+        except OSError:
+            pass
+
+    # Ініціалізуємо тестову БД
     init_analytics_db()
 
-    # Очищаємо таблиці для чистоти тесту
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(TEMP_TEST_DB)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM paired_events")
     cursor.execute("DELETE FROM threat_history")
@@ -140,7 +153,7 @@ async def main():
     print(f"📊 Поточний рівень загрози для {region}: {state.level} (має бути none)")
 
     # Друкуємо вміст таблиць для відлагодження
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(TEMP_TEST_DB)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
