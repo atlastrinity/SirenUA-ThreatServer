@@ -83,7 +83,7 @@ def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds
                     except ValueError:
                         continue
                     time_diff = abs((current_time - latest_time).total_seconds())
-                    if 2.0 <= time_diff < window_seconds and latest_level == level and latest_type == threat_type:
+                    if time_diff < window_seconds and latest_level == level and latest_type == threat_type:
                         return True
         return False
     except Exception as e:

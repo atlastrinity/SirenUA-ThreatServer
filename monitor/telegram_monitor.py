@@ -50,6 +50,7 @@ class TelegramThreatMonitor:
         self.message_history = []
         self.channel_message_buffers = {channel: [] for channel in TARGET_CHANNELS}
         self._reevaluation_tasks = {}
+        self._cleared_predictions_cooldown = {}
         
         # Session file path detection
         self.session_paths = [
@@ -731,6 +732,13 @@ class TelegramThreatMonitor:
                     continue
                 if adj_state.level != "none" and not adj_state.is_predictive:
                     continue  # Already red — skip
+
+                # Anti-flapping: skip if this region/threat_type was recently cleared or expired
+                cooldown_key = (adj_region, threat_type)
+                import time
+                last_cleared_time = self._cleared_predictions_cooldown.get(cooldown_key, 0)
+                if time.time() - last_cleared_time < 600:  # 10 min cooldown
+                    continue
                 
                 # Calculate direction alignment score (0.0 - 1.0)
                 direction_score = 0.5  # Neutral if no bearing
@@ -922,22 +930,32 @@ class TelegramThreatMonitor:
             auto_clear_delay = max(600, min(auto_clear_delay, 7200))  # 10min - 2hrs
             
             pred_gid = f"pred_{region}_{pred['threat_type']}"
-            self.threat_manager.set_threat(
-                region, pred_level, pred["threat_type"], detail,
-                confidence=pred["confidence"],
-                eta=pred["eta_str"],
-                is_predictive=True,
-                is_test=pred.get("is_test", False),
-                telemetry={"group_id": pred_gid},  # Pass group_id inside telemetry for precise deduplication
-                eta_seconds=pred.get("eta_seconds")
-            )
-            self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"], group_id=pred_gid)
-            predictions_applied += 1
             
-            score_detail = f"score={pred['score']:.2f} (dir={pred['direction_score']:.2f}, route=+{pred['route_boost']:.2f}, db=+{pred['db_boost']:.2f})"
-            print(f"🟡 [Предикція] {region} ← {pred['source_region']} "
-                  f"({pred['threat_type']}, {pred_level}) {score_detail} "
-                  f"ETA: {pred['eta_str'] or '?'}")
+            existing_pred = None
+            adj_state = self.threat_manager.threats.get(region)
+            if adj_state and adj_state.active_threats:
+                for t in adj_state.active_threats:
+                    if t.group_id == pred_gid and getattr(t, "is_predictive", False):
+                        existing_pred = t
+                        break
+
+            if not existing_pred:
+                self.threat_manager.set_threat(
+                    region, pred_level, pred["threat_type"], detail,
+                    confidence=pred["confidence"],
+                    eta=pred["eta_str"],
+                    is_predictive=True,
+                    is_test=pred.get("is_test", False),
+                    telemetry={"group_id": pred_gid},  # Pass group_id inside telemetry for precise deduplication
+                    eta_seconds=pred.get("eta_seconds")
+                )
+                self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"], group_id=pred_gid)
+                predictions_applied += 1
+                
+                score_detail = f"score={pred['score']:.2f} (dir={pred['direction_score']:.2f}, route=+{pred['route_boost']:.2f}, db=+{pred['db_boost']:.2f})"
+                print(f"🟡 [Предикція] {region} ← {pred['source_region']} "
+                      f"({pred['threat_type']}, {pred_level}) {score_detail} "
+                      f"ETA: {pred['eta_str'] or '?'}")
         
         if predictions_applied:
             print(f"🟡 [Предикція] Всього виставлено {predictions_applied} предиктивних зон")
@@ -1396,11 +1414,17 @@ class TelegramThreatMonitor:
                 was_predictive=getattr(target_threat, "is_predictive", False)
             )
             
+            # Record clearance cooldown to prevent immediate predictive re-propagation
+            import time
+            self._cleared_predictions_cooldown[(region, threat_type)] = time.time()
+            
             # Clear in manager
             self.threat_manager.clear_threat(region, clearing_telemetry=clearing_telemetry, threat_type=threat_type, group_id=group_id)
             self._cancel_clear_tasks(region, threat_type=threat_type, group_id=group_id)
         else:
-            print(f"🟡 [Re-evaluation] Gemini визначив загрозу як АКТИВНУ або не зміг відповісти для {region}. Залишаємо загрозу діяти.")
+            print(f"🟡 [Re-evaluation] Gemini визначив загрозу як АКТИВНУ або не зміг відповісти для {region}. Залишаємо загрозу діяти (таймаут 120с).")
+            # Back off reevaluation to avoid tight looping
+            self._schedule_predictive_reevaluation(region, 120.0, threat_type, group_id)
 
     def _schedule_auto_clear(self, region: str, delay_seconds: float = 3600, threat_type: str = None, group_id: str = None):
         key = (region, threat_type, group_id)
@@ -1447,8 +1471,8 @@ class TelegramThreatMonitor:
                         if is_pred:
                             if remaining <= 0:
                                 if key not in self._reevaluation_tasks:
-                                    self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
-                                    print(f"⏳ Предиктивна загроза для {region} (тип: {t_type}) застаріла (ETA минув). Заплановано миттєву переоцінку.")
+                                    self._schedule_predictive_reevaluation(region, 30.0, t_type, t_gid)
+                                    print(f"⏳ Предиктивна загроза для {region} (тип: {t_type}) застаріла (ETA минув). Заплановано переоцінку через 30 сек.")
                             else:
                                 if key not in self._reevaluation_tasks:
                                     self._schedule_predictive_reevaluation(region, remaining, t_type, t_gid)
@@ -1456,8 +1480,8 @@ class TelegramThreatMonitor:
                         elif not state.is_active:
                             if remaining <= 0:
                                 if key not in self._reevaluation_tasks:
-                                    self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
-                                    print(f"⏳ Пряма загроза для {region} (тип: {t_type}) застаріла без сирени. Заплановано миттєву переоцінку.")
+                                    self._schedule_predictive_reevaluation(region, 30.0, t_type, t_gid)
+                                    print(f"⏳ Пряма загроза для {region} (тип: {t_type}) застаріла без сирени. Заплановано переоцінку через 30 сек.")
                             else:
                                 if key not in self._reevaluation_tasks:
                                     self._schedule_predictive_reevaluation(region, remaining, t_type, t_gid)
@@ -1502,7 +1526,7 @@ class TelegramThreatMonitor:
                             key = (region, t_type, t_gid)
                             if key not in self._reevaluation_tasks:
                                 print(f"⚠️ [Stale Threat Detected] Об'єкт {t_type} в {region} перебуває без офіційної тривоги {int(elapsed)} сек. Запускаємо переоцінку...")
-                                self._schedule_predictive_reevaluation(region, 5.0, t_type, t_gid)
+                                self._schedule_predictive_reevaluation(region, 30.0, t_type, t_gid)
                     except Exception:
                         pass
 

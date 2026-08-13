@@ -153,7 +153,8 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     if not HAS_FIREBASE:
         return
 
-    mapped_type = threat_type if threat_type else ("official_alarm" if is_official_alarm else None)
+    is_clear = (level == "none")
+    mapped_type = threat_type if threat_type else ("official_alarm" if is_official_alarm else ("threat_clear" if is_clear else None))
     if is_duplicate_event(region, level, mapped_type):
         print(f"⚠️ Duplicate FCM Push detected for {region} ({level}, {mapped_type}), skipping.")
         return
@@ -163,7 +164,6 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
         return
 
     # --- Формування title/body (для банера) та event_type/sound_file ---
-    is_clear = (level == "none")
     if is_clear:
         if is_official_alarm:
             title = f"🟢 Відбій тривоги: {region}"
