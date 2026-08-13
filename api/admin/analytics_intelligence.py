@@ -533,25 +533,55 @@ async def get_analytics_reports(limit: int = 30):
 async def get_multihop_flight_chains(days: int = 30):
     """Palantir Multi-Hop Markov Flight Chains and Branching Analysis."""
     try:
+        chain_counts = {}
+        junction_branches = {}
+
+        # 1. Base empirical routes from SHAHED_ROUTES
+        for route_name, route_list in SHAHED_ROUTES.items():
+            for i in range(len(route_list) - 1):
+                src = route_list[i]
+                tgt = route_list[i + 1]
+                if src not in junction_branches:
+                    junction_branches[src] = {}
+                junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + 4
+
+            for i in range(len(route_list) - 2):
+                sub_chain = " ➔ ".join(route_list[i:i+3])
+                chain_counts[sub_chain] = chain_counts.get(sub_chain, 0) + 4
+
+        # 2. From gemini_rules route patterns
+        rules_query = """
+            SELECT source_region, target_region, evidence_count
+            FROM gemini_rules
+            WHERE rule_type = 'route_pattern' AND is_active = 1
+        """
+        rules_rows = execute_query_as_dicts(rules_query)
+        for r in rules_rows:
+            src = r["source_region"]
+            tgt = r["target_region"]
+            cnt = r.get("evidence_count") or 1
+            if src and tgt:
+                if src not in junction_branches:
+                    junction_branches[src] = {}
+                junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + cnt
+
+        # 3. From paired_events sequences
         query = """
             SELECT gemini_group_id, region, threat_type, created_at, prediction_accuracy, was_predictive
             FROM paired_events
-            WHERE gemini_group_id IS NOT NULL AND gemini_group_id != ''
-              AND created_at >= datetime('now', ?)
-            ORDER BY gemini_group_id, created_at ASC
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at ASC
         """
         rows = execute_query_as_dicts(query, (f"-{days} days",))
 
         groups = {}
         for r in rows:
-            gid = r["gemini_group_id"]
+            gid = r.get("gemini_group_id") or f"wave_{r['created_at'][:13]}"
             if gid not in groups:
                 groups[gid] = []
             if not groups[gid] or groups[gid][-1]["region"] != r["region"]:
                 groups[gid].append(r)
 
-        chain_counts = {}
-        junction_branches = {}
         for gid, p_list in groups.items():
             regions = [p["region"] for p in p_list]
             if len(regions) >= 2:
@@ -567,7 +597,7 @@ async def get_multihop_flight_chains(days: int = 30):
                     chain_counts[sub_chain] = chain_counts.get(sub_chain, 0) + 1
 
         formatted_chains = [
-            {"chain": chain, "occurrences": count, "confidence": min(0.98, round(0.60 + (count * 0.05), 2))}
+            {"chain": chain, "occurrences": count, "confidence": min(0.98, round(0.60 + (count * 0.04), 2))}
             for chain, count in sorted(chain_counts.items(), key=lambda x: x[1], reverse=True)[:15]
         ]
 
