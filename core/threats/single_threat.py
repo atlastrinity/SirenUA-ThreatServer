@@ -49,6 +49,12 @@ class SingleThreat:
                  eta_seconds: Optional[int] = None,
                  transit_from: Optional[str] = None,
                  telemetry: Optional[dict] = None):
+        if not eta and detail:
+            # Автоматично витягуємо розрахований час на прильот (ETA) з тексту деталізації
+            m = re.search(r'Очікуваний час:\s*([~0-9\sа-яА-ЯіІїЇєЄ\-\+]+?)(?:\)|\n|$)', detail, re.IGNORECASE)
+            if m:
+                eta = m.group(1).strip()
+
         level, detail, is_predictive, eta, _ = sanitize_threat_consistency(level, detail, is_predictive, eta)
         self.threat_id: str = group_id or f"t_{uuid.uuid4().hex[:12]}"
         self.level: str = level
