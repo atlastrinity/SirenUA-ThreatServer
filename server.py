@@ -223,23 +223,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# High-frequency routine polling paths that should not spam stdout unless slow or error
+ROUTINE_PATHS = {"/api/threats", "/health", "/favicon.ico"}
+
 # HTTP Request Logging Middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
+    path = request.url.path
     client_host = request.client.host if request.client else "unknown"
-    logger.info(f"⬇️ Incoming request: {request.method} {request.url.path} from {client_host}")
+    ua = request.headers.get("user-agent", "unknown")
+    is_routine = path in ROUTINE_PATHS and request.method == "GET"
+
+    if not is_routine:
+        logger.info(f"⬇️ Incoming request: {request.method} {path} from {client_host} ({ua})")
     try:
         response = await call_next(request)
         duration = time.time() - start_time
-        logger.info(
-            f"⬆️ Response: {request.method} {request.url.path} - Status: {response.status_code} - Duration: {duration:.3f}s"
-        )
+        if not is_routine or response.status_code >= 400 or duration > 1.0:
+            logger.info(
+                f"⬆️ Response: {request.method} {path} - Status: {response.status_code} - Duration: {duration:.3f}s"
+            )
         return response
     except Exception as e:
         duration = time.time() - start_time
         logger.error(
-            f"❌ Request Failed: {request.method} {request.url.path} - Error: {e} - Duration: {duration:.3f}s"
+            f"❌ Request Failed: {request.method} {path} - Error: {e} - Duration: {duration:.3f}s"
         )
         raise e
 
@@ -364,4 +373,4 @@ if __name__ == "__main__":
         print("   При першому запуску потрібно ввести номер телефону та код.")
         print()
 
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False, access_log=False)
