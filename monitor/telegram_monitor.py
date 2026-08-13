@@ -339,6 +339,11 @@ class TelegramThreatMonitor:
 
     async def _apply_gemini_analysis(self, results, is_test: bool = False):
         """Applies Gemini AI analysis results with confidence-based filtering, level adjustment, and telemetry enrichment."""
+        if isinstance(results, dict):
+            results = [results]
+        elif not isinstance(results, list):
+            results = []
+            
         for item in results:
             if not isinstance(item, dict):
                 continue

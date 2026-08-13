@@ -18,7 +18,7 @@ class GeminiThreatAnalyzer:
             single_key = os.environ.get("GEMINI_API_KEY", "")
             self.api_keys = [single_key] if single_key else []
             
-        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         self.current_key_idx = 0
         
         if self.api_keys:
@@ -200,9 +200,9 @@ class GeminiThreatAnalyzer:
             except Exception as e:
                 error_msg = str(e)
                 print(f"❌ Gemini API Error (Attempt {attempt + 1}/{max_attempts}): {error_msg}")
-                is_rate_limit = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower()
+                self.last_error = error_msg
                 
-                if is_rate_limit and len(self.api_keys) > 1:
+                if len(self.api_keys) > 1 and attempt < max_attempts - 1:
                     # Switch key
                     self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
                     print(f"🔄 Перемикання на наступний API ключ (Індекс {self.current_key_idx})")
@@ -210,11 +210,6 @@ class GeminiThreatAnalyzer:
                     self.model = genai.GenerativeModel(self.model_name)
                     # Continue to next attempt
                 else:
-                    if is_rate_limit:
-                        self.last_error = "Rate Limit Exceeded (429)"
-                    else:
-                        self.last_error = error_msg
-                    
                     # Log error via callback
                     if self._error_callback:
                         self._error_callback("gemini", error_msg, endpoint="analyze_batch", context=f"messages_count={len(messages)}")
