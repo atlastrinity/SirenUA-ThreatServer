@@ -46,17 +46,20 @@ def delete_test_history_from_sqlite() -> dict:
         return {"error": str(e)}
 
 def delete_test_history_from_firestore() -> int:
-    """Видаляє всі тестові записи (is_test == True) з хмарної колекції Firestore sirenua_history."""
+    """Видаляє всі тестові записи (is_test == True) з хмарної колекції Firestore sirenua_history за допомогою батчів."""
     db = get_db()
     if not db:
         return 0
     try:
-        docs = db.collection('sirenua_history').where('is_test', '==', True).get()
-        deleted_count = 0
+        docs = list(db.collection('sirenua_history').where('is_test', '==', True).limit(450).get())
+        if not docs:
+            return 0
+        batch = db.batch()
         for doc in docs:
-            doc.reference.delete()
-            deleted_count += 1
-        logger.info(f"🧹 [TestingCleaner] Видалено {deleted_count} тестових записів з Firestore (sirenua_history)")
+            batch.delete(doc.reference)
+        batch.commit()
+        deleted_count = len(docs)
+        logger.info(f"🧹 [TestingCleaner] Видалено {deleted_count} тестових записів з Firestore (sirenua_history) за 1 батч")
         return deleted_count
     except Exception as e:
         logger.error(f"⚠️ [TestingCleaner] Помилка видалення тестової історії з Firestore: {e}")

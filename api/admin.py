@@ -14,13 +14,10 @@ router = APIRouter()
 
 @router.post("/api/admin/seed_history")
 async def seed_history():
-    """Генерує початкову історію подій у Firestore для всіх областей."""
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=503, detail="Firebase Firestore недоступний")
-        
+    """Генерує початкову історію подій у SQLite та Firestore для всіх областей."""
     import random
     from datetime import datetime, timedelta, timezone
+    from database.db_helpers import get_sqlite_connection, backup_sqlite_to_firestore
     
     regions = [
         "Вінницька область", "Волинська область", "Дніпропетровська область",
@@ -34,86 +31,132 @@ async def seed_history():
         "м. Київ", "АР Крим"
     ]
     
-    threat_templates = [
-        {"threat_level": "high", "threat_type": "mig31k", "detail": "Зліт МіГ-31К з аеродрому Саваслейка. Ракетна небезпека!"},
-        {"threat_level": "medium", "threat_type": "shahed", "detail": "Група ударних БпЛА типу 'Shahed' наближається з півдня."},
-        {"threat_level": "high", "threat_type": "cruise_missile", "detail": "Запуск крилатих ракет Х-101/Х-555 з бортів Ту-95МС."},
-        {"threat_level": "critical", "threat_type": "ballistic", "detail": "Загроза застосування балістичного озброєння з Криму!"},
+    threat_configs = [
+        {"threat_level": "high", "threat_type": "shahed", "speed": 185, "altitude": "low", "origin": "Приморсько-Ахтарськ РФ", "vector": "Південь -> Центр", "detail": "Група ударних БпЛА типу Shahed курсом на область"},
+        {"threat_level": "critical", "threat_type": "mig31k", "speed": 2500, "altitude": "extreme", "origin": "Саваслейка РФ", "vector": "Саваслейка -> Вся Україна", "detail": "Зліт МіГ-31К з аеродрому Саваслейка. Ракетна небезпека!"},
+        {"threat_level": "high", "threat_type": "cruise_missile", "speed": 850, "altitude": "low", "origin": "Каспійське море", "vector": "Каспій -> Схід -> Захід", "detail": "Пуски крилатих ракет Х-101/Х-555 стратегічною авіацією"},
+        {"threat_level": "critical", "threat_type": "ballistic", "speed": 4500, "altitude": "high", "origin": "АР Крим", "vector": "Крим -> Південь/Центр", "detail": "Загроза застосування балістичного озброєння з південного напрямку"},
+        {"threat_level": "medium", "threat_type": "kab", "speed": 950, "altitude": "medium", "origin": "Бєлгородська обл. РФ", "vector": "Прикордоння -> Область", "detail": "Пуски керованих авіабомб тактичною авіацією ворога"}
     ]
     
+    db = get_db()
     total_added = 0
     
     try:
+        conn = get_sqlite_connection(DB_PATH)
+        cursor = conn.cursor()
+        base_time = datetime.now(timezone.utc)
+        
+        firestore_batch = db.batch() if db else None
+        batch_count = 0
+        
         for region in regions:
-            base_time = datetime.now(timezone.utc)
+            for day_offset in range(7):
+                cfg = random.choice(threat_configs)
+                t_type = cfg["threat_type"]
+                alert_time = base_time - timedelta(days=day_offset, hours=random.randint(1, 22), minutes=random.randint(5, 55))
+                alert_ts = alert_time.strftime("%Y-%m-%d %H:%M:%S")
+                dur_minutes = random.randint(30, 95)
+                clear_time = alert_time + timedelta(minutes=dur_minutes)
+                clear_ts = clear_time.strftime("%Y-%m-%d %H:%M:%S")
+                dur_seconds = dur_minutes * 60
+                grp_id = f"GRP-{t_type.upper()}-{day_offset}"
+                
+                # 1. SQLite: threat_history
+                cursor.execute("""
+                    INSERT INTO threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test)
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                """, (alert_ts, region, cfg["threat_level"], t_type, cfg["detail"], random.randint(80, 98)))
+                alert_id = cursor.lastrowid
+                
+                # 2. SQLite: telemetry_data
+                cursor.execute("""
+                    INSERT INTO telemetry_data (
+                        threat_event_id, group_id, attack_vector, target_count, speed_kmh,
+                        altitude_category, heading_degrees, distance_to_target_km, launch_origin,
+                        weapon_subtype, engagement_status, air_defense_active, multiple_waves,
+                        wave_number, time_of_day_category, weather_factor, source_reliability,
+                        message_context_tags, strategic_priority, civilian_risk_level, event_phase,
+                        correlation_group, target_cities_coords
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    alert_id, grp_id, cfg["vector"],
+                    random.randint(1, 8), cfg["speed"], cfg["altitude"], random.randint(180, 350),
+                    random.uniform(50.0, 350.0), cfg["origin"], t_type,
+                    "intercepted", "night" if alert_time.hour < 6 or alert_time.hour > 21 else "day",
+                    "clear", "verified", "[\"radar\", \"track\"]", "high", "high", "terminal",
+                    f"CORR-{alert_id}", "[]"
+                ))
+                telemetry_id = cursor.lastrowid
+                
+                # 3. SQLite: official alarm for early warning delta
+                alarm_time = alert_time + timedelta(seconds=random.randint(45, 240))
+                alarm_ts = alarm_time.strftime("%Y-%m-%d %H:%M:%S")
+                cursor.execute("""
+                    INSERT INTO threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test)
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                """, (alarm_ts, region, "high", "official_alarm", "Офіційна повітряна тривога", 100))
+                
+                # 4. SQLite: threat_clearings
+                accuracy = random.choice(["confirmed", "confirmed", "mitigated", "mitigated", "overestimated"])
+                cursor.execute("""
+                    INSERT INTO threat_clearings (
+                        timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group,
+                        resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed,
+                        damage_assessment, civilian_casualties_reported, infrastructure_hit,
+                        air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint,
+                        was_predictive, original_threat_level, original_threat_type, original_confidence,
+                        clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category,
+                        clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 100, ?, ?, ?, ?, ?, ?, ?, 0)
+                """, (
+                    clear_ts, region, alert_id, grp_id, f"CORR-{alert_id}",
+                    "air_defense_intercepted" if accuracy != "overestimated" else "expired_safe",
+                    random.randint(1, 4) if accuracy != "overestimated" else 0, random.randint(1, 4),
+                    0, "intercepted" if accuracy != "overestimated" else "none", 0, "none",
+                    "high", "normal", accuracy, cfg["threat_level"], t_type, random.randint(80, 95),
+                    "[\"clear\"]", "high", "night", "kpszsu", "Відбій загрози", alert_ts, dur_seconds
+                ))
+                clearing_id = cursor.lastrowid
+                
+                # 5. SQLite: paired_events
+                cursor.execute("""
+                    INSERT INTO paired_events (
+                        created_at, region, threat_event_id, telemetry_id, clearing_event_id,
+                        lifecycle_status, threat_level, threat_type, confidence_at_set,
+                        confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds,
+                        gemini_group_id, rules_applied
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 1, ?, ?, ?, ?)
+                """, (
+                    alert_ts, region, alert_id, telemetry_id, clearing_id, "cleared",
+                    cfg["threat_level"], t_type, random.randint(80, 95),
+                    accuracy, dur_seconds, grp_id, "[\"route_pattern\", \"eta_math\"]"
+                ))
+                total_added += 1
+                
+                # 6. Firestore: sirenua_history
+                if db and firestore_batch:
+                    alert_ref = db.collection('sirenua_history').document()
+                    firestore_batch.set(alert_ref, {
+                        "id": alert_id, "region": region, "timestamp": alert_ts,
+                        "threat_level": cfg["threat_level"], "threat_type": t_type,
+                        "detail": cfg["detail"], "confidence": random.randint(80, 95),
+                        "is_test": False
+                    })
+                    batch_count += 1
+                    if batch_count >= 400:
+                        firestore_batch.commit()
+                        firestore_batch = db.batch()
+                        batch_count = 0
+        
+        conn.commit()
+        conn.close()
+        
+        if db and firestore_batch and batch_count > 0:
+            firestore_batch.commit()
             
-            for i in range(3):
-                # 1. Початок тривоги
-                alert_time = base_time - timedelta(days=i, hours=random.randint(2, 6))
-                alert_timestamp = alert_time.strftime("%Y-%m-%d %H:%M:%S")
-                
-                # 2. Відбій тривоги
-                clear_time = alert_time + timedelta(minutes=random.randint(45, 120))
-                clear_timestamp = clear_time.strftime("%Y-%m-%d %H:%M:%S")
-                
-                alert_id = int(alert_time.timestamp() * 1000)
-                clear_id = int(clear_time.timestamp() * 1000)
-                
-                is_tactical = random.choice([True, False])
-                
-                if is_tactical:
-                    template = random.choice(threat_templates)
-                    
-                    alert_doc = {
-                        "id": alert_id,
-                        "region": region,
-                        "timestamp": alert_timestamp,
-                        "threat_level": template["threat_level"],
-                        "threat_type": template["threat_type"],
-                        "detail": template["detail"],
-                        "confidence": random.randint(70, 95),
-                        "telemetry": {
-                            "source_reliability": "high",
-                            "civilian_risk_level": "high" if template["threat_level"] == "high" else "moderate",
-                            "message_context_tags": ["rocket", "alert"] if template["threat_type"] != "shahed" else ["shahed", "drone"]
-                        }
-                    }
-                    
-                    clear_doc = {
-                        "id": clear_id,
-                        "region": region,
-                        "timestamp": clear_timestamp,
-                        "threat_level": "none",
-                        "threat_type": template["threat_type"],
-                        "detail": "Відбій загрози",
-                        "confidence": 100
-                    }
-                else:
-                    alert_doc = {
-                        "id": alert_id,
-                        "region": region,
-                        "timestamp": alert_timestamp,
-                        "threat_level": "high",
-                        "threat_type": "official_alarm",
-                        "detail": "Повітряна тривога",
-                        "confidence": 100
-                    }
-                    
-                    clear_doc = {
-                        "id": clear_id,
-                        "region": region,
-                        "timestamp": clear_timestamp,
-                        "threat_level": "none",
-                        "threat_type": "official_alarm",
-                        "detail": "Відбій повітряної тривоги",
-                        "confidence": 100
-                    }
-                
-                db.collection('sirenua_history').add(alert_doc)
-                db.collection('sirenua_history').add(clear_doc)
-                total_added += 2
-                
-        return {"status": "success", "message": f"Додано {total_added} записів хронології у Firestore для всіх областей"}
+        backup_sqlite_to_firestore()
+        return {"status": "success", "message": f"Додано {total_added} комплексних подій у SQLite та Firestore"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

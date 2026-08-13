@@ -171,7 +171,8 @@ class MockThreatManager:
             os.makedirs(backup_dir, exist_ok=True)
 
             bak_path = filepath + ".bak"
-            tmp_path = filepath + ".tmp"
+            unique_suffix = f"{os.getpid()}_{threading.get_ident()}_{time.time_ns()}"
+            tmp_path = f"{filepath}.{unique_suffix}.tmp"
 
             if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
                 try:

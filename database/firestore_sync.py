@@ -148,21 +148,28 @@ def backup_sqlite_to_firestore():
         cursor = conn.cursor()
         
         tables = [
-            ("gemini_rules", ["id", "created_at", "updated_at", "rule_type", "source_region", "target_region", "threat_type", "rule_text", "rule_json", "evidence_count", "accuracy_score", "is_active", "last_validated"]),
-            ("paired_events", ["id", "created_at", "region", "threat_event_id", "telemetry_id", "clearing_event_id", "lifecycle_status", "threat_level", "threat_type", "confidence_at_set", "confidence_at_clear", "was_predictive", "prediction_accuracy", "duration_seconds", "gemini_group_id", "rules_applied"]),
-            ("threat_history", ["id", "timestamp", "region", "threat_level", "threat_type", "detail", "confidence", "is_test"]),
-            ("threat_clearings", ["id", "timestamp", "region", "original_threat_event_id", "linked_group_id", "linked_correlation_group", "resolution_type", "intercepted_count", "total_targets_in_wave", "impact_confirmed", "damage_assessment", "civilian_casualties_reported", "infrastructure_hit", "air_defense_effectiveness", "threat_duration_assessment", "prediction_accuracy_hint", "was_predictive", "original_threat_level", "original_threat_type", "original_confidence", "clearing_confidence", "clearing_context_tags", "source_reliability", "time_of_day_category", "clearing_source_channel", "clearing_message_text", "threat_set_timestamp", "threat_duration_seconds", "is_test"]),
-            ("telemetry_data", ["id", "threat_event_id", "group_id", "attack_vector", "target_count", "speed_kmh", "altitude_category", "heading_degrees", "distance_to_target_km", "launch_origin", "weapon_subtype", "engagement_status", "air_defense_active", "multiple_waves", "wave_number", "time_of_day_category", "weather_factor", "source_reliability", "message_context_tags", "strategic_priority", "civilian_risk_level", "event_phase", "correlation_group", "target_cities_coords"]),
-            ("gemini_rules_audit", ["id", "timestamp", "action", "rule_type", "rule_text", "source_region", "target_region", "threat_type", "reason"]),
-            ("error_log", ["id", "timestamp", "source", "error_type", "message", "endpoint", "context"])
+            ("gemini_rules", ["id", "created_at", "updated_at", "rule_type", "source_region", "target_region", "threat_type", "rule_text", "rule_json", "evidence_count", "accuracy_score", "is_active", "last_validated"], None),
+            ("paired_events", ["id", "created_at", "region", "threat_event_id", "telemetry_id", "clearing_event_id", "lifecycle_status", "threat_level", "threat_type", "confidence_at_set", "confidence_at_clear", "was_predictive", "prediction_accuracy", "duration_seconds", "gemini_group_id", "rules_applied"], None),
+            ("threat_history", ["id", "timestamp", "region", "threat_level", "threat_type", "detail", "confidence", "is_test"], None),
+            ("threat_clearings", ["id", "timestamp", "region", "original_threat_event_id", "linked_group_id", "linked_correlation_group", "resolution_type", "intercepted_count", "total_targets_in_wave", "impact_confirmed", "damage_assessment", "civilian_casualties_reported", "infrastructure_hit", "air_defense_effectiveness", "threat_duration_assessment", "prediction_accuracy_hint", "was_predictive", "original_threat_level", "original_threat_type", "original_confidence", "clearing_confidence", "clearing_context_tags", "source_reliability", "time_of_day_category", "clearing_source_channel", "clearing_message_text", "threat_set_timestamp", "threat_duration_seconds", "is_test"], None),
+            ("telemetry_data", ["id", "threat_event_id", "group_id", "attack_vector", "target_count", "speed_kmh", "altitude_category", "heading_degrees", "distance_to_target_km", "launch_origin", "weapon_subtype", "engagement_status", "air_defense_active", "multiple_waves", "wave_number", "time_of_day_category", "weather_factor", "source_reliability", "message_context_tags", "strategic_priority", "civilian_risk_level", "event_phase", "correlation_group", "target_cities_coords"], None),
+            ("gemini_rules_audit", ["id", "timestamp", "action", "rule_type", "rule_text", "source_region", "target_region", "threat_type", "reason"], None),
+            ("error_log", ["id", "timestamp", "source", "error_type", "message", "endpoint", "context"], None),
+            ("analytics_reports", ["id", "created_at", "report_date", "report_type", "summary_text", "trajectory_data", "launch_data", "risk_matrix", "generated_by"], 200),
+            ("palantir_reports", ["id", "created_at", "report_date", "threat_assessment_summary", "palantir_vectors_json", "launch_hubs_json", "risk_matrix_json", "confidence_index", "generated_by"], 200),
         ]
         
         backup_data = {}
-        for table_name, columns in tables:
+        for item in tables:
+            table_name, columns = item[0], item[1]
+            limit = item[2] if len(item) > 2 else None
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             if cursor.fetchone():
                 cols_str = ", ".join(columns)
-                cursor.execute(f"SELECT {cols_str} FROM {table_name}")
+                query = f"SELECT {cols_str} FROM {table_name}"
+                if limit:
+                    query += f" ORDER BY id DESC LIMIT {limit}"
+                cursor.execute(query)
                 rows = cursor.fetchall()
                 backup_data[table_name] = [dict(r) for r in rows]
                 
@@ -212,7 +219,9 @@ def _restore_from_payload(encoded: str) -> bool:
             ("threat_clearings", ["id", "timestamp", "region", "original_threat_event_id", "linked_group_id", "linked_correlation_group", "resolution_type", "intercepted_count", "total_targets_in_wave", "impact_confirmed", "damage_assessment", "civilian_casualties_reported", "infrastructure_hit", "air_defense_effectiveness", "threat_duration_assessment", "prediction_accuracy_hint", "was_predictive", "original_threat_level", "original_threat_type", "original_confidence", "clearing_confidence", "clearing_context_tags", "source_reliability", "time_of_day_category", "clearing_source_channel", "clearing_message_text", "threat_set_timestamp", "threat_duration_seconds", "is_test"]),
             ("telemetry_data", ["id", "threat_event_id", "group_id", "attack_vector", "target_count", "speed_kmh", "altitude_category", "heading_degrees", "distance_to_target_km", "launch_origin", "weapon_subtype", "engagement_status", "air_defense_active", "multiple_waves", "wave_number", "time_of_day_category", "weather_factor", "source_reliability", "message_context_tags", "strategic_priority", "civilian_risk_level", "event_phase", "correlation_group", "target_cities_coords"]),
             ("gemini_rules_audit", ["id", "timestamp", "action", "rule_type", "rule_text", "source_region", "target_region", "threat_type", "reason"]),
-            ("error_log", ["id", "timestamp", "source", "error_type", "message", "endpoint", "context"])
+            ("error_log", ["id", "timestamp", "source", "error_type", "message", "endpoint", "context"]),
+            ("analytics_reports", ["id", "created_at", "report_date", "report_type", "summary_text", "trajectory_data", "launch_data", "risk_matrix", "generated_by"]),
+            ("palantir_reports", ["id", "created_at", "report_date", "threat_assessment_summary", "palantir_vectors_json", "launch_hubs_json", "risk_matrix_json", "confidence_index", "generated_by"]),
         ]
         
         cursor.execute("PRAGMA foreign_keys = OFF")
@@ -252,19 +261,25 @@ def _restore_from_payload(encoded: str) -> bool:
         return False
 
 
-def delete_test_history_from_firestore():
-    """Видаляє тестові загрози та кліринги з Firestore."""
+def delete_test_history_from_firestore() -> int:
+    """Видаляє тестові загрози та кліринги з Firestore (sirenua_history)."""
     db = get_db()
     if not db:
-        return False
+        return 0
+    deleted_count = 0
     try:
-        docs = db.collection('threat_history').where('is_test', '==', True).limit(100).get()
-        for doc in docs:
-            doc.reference.delete()
-        return True
+        for coll_name in ['sirenua_history', 'threat_history']:
+            docs = list(db.collection(coll_name).where('is_test', '==', True).limit(450).get())
+            if docs:
+                batch = db.batch()
+                for doc in docs:
+                    batch.delete(doc.reference)
+                batch.commit()
+                deleted_count += len(docs)
+        return deleted_count
     except Exception as e:
         logger.error(f"Помилка видалення тестової історії з Firestore: {e}")
-        return False
+        return deleted_count
 
 
 def restore_from_local_baseline() -> bool:

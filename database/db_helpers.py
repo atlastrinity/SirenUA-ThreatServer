@@ -82,62 +82,7 @@ def get_db():
         _log_error("database_helpers", f"Помилка отримання Firestore клієнта: {e}", "get_db", error_type="firebase_error")
         return None
 
-def is_duplicate_event(region: str, level: str, threat_type: Optional[str]) -> bool:
-    """Checks local SQLite and Firestore to see if a similar history event was already logged within the last 20 seconds."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT threat_level, threat_type, timestamp 
-            FROM threat_history 
-            WHERE region = ? 
-            ORDER BY id DESC LIMIT 2
-        ''', (region,))
-        rows = cursor.fetchall()
-        conn.close()
-        if rows:
-            current_time = datetime.now(timezone.utc)
-            for row in rows:
-                latest_level, latest_type, latest_time_str = row[0], row[1], row[2]
-                if latest_time_str:
-                    try:
-                        latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                    except ValueError:
-                        continue
-                    time_diff = abs((current_time - latest_time).total_seconds())
-                    # Only treat as duplicate if a previous event matching level was logged between 2s and 20s ago
-                    if 2.0 <= time_diff < 20.0 and latest_level == level and latest_type == threat_type:
-                        return True
-            return False
-    except Exception as sq_err:
-        logger.warning(f"SQLite duplicate check warning: {sq_err}")
-
-    db = get_db()
-    if not db:
-        return False
-    try:
-        docs = db.collection("sirenua_history").where("region", "==", region).limit(5).get()
-        if not docs:
-            return False
-            
-        events = [doc.to_dict() for doc in docs]
-        events.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        latest = events[0]
-        
-        latest_level = latest.get("threat_level")
-        latest_type = latest.get("threat_type")
-        latest_time_str = latest.get("timestamp")
-        
-        if latest_level == level and latest_type == threat_type and latest_time_str:
-            latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            current_time = datetime.now(timezone.utc)
-            diff = (current_time - latest_time).total_seconds()
-            if abs(diff) < 20:
-                return True
-    except Exception as e:
-        logger.error(f"Error checking duplicate history in Firestore: {e}")
-        _log_error("database_helpers", f"Error checking duplicate history: {e}", "is_duplicate_event", error_type="firebase_error")
-    return False
+from database.connection import is_duplicate_event
 
 # Re-export testing cleanup functions from testing package for backward compatibility
 from testing import delete_test_history_from_firestore, delete_test_history_from_sqlite

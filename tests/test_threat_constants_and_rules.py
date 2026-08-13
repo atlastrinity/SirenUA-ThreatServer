@@ -183,10 +183,6 @@ def test_palantir_intelligence_endpoints():
     assert reports_data["total"] >= 1
     print("✅ Palantir Intelligence Endpoints & DB Storage test passed successfully!")
 
-    test_inland_ingress_corridor_extrapolation()
-    test_palantir_intelligence_endpoints()
-    test_fcm_topic_mapping()
-    print("\n🎉 ALL THREAT CONSTANTS, TRAJECTORY, PALANTIR & FCM TOPIC TESTS PASSED SUCCESSFULLY!")
 
 
 def test_fcm_topic_mapping():
@@ -212,3 +208,14 @@ def test_fcm_topic_mapping():
     print("✅ FCM Topic Mapping test passed successfully!")
 
 
+if __name__ == "__main__":
+    test_threat_types_detection()
+    test_airbases_detection()
+    test_kinematics_calculations()
+    test_rules_engine_learning()
+    test_trajectory_gap_stitching()
+    test_regional_rule_telemetry_and_metrics()
+    test_inland_ingress_corridor_extrapolation()
+    test_palantir_intelligence_endpoints()
+    test_fcm_topic_mapping()
+    print("\n🎉 ALL THREAT CONSTANTS, TRAJECTORY, PALANTIR & FCM TOPIC TESTS PASSED SUCCESSFULLY!")

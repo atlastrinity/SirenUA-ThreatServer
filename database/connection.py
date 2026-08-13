@@ -59,19 +59,33 @@ def execute_write(query: str, params: tuple = ()) -> bool:
         return False
 
 
-def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds: int = 300) -> bool:
-    """Перевіряє, чи не було аналогічної загрози записано в БД протягом window_seconds."""
+def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds: int = 20) -> bool:
+    """Перевіряє, чи не було аналогічної загрози записано в БД від 2 до 20 секунд тому."""
     try:
+        from datetime import datetime, timezone
         conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT COUNT(*) FROM threat_history
-            WHERE region = ? AND threat_level = ? AND threat_type = ?
-              AND timestamp >= datetime('now', ?)
-        """, (region, level, threat_type or "unknown", f"-{window_seconds} seconds"))
-        count = cursor.fetchone()[0]
+            SELECT threat_level, threat_type, timestamp 
+            FROM threat_history 
+            WHERE region = ? 
+            ORDER BY id DESC LIMIT 3
+        """, (region,))
+        rows = cursor.fetchall()
         conn.close()
-        return count > 0
+        if rows:
+            current_time = datetime.now(timezone.utc)
+            for row in rows:
+                latest_level, latest_type, latest_time_str = row[0], row[1], row[2]
+                if latest_time_str:
+                    try:
+                        latest_time = datetime.strptime(latest_time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        continue
+                    time_diff = abs((current_time - latest_time).total_seconds())
+                    if 2.0 <= time_diff < window_seconds and latest_level == level and latest_type == threat_type:
+                        return True
+        return False
     except Exception as e:
         logger.error(f"Помилка перевірки дублікату загрози: {e}")
         return False
