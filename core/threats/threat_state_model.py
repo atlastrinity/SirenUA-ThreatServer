@@ -101,7 +101,7 @@ class ThreatState:
         }
 
     def load_from_dict(self, data: dict):
-        self._is_official_active = data.get("is_official_alarm", False)
+        self._is_official_active = data.get("is_official_alarm", data.get("is_active", False))
         self.is_test = data.get("is_test", False)
         if "active_threats" in data:
             self.active_threats = [SingleThreat.from_dict(t) for t in data["active_threats"]]
