@@ -77,16 +77,22 @@ FORBIDDEN: Assigning identical confidence_score to more than 2 oblasts in the sa
 
 === MATHEMATICAL FLIGHT KINEMATICS & ETA CALCULATIONS ===
 You MUST calculate the "eta" field dynamically using strict mathematical ballistics formulas based on distance and specific incoming object type:
-1. **shahed (UAV/drone / БПЛА)**: Cruising Speed ~160 km/h (~2.67 km/min) -> Format: "~40-50 хв" or "~1-1.5 год"
+1. **shahed (UAV/drone / БПЛА Shahed-136/Geran)**: Cruising Speed ~165 km/h (~2.75 km/min) -> Format: "~40-50 хв" or "~1-2 год"
 2. **cruise_missile (Kh-101/Kalibr / Крилата ракета)**: Cruising Speed ~850 km/h (~14.1 km/min) -> Format: "~15-25 хв" or "~35-45 хв"
-3. **ballistic / iskander (Iskander-M / S-300 / Балістика)**: Cruising Speed ~5000-7000 km/h (~90 km/min) -> Format: "~2-5 хв" (critical priority)
-4. **mig31k (Kinzhal / Кинджал)**: Cruising Speed ~2500 km/h (~41.6 km/min) -> Format: "~10-15 хв" or "~20-30 хв"
-5. **kab (Guided Aerial Bomb / КАБ)**: Cruising Speed ~350 km/h (~5.8 km/min) -> Format: "~5-12 хв"
-6. **tu95 (Strategic Bomber Takeoff/Launch)**: Speed ~800 km/h (~13.3 km/min) -> Early Notice: "~40-80 хв"
-7. **tu22m3 (Strategic Supersonic Bomber)**: Speed ~4200 km/h (~70 km/min) -> Format: "~3-10 хв"
-8. **su35_su57 (Tactical Aviation)**: Speed ~950 km/h (~15.8 km/min) -> Format: "~5-15 хв"
-9. **artillery (Artillery/MLRS)**: Instant threat: "~0-5 хв"
-10. **recon (Reconnaissance Drone)**: Speed ~120 km/h (~2.0 km/min) -> Format: "~15-30 хв"
+3. **ballistic (Iskander-M / S-300 / S-400 / Балістика)**: Cruising Speed ~5500 km/h (~91.6 km/min) -> Format: "~2-5 хв" (critical priority)
+4. **mig31k (Kinzhal / Кинджал)**: Cruising Speed ~2500 km/h (~41.6 km/min) -> Format: "~10-15 хв" or "~20-40 хв"
+5. **kab (Guided Aerial Bomb / КАБ)**: Cruising Speed ~900 km/h (~15 km/min) -> Format: "~3-5 хв" (max 5-7 min flight limit)
+6. **tu95 (Strategic Bomber Tu-95MS Launch)**: Cruising Speed ~800 km/h (~13.3 km/min) -> Early Notice: "~40-80 хв"
+7. **tu22m3 (Strategic Supersonic Bomber Tu-22M3 / Kh-22)**: Speed ~4200 km/h (~70 km/min) -> Format: "~3-10 хв"
+8. **su35_su57 (Tactical Aviation Su-34/35/57)**: Speed ~950 km/h (~15.8 km/min) -> Format: "~5-15 хв"
+9. **iskander (Quasi-ballistic Iskander-M)**: Speed ~5500 km/h (~91.6 km/min) -> Format: "~2-5 хв"
+10. **artillery (Artillery / Cannon shelling)**: Speed ~1200 km/h (~20 km/min) -> Format: "~0-5 хв"
+11. **zircon (Hypersonic 3M22 Zircon)**: Speed ~11000 km/h (~183 km/min) -> Format: "~1-3 хв"
+12. **mlrs (MLRS Tornado-S / Grad / Uragan)**: Speed ~2200 km/h (~36.6 km/min) -> Format: "~0-5 хв"
+13. **fpv (FPV drone / Lancet kamikaze)**: Speed ~140 km/h (~2.33 km/min) -> Format: "~5-15 хв"
+14. **recon / recon_uav (Reconnaissance Drone Supercam/Orlan/Zala)**: Speed ~120 km/h (~2.0 km/min) -> Format: "~15-30 хв"
+15. **official_alarm (Official regional air siren)**: Format: "-"
+16. **unknown (Generic air threat)**: Speed ~300 km/h (~5.0 km/min) -> Format: "~15-30 хв"
 
 RULE PRIORITIZATION FOR ETA:
 If empirical rules under "НАБУТІ ЗНАННЯ" contain specific `[Математика дольоту]` rules (e.g. `[Математика дольоту] shahed з Сумська до Київська: ~105 хв`), you MUST prioritize those empirical values over general mathematical estimates!
@@ -147,7 +153,7 @@ FOR ACTIVE THREATS (is_clear: false):
   "source_channel": "channel name",
   "text": "original text in Ukrainian",
   "threat_level": "none" | "low" | "medium" | "high" | "critical",
-  "threat_type": "shahed" | "ballistic" | "mig31k" | "kab" | "cruise_missile" | "tu95" | "tu22m3" | "su35_su57" | "iskander" | "artillery" | "recon" | null,
+  "threat_type": "shahed" | "cruise_missile" | "ballistic" | "mig31k" | "kab" | "tu95" | "tu22m3" | "su35_su57" | "iskander" | "artillery" | "zircon" | "mlrs" | "fpv" | "recon" | "recon_uav" | "official_alarm" | "unknown" | null,
   "source_regions": ["Сумська область"],
   "target_regions": [{"name": "Київська область", "is_predictive": false}, {"name": "Чернігівська область", "is_predictive": true}],
   "is_clear": false,
@@ -162,7 +168,7 @@ FOR THREAT CLEARINGS (is_clear: true):
   "source_channel": "channel name",
   "text": "original text in Ukrainian",
   "threat_level": "none",
-  "threat_type": "shahed" | "ballistic" | null,
+  "threat_type": "shahed" | "cruise_missile" | "ballistic" | "mig31k" | "kab" | "tu95" | "tu22m3" | "su35_su57" | "iskander" | "artillery" | "zircon" | "mlrs" | "fpv" | "recon" | "recon_uav" | "official_alarm" | "unknown" | null,
   "source_regions": [],
   "target_regions": [{"name": "Одеська область", "is_predictive": false}],
   "is_clear": true,

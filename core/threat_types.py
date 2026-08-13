@@ -23,6 +23,7 @@ THREAT_MLRS = "mlrs"
 THREAT_FPV = "fpv"
 THREAT_RECON = "recon"
 THREAT_RECON_UAV = "recon_uav"
+THREAT_OFFICIAL_ALARM = "official_alarm"
 THREAT_UNKNOWN = "unknown"
 
 ALL_THREAT_TYPES: List[str] = [
@@ -41,6 +42,7 @@ ALL_THREAT_TYPES: List[str] = [
     THREAT_FPV,
     THREAT_RECON,
     THREAT_RECON_UAV,
+    THREAT_OFFICIAL_ALARM,
     THREAT_UNKNOWN,
 ]
 
@@ -63,7 +65,8 @@ THREAT_TITLES: Dict[str, str] = {
     THREAT_FPV: "FPV дрон / Ланцет",
     THREAT_RECON: "Розвідувальний БПЛА",
     THREAT_RECON_UAV: "Розвідувальний БПЛА",
-    THREAT_UNKNOWN: "Повітряна тривога",
+    THREAT_OFFICIAL_ALARM: "Повітряна тривога",
+    THREAT_UNKNOWN: "Повітряна загроза",
 }
 
 # Alias for backwards compatibility across modules
@@ -85,6 +88,7 @@ THREAT_SHORT_NAMES: Dict[str, str] = {
     THREAT_FPV: "FPV-дрон",
     THREAT_RECON: "розвідник",
     THREAT_RECON_UAV: "розвідник",
+    THREAT_OFFICIAL_ALARM: "тривога",
     THREAT_UNKNOWN: "загроза",
 }
 
@@ -107,6 +111,7 @@ DEFAULT_SPEEDS_KMH: Dict[str, float] = {
     THREAT_FPV: 140.0,             # ~120-150 km/h kamikaze drones
     THREAT_RECON: 120.0,           # ~100-140 km/h (Supercam/Orlan/Zala)
     THREAT_RECON_UAV: 120.0,
+    THREAT_OFFICIAL_ALARM: 0.0,
     THREAT_UNKNOWN: 300.0,
 }
 
@@ -133,6 +138,7 @@ THREAT_AUTO_CLEAR_DELAYS: Dict[str, Tuple[int, int]] = {
     THREAT_FPV: (1800, 1800),              # 30 mins
     THREAT_RECON: (3600, 3600),            # 60 mins
     THREAT_RECON_UAV: (3600, 3600),        # 60 mins
+    THREAT_OFFICIAL_ALARM: (3600, 3600),
     THREAT_UNKNOWN: (3600, 3600),
 }
 
@@ -152,6 +158,7 @@ THREAT_DEFAULT_ETAS: Dict[str, Tuple[str, str]] = {
     THREAT_FPV: ("~20 хв", "~5-15 хв"),
     THREAT_RECON: ("~30 хв", "~15-30 хв"),
     THREAT_RECON_UAV: ("~30 хв", "~15-30 хв"),
+    THREAT_OFFICIAL_ALARM: ("-", "-"),
     THREAT_UNKNOWN: ("~30 хв", "~30 хв"),
 }
 
@@ -171,6 +178,7 @@ THREAT_PREDICTIVE_WEIGHTS: Dict[str, float] = {
     THREAT_FPV: 0.02,
     THREAT_RECON: 0.05,
     THREAT_RECON_UAV: 0.05,
+    THREAT_OFFICIAL_ALARM: 0.0,
     THREAT_UNKNOWN: 0.05,
 }
 
@@ -190,6 +198,7 @@ THREAT_ETA_DEFAULTS_SECONDS: Dict[str, int] = {
     THREAT_FPV: 900,
     THREAT_RECON: 1800,
     THREAT_RECON_UAV: 1800,
+    THREAT_OFFICIAL_ALARM: 1800,
     THREAT_UNKNOWN: 1800,
 }
 
@@ -212,6 +221,7 @@ THREAT_ICONS: Dict[str, str] = {
     THREAT_FPV: "viewfinder",
     THREAT_RECON: "eye.fill",
     THREAT_RECON_UAV: "eye.fill",
+    THREAT_OFFICIAL_ALARM: "bell.fill",
     THREAT_UNKNOWN: "exclamationmark.triangle.fill",
 }
 
@@ -226,45 +236,63 @@ def get_threat_icon(threat_type: Optional[str]) -> str:
 # ==============================================================================
 THREAT_KEYWORDS: Dict[str, List[str]] = {
     THREAT_MIG31K: [
-        "міг-31", "міг31", "миг-31", "миг31", "mig-31", "mig31", "кинджал", "кинжал", "х-47", "х47"
+        "міг-31", "міг31", "миг-31", "миг31", "mig-31", "mig31",
+        "кинджал", "кинжал", "kinzhal", "х-47", "х47", "х-47м2", "х47м2"
     ],
     THREAT_TU95: [
-        "ту-95", "ту95", "tu-95", "tu95", "ту-160", "tu160", "стратегіч"
+        "ту-95", "ту95", "tu-95", "tu95", "ту-160", "tu160", "стратегіч", "стратегическ"
     ],
     THREAT_TU22M3: [
         "ту-22", "ту22", "tu-22", "tu22", "х-22", "х22", "х-32", "х32"
     ],
     THREAT_SHAHED: [
-        "шахед", "shahed", "бпла", "дрон", "безпілотник", "мопед", "балалайк",
-        "гербер", "орлан", "supercam", "крило"
+        "шахед", "shahed", "бпла", "дрон", "безпілотник", "беспилотник", "мопед",
+        "балалайк", "герань", "гербер", "пароді", "імітатор", "имитатор",
+        "фальш-ціль", "фальш ціль", "ударні бпла", "ударний бпла"
+    ],
+    THREAT_RECON: [
+        "розвідник", "розвідувальн", "разведчик", "разведывательн", "орлан", "orlan",
+        "supercam", "суперкам", "zala", "зала", "мерлін", "merlin", "форпост", "forpost"
+    ],
+    THREAT_RECON_UAV: [
+        "розвідувальний бпла", "разведывательный бпла"
     ],
     THREAT_ISKANDER: [
-        "іскандер", "iskander"
+        "іскандер-м", "іскандер", "искандер-м", "искандер", "iskander"
     ],
     THREAT_BALLISTIC: [
-        "баліст", "s-300", "с-300", "с-400", "с400", "kn-23"
+        "баліст", "баллист", "балістична", "балістичне", "балістичного",
+        "s-300", "с-300", "с300", "s-400", "с-400", "с400",
+        "kn-23", "кн-23", "точка-у", "орєшнік", "орешник", "рубєж", "рубеж", "рс-26",
+        "швидкісна ціль", "скоростная цель"
     ],
     THREAT_CRUISE_MISSILE: [
-        "ракет", "крилат", "калібр", "х-101", "х101", "х-55", "х55", "х-555", "х555", "х-59", "х59", "х-69", "х69"
+        "ракет", "крилат", "крылат", "калібр", "калибр", "kalibr",
+        "х-101", "х101", "х-55", "х55", "х-555", "х555",
+        "х-59", "х59", "х-69", "х69", "х-31", "х31", "х-35", "х35",
+        "онікс", "оникс", "oniks", "п-800", "p-800", "іскандер-к", "искандер-к"
     ],
     THREAT_ZIRCON: [
-        "циркон", "zircon", "3м22", "3m22"
+        "циркон", "zircon", "3м22", "3m22", "гіперзвук", "гиперзвук"
     ],
     THREAT_ARTILLERY: [
-        "артобстріл", "артилері", "обстріл", "міномет"
+        "артобстріл", "артилері", "артиллери", "обстріл", "обстрел", "міномет", "сау"
     ],
     THREAT_MLRS: [
-        "рсзв", "торнадо-с", "торнадо", "град", "ураган", "смерч", "солнцепек", "вільха"
+        "рсзв", "рсзо", "торнадо-с", "торнадо", "град", "ураган", "смерч", "солнцепек", "вільха", "ольха"
     ],
     THREAT_FPV: [
-        "fpv", "фпв", "ланцет", "lancet", "куб", "барражир"
+        "fpv", "фпв", "ланцет", "lancet", "молнія", "молния", "куб", "барражир", "дрон-камікадзе"
     ],
     THREAT_SU35: [
-        "су-34", "су34", "су-35", "су35", "су-30", "су30", "су-57", "су57", "сушка", "сушки"
+        "су-34", "су34", "су-35", "су35", "су-30", "су30", "су-57", "су57", "сушка", "сушки", "тактична авіація", "тактической авиации"
     ],
     THREAT_KAB: [
-        "каб", "авіабомб", "умпк", "керован", "фаб", "уаб"
+        "каб", "каби", "кабів", "авіабомб", "авиабомб", "умпк", "керован", "управляемые", "фаб", "уаб", "бомбардуван"
     ],
+    THREAT_OFFICIAL_ALARM: [
+        "повітряна тривога", "воздушная тревога", "тривога в області", "сирена"
+    ]
 }
 
 # ==============================================================================
@@ -494,12 +522,21 @@ def get_threat_delay_and_eta(threat_type: Optional[str], is_regex: bool = False)
     idx = 1 if is_regex else 0
     return delays[idx], etas[idx]
 
-def detect_threat_type_from_text(text: str) -> str:
+# Alias for backwards-compatibility & clarity across modules
+get_threat_auto_clear_delay = get_threat_delay_and_eta
+
+THREAT_OFFICIAL_ALARM = "official_alarm"
+
+def detect_threat_type_from_text(text: str) -> Optional[str]:
     """Parses raw text and identifies departure/arrival threat object type using centralized keyword registry."""
+    if not text:
+        return None
     text_lower = text.lower()
     for threat_type, keywords in THREAT_KEYWORDS.items():
         if any(kw in text_lower for kw in keywords):
             return threat_type
+    if "повітрян" in text_lower and "тривог" in text_lower:
+        return THREAT_OFFICIAL_ALARM
     return THREAT_UNKNOWN
 
 def detect_launch_origin_from_text(text: str) -> Optional[str]:

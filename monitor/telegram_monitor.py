@@ -8,6 +8,14 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 from core.regions import ALL_REGIONS, PERMANENTLY_OCCUPIED_REGIONS, get_genitive_region, get_ukrainian_threat_type
+from core.threat_types import (
+    get_threat_auto_clear_delay,
+    DEFAULT_SPEEDS_KMH,
+    THREAT_PREDICTIVE_WEIGHTS,
+    THREAT_ETA_DEFAULTS_SECONDS,
+    detect_threat_type_from_text,
+    THREAT_OFFICIAL_ALARM,
+)
 from core.threat_state import THREAT_TYPES
 from core.topology import UKRAINE_TOPOLOGY, SHAHED_ROUTES, REGION_CENTROIDS, VECTOR_BEARINGS, CITY_COORDINATES
 from analyzer.gemini_analyzer import GeminiThreatAnalyzer
@@ -513,38 +521,13 @@ class TelegramThreatMonitor:
                 
                 if telemetry_delay:
                     delay = telemetry_delay
-                elif threat_type == "mig31k":
-                    delay = 1800  # 30 хв
                     if not eta_str:
-                        eta_str = "~40 хв"
-                elif threat_type == "ballistic":
-                    delay = 300   # 5 хв
+                        _, fallback_eta = get_threat_auto_clear_delay(threat_type, is_regex=False)
+                        eta_str = fallback_eta
+                else:
+                    delay, fallback_eta = get_threat_auto_clear_delay(threat_type, is_regex=False)
                     if not eta_str:
-                        eta_str = "~5 хв"
-                elif threat_type == "kab":
-                    delay = 240   # 4 хв max (із буфером 1.5-2 хв після дольоту)
-                    if not eta_str:
-                        eta_str = "~3-5 хв"
-                elif threat_type == "shahed":
-                    delay = 10800  # 3 години
-                    if not eta_str:
-                        eta_str = "~200 хв"
-                elif threat_type == "cruise_missile":
-                    delay = 2700  # 45 хв
-                    if not eta_str:
-                        eta_str = "~55 хв"
-                elif threat_type == "tu95":
-                    delay = 5400  # 1.5 год
-                    if not eta_str:
-                        eta_str = "~110 хв"
-                elif threat_type == "iskander":
-                    delay = 1200  # 20 хв
-                    if not eta_str:
-                        eta_str = "~25 хв"
-                elif threat_type == "artillery":
-                    delay = 1800  # 30 хв
-                    if not eta_str:
-                        eta_str = "~10 хв"
+                        eta_str = fallback_eta
                     
                 from core.regions import extract_region_specific_text
                 region_detail_text = extract_region_specific_text(clean_user_facing_threat_detail(text), region)
@@ -607,18 +590,7 @@ class TelegramThreatMonitor:
                     grace_period = 300  # 5 minutes
                     eta_sec = eta_seconds
                     if eta_sec is None:
-                        # Fallback default ETA times in seconds
-                        eta_defaults = {
-                            "mig31k": 1200,      # 20 mins
-                            "ballistic": 180,    # 3 mins
-                            "kab": 600,          # 10 mins
-                            "shahed": 5400,      # 1.5 hours
-                            "cruise_missile": 1200, # 20 mins
-                            "tu95": 3600,        # 1 hour
-                            "iskander": 180,     # 3 mins
-                            "artillery": 120,    # 2 mins
-                        }
-                        eta_sec = eta_defaults.get(threat_type, 1800)
+                        eta_sec = THREAT_ETA_DEFAULTS_SECONDS.get(threat_type, 1800)
                     
                     reeval_delay = eta_sec + grace_period
                     self._schedule_predictive_reevaluation(region, reeval_delay, threat_type, group_id)
@@ -730,13 +702,7 @@ class TelegramThreatMonitor:
             if telemetry and telemetry.get("speed_kmh"):
                 speed = telemetry["speed_kmh"]
             else:
-                # Default speeds by threat type
-                speed_defaults = {
-                    "shahed": 165, "cruise_missile": 850, "ballistic": 4000,
-                    "mig31k": 2500, "kab": 300, "tu95": 800, "iskander": 4500,
-                    "artillery": 1200,
-                }
-                speed = speed_defaults.get(threat_type, 300)
+                speed = DEFAULT_SPEEDS_KMH.get(threat_type, 300.0)
                 
             # Pathfinding to final target cities
             path_boost_regions = set()
@@ -838,8 +804,7 @@ class TelegramThreatMonitor:
                 base_score = direction_score * 0.5 + 0.2  # 20-70% base from direction
                 
                 # Threat type weight (slow = more predictable trajectory)
-                type_weight = {"shahed": 0.15, "cruise_missile": 0.08, "mig31k": 0.05, "ballistic": 0.0, "kab": 0.02, "tu95": 0.10, "iskander": 0.0, "artillery": 0.01}
-                base_score += type_weight.get(threat_type, 0.05)
+                base_score += THREAT_PREDICTIVE_WEIGHTS.get(threat_type, 0.05)
                 
                 # Apply boosts
                 total_score = min(1.0, base_score + route_boost + db_boost)
@@ -1168,30 +1133,8 @@ class TelegramThreatMonitor:
             # Set threat for the detected regions
             if level and final_regions:
                 for region in final_regions:
-                    # Determine dynamic auto-clear delay and ETA based on threat type
-                    delay = 3600
-                    eta_str = ""
-                    if threat_type == "mig31k":
-                        delay = 2700
-                        eta_str = "~20-40 хв"
-                    elif threat_type == "ballistic":
-                        delay = 1800
-                        eta_str = "~2-5 хв"
-                    elif threat_type == "shahed":
-                        delay = 10800
-                        eta_str = "+1-2 год"
-                    elif threat_type == "cruise_missile":
-                        delay = 3600
-                        eta_str = "+15-30 хв"
-                    elif threat_type == "tu95":
-                        delay = 5400
-                        eta_str = "~30-90 хв"
-                    elif threat_type == "iskander":
-                        delay = 1800
-                        eta_str = "~2-5 хв"
-                    elif threat_type == "artillery":
-                        delay = 1800
-                        eta_str = "~0-5 хв"
+                    # Determine dynamic auto-clear delay and ETA based on threat type from centralized constants
+                    delay, eta_str = get_threat_auto_clear_delay(threat_type, is_regex=True)
                         
                     is_pred = region in predictive_regions
                     
@@ -1277,24 +1220,8 @@ class TelegramThreatMonitor:
         return None
 
     def _detect_threat_type(self, text: str):
-        text_lower = text.lower()
-        if any(kw in text_lower for kw in ["міг-31", "міг31", "mig-31", "mig31", "кинджал", "х-47", "х47"]):
-            return "mig31k"
-        if any(kw in text_lower for kw in ["ту-95", "ту95", "tu-95", "tu95", "ту-22", "ту22", "tu-22", "tu22", "ту-160", "tu160"]):
-            return "tu95"
-        if any(kw in text_lower for kw in ["шахед", "shahed", "бпла", "дрон", "мопед", "гербер", "орлан", "supercam", "крило"]):
-            return "shahed"
-        if any(kw in text_lower for kw in ["іскандер", "iskander"]):
-            return "iskander"
-        if any(kw in text_lower for kw in ["балісти", "с-300", "с300", "с-400", "с400", "c-300", "c300", "c-400", "c400"]):
-            return "ballistic"
-        if any(kw in text_lower for kw in ["ракет", "крилат", "калібр", "х-101", "х101", "х-55", "х55", "х-555", "х555", "х-59", "х59", "х-69", "х69"]):
-            return "cruise_missile"
-        if any(kw in text_lower for kw in ["артилерія", "рсзв", "обстріл", "град", "смерч", "ураган", "міномет"]):
-            return "artillery"
-        if re.search(r"\bкаб(и|ів)?\b|авіабомб|фаб|уаб", text_lower) or any(kw in text_lower for kw in ["су-34", "су-35", "су-30", "су-57", "сушка", "сушки"]):
-            return "kab"
-        return "unknown"
+        from core.threat_types import detect_threat_type_from_text
+        return detect_threat_type_from_text(text) or "unknown"
 
     def _extract_regions(self, text: str):
         found = set()
@@ -1508,22 +1435,7 @@ class TelegramThreatMonitor:
                         pred_eta = getattr(threat, "eta_seconds", None) or 1800
                         delay = pred_eta + 300  # ETA + 5 minutes grace period
                     else:
-                        if t_type == "mig31k":
-                            delay = 1800
-                        elif t_type == "ballistic":
-                            delay = 600
-                        elif t_type == "kab":
-                            delay = 420
-                        elif t_type == "shahed":
-                            delay = 10800
-                        elif t_type == "cruise_missile":
-                            delay = 2700
-                        elif t_type == "tu95":
-                            delay = 5400
-                        elif t_type == "iskander":
-                            delay = 1200
-                        elif t_type == "artillery":
-                            delay = 1800
+                        delay, _ = get_threat_auto_clear_delay(t_type, is_regex=False)
                             
                     try:
                         since_str_normalized = since_str.replace("Z", "+00:00")

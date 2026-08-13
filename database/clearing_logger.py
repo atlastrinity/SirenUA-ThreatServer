@@ -6,6 +6,7 @@ Functions: detect_mitigation_from_text, log_clearing_to_db.
 import sqlite3
 import json
 from datetime import datetime, timezone
+from typing import Optional
 
 from core.config import DB_PATH
 from database.db_helpers import get_sqlite_connection
@@ -27,28 +28,13 @@ def detect_mitigation_from_text(text: str) -> bool:
     return any(kw in text_lower for kw in keywords)
 
 
-def _detect_threat_type_from_text(text: str) -> str:
-    """Detects tactical threat type from message text."""
+def _detect_threat_type_from_text(text: str) -> Optional[str]:
+    """Detects tactical threat type from message text using centralized registry."""
     if not text:
         return None
-    t = text.lower()
-    if "балістик" in t:
-        return "ballistic"
-    elif "шахед" in t or "бпла" in t or "дрон" in t:
-        return "shahed"
-    elif "крилат" in t or "ракет" in t:
-        return "cruise_missile"
-    elif "каб" in t or "авіац" in t:
-        return "kab"
-    elif "міг" in t or "кинджал" in t:
-        return "mig31k"
-    elif "ту-95" in t or "ту95" in t:
-        return "tu95"
-    elif "іскандер" in t:
-        return "iskander"
-    elif "повітрян" in t and "тривог" in t:
-        return "official_alarm"
-    return None
+    from core.threat_types import detect_threat_type_from_text, THREAT_UNKNOWN
+    res = detect_threat_type_from_text(text)
+    return res if res != THREAT_UNKNOWN else None
 
 
 def _find_original_threat_event(cursor, region: str, clearing_telemetry: dict, threat_type: str = None):

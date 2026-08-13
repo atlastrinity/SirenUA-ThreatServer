@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict
 
 from core.config import DB_PATH, IS_LIVE_MODE
+from core.threat_types import THREAT_OFFICIAL_ALARM
 from database.db_helpers import get_db, is_duplicate_event
 
 # Global references
@@ -396,7 +397,7 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
             ))
             telemetry_id = cursor.lastrowid
         
-        if level != "none" and event_id and threat_type != "official_alarm":
+        if level != "none" and event_id and threat_type != THREAT_OFFICIAL_ALARM:
             rules_applied_json = json.dumps(rules_applied) if rules_applied else None
             cursor.execute('''
                 INSERT INTO paired_events (
@@ -436,28 +437,13 @@ def detect_mitigation_from_text(text: str) -> bool:
     return any(kw in text_lower for kw in keywords)
 
 
-def _detect_threat_type_from_text(text: str) -> str:
-    """Detects tactical threat type from message text."""
+def _detect_threat_type_from_text(text: str) -> Optional[str]:
+    """Detects tactical threat type from message text using centralized registry."""
     if not text:
         return None
-    t = text.lower()
-    if "балістик" in t:
-        return "ballistic"
-    elif "шахед" in t or "бпла" in t or "дрон" in t:
-        return "shahed"
-    elif "крилат" in t or "ракет" in t:
-        return "cruise_missile"
-    elif "каб" in t or "авіац" in t:
-        return "kab"
-    elif "міг" in t or "кинджал" in t:
-        return "mig31k"
-    elif "ту-95" in t or "ту95" in t:
-        return "tu95"
-    elif "іскандер" in t:
-        return "iskander"
-    elif "повітрян" in t and "тривог" in t:
-        return "official_alarm"
-    return None
+    from core.threat_types import detect_threat_type_from_text, THREAT_UNKNOWN
+    res = detect_threat_type_from_text(text)
+    return res if res != THREAT_UNKNOWN else None
 
 
 def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
@@ -495,7 +481,7 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
             ''', (region, linked_gid))
             row = cursor.fetchone()
             
-        if not row and detected_type and detected_type != 'official_alarm':
+        if not row and detected_type and detected_type != THREAT_OFFICIAL_ALARM:
             cursor.execute('''
                 SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
                 FROM threat_history th
@@ -505,12 +491,11 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
             ''', (region, detected_type))
             row = cursor.fetchone()
 
-        if not row and (detected_type == 'official_alarm' or not detected_type):
+        if not row and (detected_type == THREAT_OFFICIAL_ALARM or not detected_type):
             cursor.execute('''
                 SELECT th.id, th.timestamp, th.threat_level, th.threat_type, th.confidence
                 FROM threat_history th
                 LEFT JOIN threat_clearings tc ON th.id = tc.original_threat_event_id
-                WHERE th.region = ? AND th.threat_type = 'official_alarm' AND tc.id IS NULL
                 ORDER BY th.timestamp DESC LIMIT 1
             ''', (region,))
             row = cursor.fetchone()
@@ -777,7 +762,7 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
     if prev_active != state.is_active:
         log_level = "high" if state.is_active else "none"
         detail = "Повітряна тривога" if state.is_active else "Відбій повітряної тривоги"
-        safe_run_task(asyncio.to_thread(log_threat_to_db, region, log_level, "official_alarm", detail))
+        safe_run_task(asyncio.to_thread(log_threat_to_db, region, log_level, THREAT_OFFICIAL_ALARM, detail))
         
         if state.is_active:
             safe_run_task(asyncio.to_thread(validate_prediction_on_alarm, region))
@@ -790,7 +775,7 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
                 log_clearing_to_db,
                 region=region,
                 clearing_telemetry=clearing_telemetry,
-                source_channel="official_alarm",
+                source_channel=THREAT_OFFICIAL_ALARM,
                 message_text="Відбій повітряної тривоги (офіційно)",
                 is_test=state.is_test
             ))
@@ -801,14 +786,14 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
             "region": region,
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             "threat_level": log_level,
-            "threat_type": "official_alarm",
+            "threat_type": THREAT_OFFICIAL_ALARM,
             "detail": detail,
             "confidence": None,
             "is_test": state.is_test
         }
         # We will assume batch mode is controlled globally or on manager.
         # But we check state.is_test/etc
-        safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, "official_alarm", detail, is_test=state.is_test))
+        safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, THREAT_OFFICIAL_ALARM, detail, is_test=state.is_test))
             
     # 2. AI/Telegram threat level/type changes tracking
     curr_active_threats = {
@@ -821,7 +806,7 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
             "is_test": t.is_test
         }
         for t in state.active_threats
-        if t.threat_type and t.threat_type != "official_alarm"
+        if t.threat_type and t.threat_type != THREAT_OFFICIAL_ALARM
     }
     
     # Detect added threats

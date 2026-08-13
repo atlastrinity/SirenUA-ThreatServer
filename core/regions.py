@@ -320,17 +320,9 @@ def get_genitive_region(region: str) -> str:
     return mapping.get(region, region)
 
 def get_ukrainian_threat_type(threat_type: str) -> str:
-    mapping = {
-        "shahed": "БпЛА",
-        "cruise_missile": "крилата ракета",
-        "ballistic": "балістика",
-        "mig31k": "МіГ-31К",
-        "kab": "КАБ",
-        "tu95": "Ту-95МС",
-        "iskander": "Іскандер-М",
-        "artillery": "обстріл",
-    }
-    return mapping.get(threat_type, threat_type)
+    """Returns Ukrainian short name for a given threat type from centralized registry."""
+    from core.threat_types import get_threat_short_name
+    return get_threat_short_name(threat_type)
 
 
 # Макро-регіони України

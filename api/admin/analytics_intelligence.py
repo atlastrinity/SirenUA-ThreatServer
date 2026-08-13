@@ -10,6 +10,25 @@ from fastapi import APIRouter, HTTPException
 
 from core.config import get_kyiv_tz_modifier
 from core.topology import REGION_CENTROIDS, SHAHED_ROUTES
+from core.threat_types import (
+    THREAT_SHAHED,
+    THREAT_RECON,
+    THREAT_RECON_UAV,
+    THREAT_CRUISE_MISSILE,
+    THREAT_TU95,
+    THREAT_TU22M3,
+    THREAT_ZIRCON,
+    THREAT_BALLISTIC,
+    THREAT_ISKANDER,
+    THREAT_KAB,
+    THREAT_MIG31K,
+    THREAT_SU35,
+    THREAT_ARTILLERY,
+    THREAT_MLRS,
+    THREAT_FPV,
+    THREAT_OFFICIAL_ALARM,
+    THREAT_UNKNOWN,
+)
 from database.db_helpers import execute_query_as_dicts, execute_write
 
 import time
@@ -205,7 +224,7 @@ async def get_threat_type_distribution(days: int = 30):
                    COUNT(*) as count
             FROM threat_history th
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND th.threat_type != 'official_alarm'
+              AND th.threat_type != '{THREAT_OFFICIAL_ALARM}'
             GROUP BY day, th.threat_type
             ORDER BY day
         """
@@ -216,7 +235,7 @@ async def get_threat_type_distribution(days: int = 30):
         totals = {}
         for r in rows:
             day = r["day"]
-            tt = r["threat_type"] or "unknown"
+            tt = r["threat_type"] or THREAT_UNKNOWN
             count = r["count"]
             if day not in daily_map:
                 daily_map[day] = {"date": day}
@@ -227,13 +246,18 @@ async def get_threat_type_distribution(days: int = 30):
 
         # Category aggregation: БПЛА vs Ракети vs Балістика vs КАБ
         categories = {
-            "БПЛА": sum(totals.get(t, 0) for t in ["shahed", "recon_uav", "recon"]),
-            "Крилаті ракети": sum(totals.get(t, 0) for t in ["cruise_missile", "tu95", "tu22m3", "zircon"]),
-            "Балістика": sum(totals.get(t, 0) for t in ["ballistic", "iskander"]),
-            "КАБ/Авіабомби": totals.get("kab", 0),
-            "Авіація": sum(totals.get(t, 0) for t in ["mig31k", "su35_su57"]),
-            "Артилерія": sum(totals.get(t, 0) for t in ["artillery", "mlrs"]),
-            "Інше": sum(v for k, v in totals.items() if k not in ["shahed", "recon_uav", "recon", "cruise_missile", "tu95", "tu22m3", "zircon", "ballistic", "iskander", "kab", "mig31k", "su35_su57", "artillery", "mlrs"])
+            "БПЛА": sum(totals.get(t, 0) for t in [THREAT_SHAHED, THREAT_RECON_UAV, THREAT_RECON, THREAT_FPV]),
+            "Крилаті ракети": sum(totals.get(t, 0) for t in [THREAT_CRUISE_MISSILE, THREAT_TU95, THREAT_TU22M3, THREAT_ZIRCON]),
+            "Балістика": sum(totals.get(t, 0) for t in [THREAT_BALLISTIC, THREAT_ISKANDER]),
+            "КАБ/Авіабомби": totals.get(THREAT_KAB, 0),
+            "Авіація": sum(totals.get(t, 0) for t in [THREAT_MIG31K, THREAT_SU35]),
+            "Артилерія": sum(totals.get(t, 0) for t in [THREAT_ARTILLERY, THREAT_MLRS]),
+            "Інше": sum(v for k, v in totals.items() if k not in [
+                THREAT_SHAHED, THREAT_RECON_UAV, THREAT_RECON, THREAT_FPV,
+                THREAT_CRUISE_MISSILE, THREAT_TU95, THREAT_TU22M3, THREAT_ZIRCON,
+                THREAT_BALLISTIC, THREAT_ISKANDER, THREAT_KAB,
+                THREAT_MIG31K, THREAT_SU35, THREAT_ARTILLERY, THREAT_MLRS
+            ])
         }
 
         return {"daily": daily, "totals": totals, "categories": categories}
