@@ -49,11 +49,10 @@ async def run_tests():
     print("==================================================")
     print("🧪 Запуск повного пайплайну аналізу новин SirenUA")
     print("==================================================\n")
-    os.environ["GEMINI_API_KEYS"] = ""
-
     threat_manager = MockPipelineThreatManager()
     monitor = TelegramThreatMonitor(threat_manager)
     monitor.is_running = True
+    monitor.analyzer.is_configured = False
 
     # Тест 1: Зліт МіГ-31К (загальнонаціональна загроза HIGH)
     print("📌 Тест 1: Зліт МіГ-31К...")

@@ -9,14 +9,19 @@ from analyzer.prompts import SYSTEM_PROMPT
 from analyzer.sanitizer import parse_gemini_json
 
 class GeminiThreatAnalyzer:
-    def __init__(self, error_callback=None, rule_audit_callback=None):
+    def __init__(self, error_callback=None, rule_audit_callback=None, db_path: str = "threat_analytics.db", api_keys: Optional[List[str]] = None, api_key: Optional[str] = None):
         # Configure Gemini
-        keys_str = os.environ.get("GEMINI_API_KEYS", "")
-        if keys_str:
-            self.api_keys = [k.strip() for k in keys_str.split(",") if k.strip()]
+        if api_keys:
+            self.api_keys = api_keys
+        elif api_key:
+            self.api_keys = [api_key]
         else:
-            single_key = os.environ.get("GEMINI_API_KEY", "")
-            self.api_keys = [single_key] if single_key else []
+            keys_str = os.environ.get("GEMINI_API_KEYS", "")
+            if keys_str:
+                self.api_keys = [k.strip() for k in keys_str.split(",") if k.strip()]
+            else:
+                single_key = os.environ.get("GEMINI_API_KEY", "")
+                self.api_keys = [single_key] if single_key else []
             
         self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         self.current_key_idx = 0
@@ -32,45 +37,80 @@ class GeminiThreatAnalyzer:
             self.last_error = "API key missing"
             print("⚠️ GEMINI_API_KEYS is not set. GeminiAnalyzer will run in mock mode.")
 
-        self.db_path = "threat_analytics.db"
+        self.db_path = db_path
         self._error_callback = error_callback
         self._rule_audit_callback = rule_audit_callback
         self.system_prompt = SYSTEM_PROMPT
 
 
-    def build_rules_context(self) -> str:
+    def build_rules_context(self, messages_text: str = "") -> str:
         """Load learned rules from DB and format them as context for Gemini prompt.
-        Only feeds active rules with solid evidence (>= 3 events) and high accuracy (>= 60%)."""
+        Uses Dynamic Rules RAG to select the most relevant rules based on mentioned regions/threat types,
+        limiting to top 8 high-accuracy rules to maintain sub-second latency and high focus."""
         try:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            
+
+            # Dynamic RAG: Detect active regional clusters from incoming message text
+            text_lower = messages_text.lower()
+            detected_keywords = []
+
+            cluster_definitions = {
+                "north": ["сум", "чернігів", "київ", "житомир", "курськ", "брянськ"],
+                "east": ["харків", "донецьк", "луганськ", "бєлгород", "бнр", "куп", "ізюм"],
+                "south": ["одес", "миколаїв", "херсон", "запоріж", "крим", "чорн", "азов", "приморськ", "єйськ"],
+                "central": ["полтав", "дніпр", "черкас", "кіровоград", "кропивницьк", "вінниц", "кременчук", "кривий ріг"],
+                "west": ["хмельниц", "рівн", "волин", "львів", "терноп", "франківськ", "закарпат", "чернівц", "старокостянтинів"],
+                "strategic": ["міг", "миг", "ту-95", "ту-22", "кинджал", "кинжал", "калібр", "іскандер", "балістик", "саваслейк", "олень", "енгельс"]
+            }
+
+            matched_clusters = []
+            for cluster_name, kw_list in cluster_definitions.items():
+                if any(kw in text_lower for kw in kw_list):
+                    matched_clusters.append(cluster_name)
+                    detected_keywords.extend(kw_list)
+
             cursor.execute('''
-                SELECT rule_type, rule_text, evidence_count, accuracy_score
+                SELECT rule_type, source_region, target_region, threat_type, rule_text, evidence_count, accuracy_score
                 FROM gemini_rules
                 WHERE is_active = 1 AND evidence_count >= 3 AND accuracy_score >= 0.60
-                ORDER BY evidence_count DESC, accuracy_score DESC
-                LIMIT 25
+                ORDER BY (accuracy_score * evidence_count) DESC
             ''')
-            rules = cursor.fetchall()
+            all_rules = cursor.fetchall()
             conn.close()
-            
-            if not rules:
+
+            if not all_rules:
                 return ""
-            
-            context = "\nНАБУТІ ЗНАННЯ (Правила з бази досвіду — враховуй при аналізі):\n"
-            for i, rule in enumerate(rules, 1):
+
+            # If specific clusters detected, prioritize relevant rules (RAG filtering)
+            selected_rules = []
+            if detected_keywords:
+                for rule in all_rules:
+                    rule_str = f"{rule['source_region']} {rule['target_region']} {rule['threat_type']} {rule['rule_text']}".lower()
+                    if any(kw in rule_str for kw in detected_keywords):
+                        selected_rules.append(rule)
+                    if len(selected_rules) >= 8:
+                        break
+
+            # Fallback to top general rules if no specific match
+            if not selected_rules:
+                selected_rules = all_rules[:8]
+
+            context = "\nНАБУТІ ЗНАННЯ (Динамічні правила з бази досвіду для поточного напрямку):\n"
+            for i, rule in enumerate(selected_rules, 1):
                 rule_type_label = {
                     "route_pattern": "Маршрут",
                     "confidence_correction": "Корекція довіри",
                     "time_pattern": "Часовий патерн",
                     "false_positive": "Хибний позитив",
-                    "weapon_profile": "Профіль зброї"
+                    "weapon_profile": "Профіль зброї",
+                    "eta_math": "Математика дольоту",
+                    "predictive_risk": "Предиктивний ризик"
                 }.get(rule["rule_type"], rule["rule_type"])
-                
+
                 context += f"{i}. [{rule_type_label}] {rule['rule_text']} (доказів: {rule['evidence_count']}, точність: {rule['accuracy_score']:.0%})\n"
-            
+
             return context
         except Exception as e:
             print(f"⚠️ Помилка завантаження правил: {e}")
@@ -131,6 +171,18 @@ class GeminiThreatAnalyzer:
                 self._error_callback("gemini", str(e), endpoint="run_rules_learner")
             return 0
 
+    async def run_post_mortem(self, hours: int = 4) -> Dict[str, Any]:
+        """Trigger autonomous Gemini post-mortem reflection on recent cleared events."""
+        try:
+            from analyzer.rules.post_mortem import GeminiPostMortemAnalyzer
+            analyzer = GeminiPostMortemAnalyzer(db_path=self.db_path, rule_audit_callback=self._rule_audit_callback)
+            return await analyzer.run_post_mortem(hours=hours, custom_model=self.model if self.is_configured else None)
+        except Exception as e:
+            print(f"⚠️ [Post-Mortem] Помилка виконання рефлексії: {e}")
+            if self._error_callback:
+                self._error_callback("gemini", str(e), endpoint="run_post_mortem")
+            return {"status": "error", "error": str(e)}
+
     async def analyze_batch(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         if not messages:
             return []
@@ -151,8 +203,9 @@ class GeminiThreatAnalyzer:
 
         prompt = self.system_prompt + f"\n\nПОТОЧНИЙ КИЇВСЬКИЙ ЧАС: {current_time_kyiv}\n\n"
         
-        # Inject learned rules
-        rules_ctx = self.build_rules_context()
+        # Inject learned rules with Dynamic RAG relevance filter
+        messages_combined = " ".join([m.get("text", "") for m in messages])
+        rules_ctx = self.build_rules_context(messages_combined)
         if rules_ctx:
             prompt += rules_ctx + "\n"
         

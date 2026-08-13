@@ -529,6 +529,114 @@ async def get_analytics_reports(limit: int = 30):
 # Palantir Intelligence Dedicated Endpoints
 # ---------------------------------------------------------------------------
 
+@router.get("/api/admin/palantir/chains")
+async def get_multihop_flight_chains(days: int = 30):
+    """Palantir Multi-Hop Markov Flight Chains and Branching Analysis."""
+    try:
+        query = """
+            SELECT gemini_group_id, region, threat_type, created_at, prediction_accuracy, was_predictive
+            FROM paired_events
+            WHERE gemini_group_id IS NOT NULL AND gemini_group_id != ''
+              AND created_at >= datetime('now', ?)
+            ORDER BY gemini_group_id, created_at ASC
+        """
+        rows = execute_query_as_dicts(query, (f"-{days} days",))
+
+        groups = {}
+        for r in rows:
+            gid = r["gemini_group_id"]
+            if gid not in groups:
+                groups[gid] = []
+            if not groups[gid] or groups[gid][-1]["region"] != r["region"]:
+                groups[gid].append(r)
+
+        chain_counts = {}
+        junction_branches = {}
+        for gid, p_list in groups.items():
+            regions = [p["region"] for p in p_list]
+            if len(regions) >= 2:
+                for i in range(len(regions) - 1):
+                    src = regions[i]
+                    tgt = regions[i + 1]
+                    if src not in junction_branches:
+                        junction_branches[src] = {}
+                    junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + 1
+
+                for i in range(len(regions) - 2):
+                    sub_chain = " ➔ ".join(regions[i:i+3])
+                    chain_counts[sub_chain] = chain_counts.get(sub_chain, 0) + 1
+
+        formatted_chains = [
+            {"chain": chain, "occurrences": count, "confidence": min(0.98, round(0.60 + (count * 0.05), 2))}
+            for chain, count in sorted(chain_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+        ]
+
+        formatted_branches = []
+        for src, tgts in junction_branches.items():
+            total = sum(tgts.values())
+            if total >= 2:
+                branch_list = [
+                    {"target": t, "count": c, "probability": round(c / total, 2)}
+                    for t, c in sorted(tgts.items(), key=lambda x: x[1], reverse=True)
+                ]
+                formatted_branches.append({
+                    "junction_region": src,
+                    "total_transitions": total,
+                    "branches": branch_list
+                })
+
+        return {
+            "chains": formatted_chains,
+            "junction_branches": formatted_branches,
+            "total_chains_tracked": len(formatted_chains)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/admin/palantir/attrition")
+async def get_air_defense_attrition(days: int = 30):
+    """Calculate historical air defense interception and attrition rates by region."""
+    try:
+        query = """
+            SELECT 
+                tc.region,
+                COUNT(*) as total_cleared,
+                SUM(CASE WHEN tc.resolution_type = 'intercepted' THEN 1 ELSE 0 END) as intercepted_count,
+                SUM(CASE WHEN tc.resolution_type = 'impact' THEN 1 ELSE 0 END) as impact_count,
+                SUM(CASE WHEN tc.resolution_type = 'out_of_airspace' THEN 1 ELSE 0 END) as transit_count,
+                SUM(CASE WHEN tc.resolution_type = 'unknown' THEN 1 ELSE 0 END) as unknown_count
+            FROM threat_clearings tc
+            WHERE tc.timestamp >= datetime('now', ?)
+            GROUP BY tc.region
+            HAVING total_cleared >= 1
+            ORDER BY intercepted_count DESC
+        """
+        rows = execute_query_as_dicts(query, (f"-{days} days",))
+
+        attrition_stats = []
+        for r in rows:
+            total = r["total_cleared"]
+            inter = r["intercepted_count"]
+            rate = round((inter / total) * 100, 1) if total > 0 else 0.0
+            attrition_stats.append({
+                "region": r["region"],
+                "total_events": total,
+                "intercepted_count": inter,
+                "impact_count": r["impact_count"],
+                "transit_count": r["transit_count"],
+                "interception_rate_percent": rate,
+                "defense_density": "high" if rate >= 70 else ("medium" if rate >= 40 else "standard")
+            })
+
+        return {
+            "regions": attrition_stats,
+            "total_analyzed": len(attrition_stats)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/api/admin/palantir/overview")
 async def get_palantir_overview(days: int = 30):
     """Palantir System Unified Tactical Intelligence Endpoint."""
@@ -538,6 +646,8 @@ async def get_palantir_overview(days: int = 30):
     types = await get_threat_type_distribution(days=days)
     corridors = await get_flight_corridors(days=days)
     summary = await get_daily_summary(days=days)
+    chains = await get_multihop_flight_chains(days=days)
+    attrition = await get_air_defense_attrition(days=days)
 
     return {
         "system": "Palantir Tactical Intelligence Engine v2.0",
@@ -547,7 +657,10 @@ async def get_palantir_overview(days: int = 30):
         "region_risk_matrix": risk["regions"],
         "threat_types": types,
         "flight_corridors": corridors["corridors"],
-        "daily_summaries": summary["summaries"]
+        "daily_summaries": summary["summaries"],
+        "multihop_chains": chains["chains"],
+        "junction_branches": chains["junction_branches"],
+        "air_defense_attrition": attrition["regions"]
     }
 
 

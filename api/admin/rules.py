@@ -139,4 +139,13 @@ async def get_admin_rules_metrics_by_region():
     }
 
 
-
+@router.post("/api/admin/rules/post_mortem")
+async def trigger_admin_post_mortem(hours: int = 4):
+    """Викликати ШІ-рефлексію Gemini (Post-Mortem Reflection) щодо завершених сесій."""
+    try:
+        from analyzer.rules.post_mortem import GeminiPostMortemAnalyzer
+        analyzer = GeminiPostMortemAnalyzer()
+        result = await analyzer.run_post_mortem(hours=hours)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

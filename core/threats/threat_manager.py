@@ -452,6 +452,20 @@ class MockThreatManager:
                 self._execute_save_to_db()
                 self._execute_save_real_threats_to_db()
 
+                # Trigger post-mortem reflection when real threat waves clear
+                if not only_test:
+                    try:
+                        import asyncio
+                        from analyzer.rules.post_mortem import GeminiPostMortemAnalyzer
+                        analyzer = GeminiPostMortemAnalyzer()
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(analyzer.run_post_mortem(hours=3))
+                        except RuntimeError:
+                            pass
+                    except Exception as pm_err:
+                        print(f"⚠️ [ThreatManager] Помилка запуску Post-Mortem: {pm_err}")
+
             if only_test:
                 try:
                     delete_test_history_from_sqlite()
