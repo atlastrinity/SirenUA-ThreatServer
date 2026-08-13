@@ -96,7 +96,7 @@ DEFAULT_SPEEDS_KMH: Dict[str, float] = {
     THREAT_CRUISE_MISSILE: 850.0,  # ~800-900 km/h (Kh-101/Kalibr)
     THREAT_BALLISTIC: 5500.0,      # ~4500-7000 km/h (Iskander-M/S-300)
     THREAT_MIG31K: 2500.0,         # ~2500 km/h (Kh-47M2 Kinzhal launch phase)
-    THREAT_KAB: 350.0,             # ~300-400 km/h (FAB with UMPK)
+    THREAT_KAB: 900.0,             # ~800-1000 km/h (FAB with UMPK gliding after Su-34 supersonic/subsonic drop)
     THREAT_TU95: 800.0,            # ~800 km/h cruising after launch
     THREAT_TU22M3: 4200.0,         # ~4000-4500 km/h (Kh-22/Kh-32 supersonic)
     THREAT_SU35: 950.0,            # ~900-1000 km/h (Kh-59/69 tactical)
