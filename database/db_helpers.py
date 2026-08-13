@@ -29,6 +29,8 @@ from database.firestore_sync import (
     local_sqlite_restore,
     backup_sqlite_to_firestore,
     restore_sqlite_from_firestore,
+    restore_from_local_baseline,
+    try_background_restore_if_empty,
 )
 
 # Map of Ukrainian region names to corresponding Firebase FCM topics

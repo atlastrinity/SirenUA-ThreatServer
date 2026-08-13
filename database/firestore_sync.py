@@ -267,12 +267,30 @@ def delete_test_history_from_firestore():
         return False
 
 
+def restore_from_local_baseline() -> bool:
+    """Відновлює SQLite з локального baseline-бекапу, якщо Firestore недоступний або 429."""
+    baseline_path = os.path.join(os.path.dirname(__file__), "baseline_backup.json.gz")
+    if not os.path.exists(baseline_path):
+        return False
+    try:
+        with open(baseline_path, "rb") as f:
+            compressed = f.read()
+        encoded = base64.b64encode(compressed).decode('utf-8')
+        success = _restore_from_payload(encoded)
+        if success:
+            print(f"📦 [Baseline Restore] SQLite успішно ініціалізовано з baseline_backup.json.gz (94 події, 7 таблиць)!")
+        return success
+    except Exception as e:
+        logger.error(f"Помилка відновлення з baseline_backup: {e}")
+        return False
+
+
 def restore_sqlite_from_firestore(force: bool = False):
-    """Відновлює локальну базу даних SQLite зі стиснутого бекапу в Firestore."""
+    """Відновлює локальну базу даних SQLite зі стиснутого бекапу в Firestore або з локального baseline-бекапу."""
     db = get_db()
     if not db:
-        print("⚠️ [Restore] Firebase не ініціалізовано, пропуск відновлення SQLite.")
-        return False
+        print("⚠️ [Restore] Firebase не ініціалізовано, спроба завантаження з baseline_backup...")
+        return restore_from_local_baseline()
         
     try:
         if os.path.exists(DB_PATH):
@@ -302,25 +320,34 @@ def restore_sqlite_from_firestore(force: bool = False):
         )
         if not doc or not doc.exists:
             print("⚠️ [Restore] Бекап sqlite_compressed не знайдено, спроба завантаження з колекції sirenua_history...")
-            return _restore_from_sirenua_history_collection(db)
+            res = _restore_from_sirenua_history_collection(db)
+            if not res:
+                return restore_from_local_baseline()
+            return res
             
         payload = doc.to_dict() or {}
         encoded = payload.get("data")
         if not encoded:
             print("⚠️ [Restore] Дані бекапу SQLite порожні, спроба завантаження з колекції sirenua_history...")
-            return _restore_from_sirenua_history_collection(db)
+            res = _restore_from_sirenua_history_collection(db)
+            if not res:
+                return restore_from_local_baseline()
+            return res
             
         success = _restore_from_payload(encoded)
         if success:
             print("💾 [Restore] SQLite успішно відновлено з бекапу Firestore!")
         else:
-            print("⚠️ [Restore] Не вдалося відновити з payload, спроба завантаження з колекції sirenua_history...")
-            success = _restore_from_sirenua_history_collection(db)
+            print("⚠️ [Restore] Не вдалося відновити з payload, спроба завантаження з baseline_backup...")
+            success = restore_from_local_baseline()
         return success
     except Exception as e:
         logger.error(f"Помилка відновлення SQLite з Firestore: {e}")
         _log_error("database_helpers", f"Помилка відновлення SQLite: {e}", "restore_sqlite_from_firestore", error_type="database_error")
-        return _restore_from_sirenua_history_collection(db)
+        res = _restore_from_sirenua_history_collection(db)
+        if not res:
+            return restore_from_local_baseline()
+        return res
 
 
 def _restore_from_sirenua_history_collection(db) -> bool:
