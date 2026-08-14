@@ -70,3 +70,18 @@ async def get_admin_errors_summary(days: int = 7):
         return {"total": total, "by_source": by_source, "by_type": by_type, "hourly": hourly}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/api/admin/errors")
+async def clear_admin_errors(source: str = None, error_type: str = None):
+    """Очищає логи помилок (повністю або за фільтром)."""
+    from database.db_helpers import execute_write
+    if source and error_type:
+        deleted = execute_write("DELETE FROM error_log WHERE source = ? AND error_type = ?", (source, error_type))
+    elif source:
+        deleted = execute_write("DELETE FROM error_log WHERE source = ?", (source,))
+    elif error_type:
+        deleted = execute_write("DELETE FROM error_log WHERE error_type = ?", (error_type,))
+    else:
+        deleted = execute_write("DELETE FROM error_log")
+    return {"status": "ok", "deleted": deleted}

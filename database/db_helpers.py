@@ -150,7 +150,7 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     Звук, вібрація та рівень переривання визначаються виключно iOS-клієнтом
     на основі локальних налаштувань користувача (6 рубільників).
     """
-    if not HAS_FIREBASE:
+    if not HAS_FIREBASE or not firebase_admin._apps:
         return
 
     is_clear = (level == "none")
