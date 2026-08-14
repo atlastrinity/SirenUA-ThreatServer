@@ -276,10 +276,10 @@ async def get_admin_chronology_v2(
     try:
         # Date filter
         if date_from and date_to:
-            date_clause = "AND th_ai.timestamp BETWEEN ? AND ?"
+            date_clause = "AND pe.created_at BETWEEN ? AND ?"
             date_params = [date_from, date_to + " 23:59:59"]
         else:
-            date_clause = "AND th_ai.timestamp >= datetime('now', ?)"
+            date_clause = "AND pe.created_at >= datetime('now', ?)"
             date_params = [f'-{days} days']
 
         # Build WHERE conditions
@@ -309,7 +309,7 @@ async def get_admin_chronology_v2(
                    pe.was_predictive, pe.prediction_accuracy,
                    pe.lifecycle_status, pe.duration_seconds,
                    pe.gemini_group_id,
-                   th_ai.timestamp as ai_timestamp,
+                   COALESCE(th_ai.timestamp, pe.created_at) as ai_timestamp,
                    th_ai.detail as threat_detail,
                    td.attack_vector, td.target_count, td.speed_kmh,
                    td.weapon_subtype, td.launch_origin, td.altitude_category,
@@ -318,14 +318,14 @@ async def get_admin_chronology_v2(
                    tc.timestamp as clearing_timestamp,
                    tc.resolution_type
             FROM paired_events pe
-            JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
+            LEFT JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
             LEFT JOIN telemetry_data td ON td.threat_event_id = th_ai.id
             LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
             WHERE pe.threat_type NOT IN ('official_alarm', 'threat_clear')
               AND (th_ai.is_test = 0 OR th_ai.is_test IS NULL)
             {date_clause}
             {where_extra}
-            ORDER BY th_ai.timestamp DESC
+            ORDER BY pe.created_at DESC
         """
         params = date_params + extra_params
         ai_events = execute_query_as_dicts(query, params)
@@ -337,7 +337,7 @@ async def get_admin_chronology_v2(
             WHERE threat_type = 'official_alarm'
             AND threat_level = 'high'
             AND (is_test = 0 OR is_test IS NULL)
-            {date_clause.replace('th_ai.timestamp', 'timestamp')}
+            {date_clause.replace('pe.created_at', 'timestamp')}
             ORDER BY timestamp
         """
         alarm_rows = execute_query_as_dicts(alarm_query, date_params)
@@ -368,7 +368,7 @@ async def get_admin_chronology_v2(
 
         # Daily aggregation for charts
         daily_agg_query = f"""
-            SELECT date(datetime(th_ai.timestamp, {tz_modifier})) as day,
+            SELECT date(datetime(pe.created_at, {tz_modifier})) as day,
                    COUNT(*) as total_events,
                    SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
@@ -376,7 +376,7 @@ async def get_admin_chronology_v2(
                    SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
             FROM paired_events pe
-            JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
+            LEFT JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
             WHERE pe.threat_type NOT IN ('official_alarm', 'threat_clear')
               AND (th_ai.is_test = 0 OR th_ai.is_test IS NULL)
             {date_clause}
@@ -390,7 +390,7 @@ async def get_admin_chronology_v2(
         type_breakdown_query = f"""
             SELECT pe.threat_type, pe.prediction_accuracy, COUNT(*) as count
             FROM paired_events pe
-            JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
+            LEFT JOIN threat_history th_ai ON pe.threat_event_id = th_ai.id
             WHERE pe.threat_type NOT IN ('official_alarm', 'threat_clear')
               AND (th_ai.is_test = 0 OR th_ai.is_test IS NULL)
             {date_clause}
