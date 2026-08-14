@@ -163,9 +163,12 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     if not topic:
         return
 
+    # Визначаємо, чи ця подія є саме ОФІЦІЙНОЮ тривогою (сиреною), чи локальною ШІ-загрозою
+    is_official_event = (threat_type == "official_alarm") or (is_official_alarm and not threat_type)
+
     # --- Формування title/body (для банера) та event_type/sound_file ---
     if is_clear:
-        if is_official_alarm:
+        if is_official_event:
             title = f"🟢 Відбій тривоги: {region}"
             body = "Офіційну тривогу завершено." if not detail else detail
             event_type = "clear"
@@ -176,7 +179,7 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
             event_type = "threat_clear"
             sound_file = "clearance.wav"
     else:
-        if is_official_alarm:
+        if is_official_event:
             title = f"🔴 Повітряна тривога: {region}"
             body = detail if detail else "Пройдіть в укриття!"
             event_type = "alarm"
@@ -220,8 +223,9 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
             data={
                 "region": region,
                 "threat_level": level,
-                "threat_type": threat_type or "",
-                "is_official": "true" if is_official_alarm else "false",
+                "threat_type": threat_type or ("official_alarm" if is_official_event else ""),
+                "is_official": "true" if is_official_event else "false",
+                "is_official_alarm": "true" if is_official_alarm else "false",
                 "is_test": "true" if is_test else "false",
                 "confidence": str(confidence) if confidence is not None else "",
                 "eta": eta or "",

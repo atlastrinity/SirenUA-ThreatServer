@@ -328,6 +328,7 @@ class MockThreatManager:
         )
         
         if has_changed:
+            is_official = (threat_type == "official_alarm")
             if self._batch_mode:
                 self._fcm_batch_buffer.append({
                     "region": region,
@@ -336,7 +337,7 @@ class MockThreatManager:
                     "detail": detail,
                     "confidence": confidence,
                     "eta": eta,
-                    "is_official_alarm": self.threats[region].is_active,
+                    "is_official_alarm": is_official,
                     "is_test": self.threats[region].is_test
                 })
             else:
@@ -347,7 +348,7 @@ class MockThreatManager:
                     detail=detail,
                     confidence=confidence,
                     eta=eta,
-                    is_official_alarm=self.threats[region].is_active,
+                    is_official_alarm=is_official,
                     is_test=self.threats[region].is_test,
                     active_check_fn=lambda r: r in self.threats and (self.threats[r].level != "none" if level != "none" else self.threats[r].level == "none")
                 )
@@ -416,7 +417,8 @@ class MockThreatManager:
                 # Якщо сповіщення було в пендінгу на верифікаційній паузі — скасовуємо його
                 if not self.fcm_scheduler.cancel_pending(region):
                     send_fcm_notification(region, "none",
-                                          is_official_alarm=old_state.is_active,
+                                          threat_type=threat_type,
+                                          is_official_alarm=(threat_type == "official_alarm"),
                                           is_test=removed_threat.is_test if removed_threat else False)
 
             if not self._batch_mode:
