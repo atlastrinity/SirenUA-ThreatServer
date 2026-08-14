@@ -348,6 +348,18 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
+
+        # Prevent duplicate 'none' (clear) records for the same region and threat_type within 5 seconds
+        if level == "none" and not is_test:
+            cursor.execute("""
+                SELECT id FROM threat_history 
+                WHERE region = ? AND threat_level = 'none' AND threat_type = ? AND timestamp >= datetime('now', '-5 seconds')
+                ORDER BY id DESC LIMIT 1
+            """, (region, threat_type))
+            if cursor.fetchone():
+                conn.close()
+                return None
+
         cursor.execute(
             "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
             (region, level, threat_type, detail, confidence, 1 if is_test else 0)
@@ -449,7 +461,8 @@ def _detect_threat_type_from_text(text: str) -> Optional[str]:
 def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                        source_channel: str = None, message_text: str = None,
                        clearing_confidence: int = None, was_predictive: bool = False,
-                       is_test: bool = False, threat_type: str = None):
+                       is_test: bool = False, threat_type: str = None,
+                       skip_history_log: bool = False):
     """Log threat clearing event linked to original threat. Closes active paired events."""
     if not clearing_telemetry:
         clearing_telemetry = {}
@@ -632,27 +645,28 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
             if saved_type == "official_alarm":
                 saved_type = detected_type or "threat_clear"
 
-        # Log clearing event to history table & Firestore so it appears in app chronology
-        try:
-            clear_detail = message_text[:200] if message_text else f"🟢 Відбій загрози в: {region}"
-            log_threat_to_db(
-                region=region,
-                level="none",
-                threat_type=saved_type,
-                detail=clear_detail,
-                confidence=clearing_confidence or 100,
-                is_test=is_test
-            )
-            log_threat_to_firestore(
-                region=region,
-                level="none",
-                threat_type=saved_type,
-                detail=clear_detail,
-                confidence=clearing_confidence or 100,
-                is_test=is_test
-            )
-        except Exception as e:
-            print(f"⚠️ [Clearing History] Failed to record clear event in history: {e}")
+        # Log clearing event to history table & Firestore ONLY if not already logged upstream
+        if not skip_history_log:
+            try:
+                clear_detail = message_text[:200] if message_text else f"🟢 Відбій загрози в: {region}"
+                log_threat_to_db(
+                    region=region,
+                    level="none",
+                    threat_type=saved_type,
+                    detail=clear_detail,
+                    confidence=clearing_confidence or 100,
+                    is_test=is_test
+                )
+                log_threat_to_firestore(
+                    region=region,
+                    level="none",
+                    threat_type=saved_type,
+                    detail=clear_detail,
+                    confidence=clearing_confidence or 100,
+                    is_test=is_test
+                )
+            except Exception as e:
+                print(f"⚠️ [Clearing History] Failed to record clear event in history: {e}")
 
         res_type = clearing_telemetry.get("resolution_type", "unknown")
         pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "n/a")
@@ -742,11 +756,21 @@ def safe_run_task(coro):
             new_loop.close()
 
 
-def on_threat_changed(region, state, telemetry=None, rules_applied=None):
-    global last_logged_states, _history_batch_buffer
+def on_threat_changed(region: str, state, telemetry: dict = None, rules_applied: list = None):
+    """Callback triggered whenever ThreatManager updates a region."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(sync_threat_state_to_db(region, state, telemetry=telemetry, rules_applied=rules_applied))
+    except RuntimeError:
+        pass
+
+
+async def sync_threat_state_to_db(region: str, state, telemetry: dict = None, rules_applied: list = None):
+    """Synchronize high-level threat state changes directly to the analytics database."""
+    global last_logged_states
     
     prev_state_dict = last_logged_states.get(region)
-    if not isinstance(prev_state_dict, dict) or "active_threats" not in prev_state_dict:
+    if not prev_state_dict:
         prev_state_dict = {
             "active_threats": {},
             "is_active": False,
@@ -757,12 +781,12 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
     prev_active_threats = prev_state_dict["active_threats"]
     
     from core.threat_state import MockThreatManager
-    is_batch = getattr(state, '_batch_mode', False)  # state here is ThreatState, but we check manager if batch mode is on
+    is_batch = getattr(state, '_batch_mode', False)
     
     # 1. Official air alarm status change logging
     if prev_active != state.is_active:
         log_level = "high" if state.is_active else "none"
-        detail = "Повітряна тривога" if state.is_active else "Відбій повітряної тривоги"
+        detail = "Повітряна тривога" if state.is_active else "Відбій тривоги"
         safe_run_task(asyncio.to_thread(log_threat_to_db, region, log_level, THREAT_OFFICIAL_ALARM, detail))
         
         if state.is_active:
@@ -777,8 +801,10 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
                 region=region,
                 clearing_telemetry=clearing_telemetry,
                 source_channel=THREAT_OFFICIAL_ALARM,
-                message_text="Відбій повітряної тривоги (офіційно)",
-                is_test=state.is_test
+                message_text="Відбій тривоги",
+                is_test=state.is_test,
+                threat_type=THREAT_OFFICIAL_ALARM,
+                skip_history_log=True
             ))
         
         # Buffer or write firestore
@@ -792,8 +818,6 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
             "confidence": None,
             "is_test": state.is_test
         }
-        # We will assume batch mode is controlled globally or on manager.
-        # But we check state.is_test/etc
         safe_run_task(asyncio.to_thread(log_threat_to_firestore, region, log_level, THREAT_OFFICIAL_ALARM, detail, is_test=state.is_test))
             
     # 2. AI/Telegram threat level/type changes tracking
@@ -867,8 +891,10 @@ def on_threat_changed(region, state, telemetry=None, rules_applied=None):
             region=region,
             clearing_telemetry=c_telemetry,
             source_channel="auto_clear" if not state.is_active else "official_alarm",
-            message_text="Автоматичне зняття загрози або відбій тривоги",
-            is_test=t_data["is_test"]
+            message_text="Відбій загрози",
+            threat_type=t_data["threat_type"],
+            is_test=t_data["is_test"],
+            skip_history_log=True
         ))
         
         safe_run_task(asyncio.to_thread(

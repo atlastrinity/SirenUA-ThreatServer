@@ -151,6 +151,7 @@ def log_clearing_to_db(
     was_predictive: bool = False,
     is_test: bool = False,
     threat_type: str = None,
+    skip_history_log: bool = False,
 ):
     """Log threat clearing event linked to original threat. Closes active paired events."""
     if not clearing_telemetry:
@@ -248,27 +249,28 @@ def log_clearing_to_db(
                 saved_type = detected_type or "threat_clear"
 
         # Log clearing event to history table & Firestore so it appears in app chronology
-        try:
-            from database.threat_logger import log_threat_to_db, log_threat_to_firestore
-            clear_detail = message_text[:200] if message_text else f"🟢 Відбій загрози в: {region}"
-            log_threat_to_db(
-                region=region,
-                level="none",
-                threat_type=saved_type,
-                detail=clear_detail,
-                confidence=clearing_confidence or 100,
-                is_test=is_test
-            )
-            log_threat_to_firestore(
-                region=region,
-                level="none",
-                threat_type=saved_type,
-                detail=clear_detail,
-                confidence=clearing_confidence or 100,
-                is_test=is_test
-            )
-        except Exception as e:
-            print(f"⚠️ [Clearing History] Failed to record clear event in history: {e}")
+        if not skip_history_log:
+            try:
+                from database.threat_logger import log_threat_to_db, log_threat_to_firestore
+                clear_detail = message_text[:200] if message_text else f"🟢 Відбій загрози в: {region}"
+                log_threat_to_db(
+                    region=region,
+                    level="none",
+                    threat_type=saved_type,
+                    detail=clear_detail,
+                    confidence=clearing_confidence or 100,
+                    is_test=is_test
+                )
+                log_threat_to_firestore(
+                    region=region,
+                    level="none",
+                    threat_type=saved_type,
+                    detail=clear_detail,
+                    confidence=clearing_confidence or 100,
+                    is_test=is_test
+                )
+            except Exception as e:
+                print(f"⚠️ [Clearing History] Failed to record clear event in history: {e}")
 
         res_type = clearing_telemetry.get("resolution_type", "unknown")
         pred_hint = clearing_telemetry.get("prediction_accuracy_hint", "n/a")

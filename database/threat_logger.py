@@ -49,6 +49,18 @@ def log_threat_to_db(
     try:
         conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
+
+        # Prevent duplicate 'none' (clear) records for the same region and threat_type within 5 seconds
+        if level == "none" and not is_test:
+            cursor.execute("""
+                SELECT id FROM threat_history 
+                WHERE region = ? AND threat_level = 'none' AND threat_type = ? AND timestamp >= datetime('now', '-5 seconds')
+                ORDER BY id DESC LIMIT 1
+            """, (region, threat_type))
+            if cursor.fetchone():
+                conn.close()
+                return None
+
         cursor.execute(
             "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
             (region, level, threat_type, detail, confidence, 1 if is_test else 0)
