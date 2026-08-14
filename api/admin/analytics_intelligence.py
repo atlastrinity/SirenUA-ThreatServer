@@ -238,7 +238,9 @@ async def get_threat_type_distribution(days: int = 30):
                    COUNT(*) as count
             FROM threat_history th
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND th.threat_type != '{THREAT_OFFICIAL_ALARM}'
+              AND th.threat_type NOT IN ('{THREAT_OFFICIAL_ALARM}', 'threat_clear')
+              AND th.threat_level != 'none'
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY day, th.threat_type
             ORDER BY day
         """
@@ -294,7 +296,9 @@ async def get_region_risk_matrix(days: int = 30):
             FROM threat_history th
             LEFT JOIN paired_events pe ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND th.threat_type != 'official_alarm'
+              AND th.threat_type NOT IN ('{THREAT_OFFICIAL_ALARM}', 'threat_clear')
+              AND th.threat_level != 'none'
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY th.region, th.threat_type
             ORDER BY total_events DESC
         """
@@ -443,7 +447,9 @@ async def get_daily_summary(days: int = 30):
             FROM threat_history th
             LEFT JOIN paired_events pe ON pe.threat_event_id = th.id
             WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND th.threat_type != 'official_alarm'
+              AND th.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND th.threat_level != 'none'
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY day
             ORDER BY day
         """
