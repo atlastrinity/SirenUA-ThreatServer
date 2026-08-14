@@ -733,15 +733,15 @@ class TelegramThreatMonitor:
                 if adj_state.level != "none" and not adj_state.is_predictive:
                     continue  # Already red — skip
 
-                # Anti-flapping: skip if this region/threat_type was recently cleared or expired
+                # Anti-flapping: skip if this region/threat_type was recently cleared or expired (30 min cooldown)
                 cooldown_key = (adj_region, threat_type)
                 import time
                 last_cleared_time = self._cleared_predictions_cooldown.get(cooldown_key, 0)
-                if time.time() - last_cleared_time < 600:  # 10 min cooldown
+                if time.time() - last_cleared_time < 1800:
                     continue
                 
                 # Calculate direction alignment score (0.0 - 1.0)
-                direction_score = 0.5  # Neutral if no bearing
+                direction_score = 0.0  # Strict 0.0 if no bearing
                 if bearing is not None and source_region in self.REGION_CENTROIDS and adj_region in self.REGION_CENTROIDS:
                     src_coords = self.REGION_CENTROIDS[source_region]
                     adj_coords = self.REGION_CENTROIDS[adj_region]
@@ -762,10 +762,30 @@ class TelegramThreatMonitor:
                     if diff < 45:
                         direction_score = min(1.0, direction_score * 1.3)
                 
-                # Skip if direction is completely wrong (>120° off course)
-                if bearing is not None and direction_score < 0.2:
+                # Skip if bearing is present but target is off-course (>90°)
+                if bearing is not None and direction_score < 0.35:
                     continue
                 
+                # Check historical patterns (known SHAHED routes)
+                route_boost = 0.0
+                if adj_region in path_boost_regions:
+                    route_boost = 0.8
+                else:
+                    for route_name, route_regions in SHAHED_ROUTES.items():
+                        if source_region in route_regions and adj_region in route_regions:
+                            src_idx = route_regions.index(source_region)
+                            adj_idx = route_regions.index(adj_region)
+                            if adj_idx > src_idx:  # Forward in the route
+                                route_boost = 0.25
+                                break
+                
+                # Check DB for historical patterns
+                db_boost = self._get_historical_route_score(source_region, adj_region)
+                
+                # Strict check: If bearing is unknown, DO NOT predict unless there is an explicit target city path, confirmed forward route, or strong DB pattern
+                if bearing is None and not (adj_region in path_boost_regions or route_boost > 0 or db_boost >= 0.20):
+                    continue
+
                 # Calculate distance and ETA
                 eta_seconds = None
                 distance_km = None
@@ -790,26 +810,10 @@ class TelegramThreatMonitor:
                     if speed and speed > 0:
                         eta_seconds = int((distance_km / speed) * 3600)
                 
-                # Check historical patterns (known SHAHED routes)
-                route_boost = 0.0
-                
-                # Apply massive boost if region is on the path to a known final target
-                if adj_region in path_boost_regions:
-                    route_boost = 0.8
-                else:
-                    for route_name, route_regions in SHAHED_ROUTES.items():
-                        if source_region in route_regions and adj_region in route_regions:
-                            src_idx = route_regions.index(source_region)
-                            adj_idx = route_regions.index(adj_region)
-                            if adj_idx > src_idx:  # Forward in the route
-                                route_boost = 0.25
-                                break
-                
-                # Check DB for historical patterns
-                db_boost = self._get_historical_route_score(source_region, adj_region)
-                
                 # Calculate final prediction score
-                base_score = direction_score * 0.5 + 0.2  # 20-70% base from direction
+                base_score = direction_score * 0.6
+                if bearing is None and (route_boost > 0 or db_boost > 0):
+                    base_score = 0.35  # Moderate base when supported by route/DB
                 
                 # Threat type weight (slow = more predictable trajectory)
                 base_score += THREAT_PREDICTIVE_WEIGHTS.get(threat_type, 0.05)
@@ -817,8 +821,8 @@ class TelegramThreatMonitor:
                 # Apply boosts
                 total_score = min(1.0, base_score + route_boost + db_boost)
                 
-                # Threshold: only predict if score >= 0.4
-                if total_score < 0.4:
+                # Strict Threshold: only predict if score >= 0.65 (eliminates false-positive rings)
+                if total_score < 0.65:
                     continue
                 
                 # --- DIFFERENTIATED CONFIDENCE CALCULATION ---
@@ -895,9 +899,10 @@ class TelegramThreatMonitor:
                         "is_test": state.is_test,
                     }
         
-        # Apply predictions
+        # Apply predictions — limit to top 2 highest scoring regions max
         predictions_applied = 0
-        for region, pred in predictions.items():
+        sorted_predictions = sorted(predictions.items(), key=lambda x: x[1]["score"], reverse=True)[:2]
+        for region, pred in sorted_predictions:
             # Determine threat level for predictive zone
             pred_level = "low"
             if pred["score"] >= 0.75:
