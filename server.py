@@ -79,14 +79,25 @@ async def poll_aerial_alerts():
                                         active_regions.add(loc_title)
                             
                             from core.regions import ALL_REGIONS
+                            official_dict = {}
                             for region_name in ALL_REGIONS.keys():
                                 is_active = region_name in active_regions
                                 threat_manager.set_alarm_active(region_name, is_active)
+                                official_dict[region_name] = is_active
                         else:
                             states = data.get("states", {})
+                            official_dict = {}
                             for region_name, state_data in states.items():
                                 is_active = state_data.get("alertnow", False)
                                 threat_manager.set_alarm_active(region_name, is_active)
+                                official_dict[region_name] = is_active
+
+                        # Автоматично знімаємо протерміновані загрози та загрози у знятих тривогах
+                        try:
+                            from services.missile_lifecycle_service import prune_expired_missile_threats
+                            prune_expired_missile_threats(threat_manager, official_dict)
+                        except Exception as prune_err:
+                            logger.error(f"Помилка під час prune_expired_missile_threats: {prune_err}")
                     else:
                         logger.warning(f"Помилка опитування тривог (URL: {url}): HTTP статус {response.status}")
         except Exception as e:

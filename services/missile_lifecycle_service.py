@@ -99,10 +99,11 @@ def should_expire_missile_threat(
         THREAT_KAB, THREAT_TU95, THREAT_ISKANDER
     ])
 
-    # ПРАВИЛО 1: Прямі швидкісні загрози при знятті офіційної тривоги
-    if not is_predictive and not is_official_alarm_active and is_fast_threat:
-        if elapsed_seconds >= 90:  # Буфер 90с для синхронізації з сиренами
-            return True, "intercepted", f"Офіційну тривогу в області знято. Швидкісна загроза {t_type} завершила політ (збита ППО або приліт)."
+    # ПРАВИЛО 1: Прямі загрози (ракети, балістика, КАБи, Шахеди, БпЛА) при знятті офіційної тривоги
+    if not is_predictive and not is_official_alarm_active:
+        if elapsed_seconds >= 60:  # Буфер 60с для синхронізації з сиренами
+            res = "intercepted" if is_fast_threat else "expired"
+            return True, res, f"Офіційну тривогу в області знято. Пряму загрозу {t_type} завершено (збито ППО або відбій небезпеки)."
 
     # ПРАВИЛО 2: Минув максимальний час польоту за кінематикою / ETA
     eta_sec = getattr(threat_item, "eta_seconds", None)
