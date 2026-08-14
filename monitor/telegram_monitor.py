@@ -951,7 +951,7 @@ class TelegramThreatMonitor:
                     eta=pred["eta_str"],
                     is_predictive=True,
                     is_test=pred.get("is_test", False),
-                    telemetry={"group_id": pred_gid},  # Pass group_id inside telemetry for precise deduplication
+                    telemetry={"group_id": pred_gid, "transit_from": pred["source_region"]},  # Pass group_id and transit_from for precise origin tracking
                     eta_seconds=pred.get("eta_seconds")
                 )
                 self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"], group_id=pred_gid)
@@ -1368,6 +1368,14 @@ class TelegramThreatMonitor:
         if not target_threat:
             return
             
+        transit_source = getattr(target_threat, "transit_from", None)
+        if transit_source and transit_source in self.threat_manager.threats:
+            source_state = self.threat_manager.threats[transit_source]
+            if source_state.level != "none" and any(t.threat_type == threat_type for t in source_state.active_threats):
+                print(f"🟡 [Re-evaluation] Загроза в джерелі ({transit_source}) все ще активна. Залишаємо предиктивну загрозу для {region}.")
+                self._schedule_predictive_reevaluation(region, 300.0, threat_type, group_id)
+                return
+
         print(f"🔍 [Re-evaluation] Початок автоматичної переоцінки загрози для {region} (тип: {threat_type}, група: {group_id})")
         
         # Collect last 5 messages from all channels
