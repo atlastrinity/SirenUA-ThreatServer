@@ -55,7 +55,8 @@ class SingleThreat:
                  carrier_origin_longitude: Optional[float] = None,
                  launch_sector_name: Optional[str] = None,
                  launch_sector_latitude: Optional[float] = None,
-                 launch_sector_longitude: Optional[float] = None):
+                 launch_sector_longitude: Optional[float] = None,
+                 target_region: Optional[str] = None):
         if not eta and detail:
             # Автоматично витягуємо розрахований час на прильот (ETA) з тексту деталізації
             m = re.search(r'Очікуваний час:\s*([~0-9\sа-яА-ЯіІїЇєЄ\-\+]+?)(?:\)|\n|$)', detail, re.IGNORECASE)
@@ -78,10 +79,11 @@ class SingleThreat:
         self.paired_event_id: Optional[int] = paired_event_id
         self.transit_from: Optional[str] = transit_from
         self.telemetry: Optional[dict] = telemetry
+        self.target_region: Optional[str] = target_region
 
-        # Auto-resolve aviation profile if not explicitly supplied
+        # Auto-resolve aviation / missile / drone profile if not explicitly supplied
         from core.threat_types import resolve_aviation_strike_profile
-        av_profile = resolve_aviation_strike_profile(threat_type, detail)
+        av_profile = resolve_aviation_strike_profile(threat_type, detail, target_region)
         self.carrier_type: Optional[str] = carrier_type or av_profile.get("carrier_type")
         self.carrier_origin_name: Optional[str] = carrier_origin_name or av_profile.get("carrier_origin_name")
         self.carrier_origin_latitude: Optional[float] = carrier_origin_latitude or av_profile.get("carrier_origin_latitude")

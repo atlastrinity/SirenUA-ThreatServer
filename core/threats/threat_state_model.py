@@ -209,6 +209,7 @@ class ThreatState:
             is_test=is_test,
             group_id=group_id,
             eta_seconds=eta_seconds,
+            target_region=self.region,
         )
         self.active_threats.append(new_threat)
         return True

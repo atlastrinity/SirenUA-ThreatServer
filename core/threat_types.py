@@ -498,6 +498,13 @@ SECTOR_TOT_KHERSON = "sector_tot_kherson"
 SECTOR_CASPIAN_SEA = "sector_caspian_sea"
 SECTOR_SARATOV_ENGELS = "sector_saratov_engels"
 SECTOR_RYAZAN_TAMBOV = "sector_ryazan_tambov"
+SECTOR_CHAUDA = "sector_chauda"
+SECTOR_PRIMORSKO_AKHTARSK = "sector_primorsko_akhtarsk"
+SECTOR_YEYSK = "sector_yeysk"
+SECTOR_OREL = "sector_orel"
+SECTOR_CRIMEA_TARKHANKUT = "sector_crimea_tarkhankut"
+SECTOR_VORONEZH = "sector_voronezh"
+SECTOR_ROSTOV_TAGANROG = "sector_rostov_taganrog"
 
 AVIATION_LAUNCH_SECTORS: Dict[str, Dict[str, Any]] = {
     SECTOR_BELGOROD: {
@@ -528,7 +535,7 @@ AVIATION_LAUNCH_SECTORS: Dict[str, Dict[str, Any]] = {
         "title": "Акваторія Чорного моря",
         "lat_lon": (44.50, 32.00),
         "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область"],
-        "keywords": ["чорне море", "чорного моря", "севастополь", "тарханкут"],
+        "keywords": ["чорне море", "чорного моря", "севастополь", "тарханкут", "з моря", "морського базування", "чорноморськ"],
     },
     SECTOR_TOT_ZAPORIZHZHIA: {
         "title": "Рубіж ТОТ Запорізької обл.",
@@ -565,6 +572,48 @@ AVIATION_LAUNCH_SECTORS: Dict[str, Dict[str, Any]] = {
         "lat_lon": (53.50, 40.50),
         "target_regions": ["Вся Україна"],
         "keywords": ["саваслейка", "липецьк", "рязань", "тамбов"],
+    },
+    SECTOR_CHAUDA: {
+        "title": "Майданчик пусків мис Чауда (Крим)",
+        "lat_lon": (45.00, 35.83),
+        "target_regions": ["Херсонська область", "Запорізька область", "Дніпропетровська область", "Одеська область", "Миколаївська область"],
+        "keywords": ["чауда", "чауди", "мис чауда", "феодосія", "крим", "криму"],
+    },
+    SECTOR_PRIMORSKO_AKHTARSK: {
+        "title": "Район пусків Приморсько-Ахтарськ (Краснодарський край РФ)",
+        "lat_lon": (46.04, 38.17),
+        "target_regions": ["Запорізька область", "Дніпропетровська область", "Донецька область", "Харківська область", "Полтавська область"],
+        "keywords": ["приморсько-ахтарськ", "приморско-ахтарск", "приморськ-ахтарськ", "ахтарськ", "краснодарськ"],
+    },
+    SECTOR_YEYSK: {
+        "title": "Район пусків Єйськ (Краснодарський край РФ)",
+        "lat_lon": (46.68, 38.28),
+        "target_regions": ["Донецька область", "Запорізька область", "Дніпропетровська область"],
+        "keywords": ["єйськ", "ейськ", "ейск"],
+    },
+    SECTOR_OREL: {
+        "title": "Район пусків Орел / Курськ (РФ)",
+        "lat_lon": (52.96, 36.06),
+        "target_regions": ["Сумська область", "Чернігівська область", "Полтавська область", "Київська область", "Харківська область"],
+        "keywords": ["орел", "орловськ", "орла"],
+    },
+    SECTOR_CRIMEA_TARKHANKUT: {
+        "title": "Позиційний район мис Тарханкут / Джанкой (Крим)",
+        "lat_lon": (45.34, 32.50),
+        "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область", "Запорізька область"],
+        "keywords": ["тарханкут", "джанкой", "гвардійське", "іскандер-м крим"],
+    },
+    SECTOR_VORONEZH: {
+        "title": "Позиційний район Воронезька обл. РФ",
+        "lat_lon": (51.66, 39.20),
+        "target_regions": ["Харківська область", "Полтавська область", "Дніпропетровська область"],
+        "keywords": ["воронеж", "воронежчин", "воронежськ"],
+    },
+    SECTOR_ROSTOV_TAGANROG: {
+        "title": "Позиційний район Ростовська обл. / Таганрог РФ",
+        "lat_lon": (47.23, 38.89),
+        "target_regions": ["Донецька область", "Запорізька область", "Дніпропетровська область", "Харківська область"],
+        "keywords": ["таганрог", "ростов", "ростовськ", "міллерово"],
     },
 }
 
@@ -792,7 +841,29 @@ def resolve_aviation_strike_profile(
 
     # 2. Sector heuristics if not explicitly mentioned in text
     if not sector_key and target_region:
-        if target_region in ["Харківська область", "Сумська область"]:
+        if threat_type == THREAT_SHAHED:
+            if target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
+                sector_key = SECTOR_BLACK_SEA
+            elif target_region in ["Сумська область", "Чернігівська область", "Київська область"]:
+                sector_key = SECTOR_KURSK
+            elif target_region in ["Харківська область", "Полтавська область"]:
+                sector_key = SECTOR_BELGOROD
+            elif target_region in ["Запорізька область", "Дніпропетровська область"]:
+                sector_key = SECTOR_AZOV_SEA
+            else:
+                sector_key = SECTOR_PRIMORSKO_AKHTARSK
+        elif threat_type == THREAT_BALLISTIC:
+            if target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
+                sector_key = SECTOR_CRIMEA_TARKHANKUT
+            elif target_region in ["Харківська область", "Сумська область", "Полтавська область"]:
+                sector_key = SECTOR_BELGOROD
+            elif target_region in ["Чернігівська область", "Київська область"]:
+                sector_key = SECTOR_BRYANSK
+            elif target_region in ["Донецька область", "Запорізька область", "Дніпропетровська область"]:
+                sector_key = SECTOR_ROSTOV_TAGANROG
+            else:
+                sector_key = SECTOR_CRIMEA_TARKHANKUT
+        elif target_region in ["Харківська область", "Сумська область"]:
             sector_key = SECTOR_BELGOROD
         elif target_region in ["Чернігівська область", "Київська область"]:
             sector_key = SECTOR_KURSK if threat_type != THREAT_MIG31K else SECTOR_RYAZAN_TAMBOV
