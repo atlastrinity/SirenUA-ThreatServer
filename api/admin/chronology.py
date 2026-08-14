@@ -351,20 +351,37 @@ async def get_admin_chronology_v2(
             corr_ev = _correlate_single_event(ev, alarm_by_region)
             correlated_events.append(corr_ev)
 
-        # Aggregate stats (unfiltered for period)
-        total_period = len(correlated_events)
-        stats, sliced_events, delta_buckets = _build_chronology_stats_and_buckets(correlated_events, limit)
+        # Aggregate stats (unfiltered for period overview)
+        stats = {
+            "confirmed": sum(1 for e in correlated_events if e["match_type"] == "confirmed"),
+            "mitigated": sum(1 for e in correlated_events if e["match_type"] == "mitigated"),
+            "overestimated": sum(1 for e in correlated_events if e["match_type"] == "overestimated"),
+            "active": sum(1 for e in correlated_events if e["match_type"] == "active"),
+            "cleared": sum(1 for e in correlated_events if e["match_type"] == "cleared"),
+        }
+
+        # Time delta distribution (for histogram)
+        deltas = [e["time_delta_seconds"] for e in correlated_events if e.get("time_delta_seconds") is not None]
+        delta_buckets = {}
+        for d in deltas:
+            bucket = (d // 60) * 60
+            bucket_label = f"{bucket // 60} хв"
+            delta_buckets[bucket_label] = delta_buckets.get(bucket_label, 0) + 1
 
         # Apply match_filter
+        filtered_events = correlated_events
         if match_filter:
             if match_filter == "match":
-                correlated_events = [e for e in correlated_events if e["match_type"] == "confirmed"]
+                filtered_events = [e for e in correlated_events if e["match_type"] == "confirmed"]
             elif match_filter == "mitigated":
-                correlated_events = [e for e in correlated_events if e["match_type"] == "mitigated"]
+                filtered_events = [e for e in correlated_events if e["match_type"] == "mitigated"]
             elif match_filter == "mismatch":
-                correlated_events = [e for e in correlated_events if e["match_type"] == "overestimated"]
+                filtered_events = [e for e in correlated_events if e["match_type"] == "overestimated"]
             elif match_filter == "active":
-                correlated_events = [e for e in correlated_events if e["match_type"] == "active"]
+                filtered_events = [e for e in correlated_events if e["match_type"] == "active"]
+
+        total_count = len(filtered_events)
+        sliced_events = filtered_events[:limit]
 
         # Daily aggregation for charts
         daily_agg_query = f"""
@@ -400,7 +417,7 @@ async def get_admin_chronology_v2(
         type_breakdown = execute_query_as_dicts(type_breakdown_query, date_params + extra_params)
 
         return {
-            "total": total_period,
+            "total": total_count,
             "stats": stats,
             "events": sliced_events,
             "daily_stats": daily_stats,
