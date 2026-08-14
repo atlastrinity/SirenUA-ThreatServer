@@ -50,16 +50,34 @@ def log_threat_to_db(
         conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
 
-        # Prevent duplicate 'none' (clear) records for the same region and threat_type within 5 seconds
-        if level == "none" and not is_test:
-            cursor.execute("""
-                SELECT id FROM threat_history 
-                WHERE region = ? AND threat_level = 'none' AND threat_type = ? AND timestamp >= datetime('now', '-5 seconds')
-                ORDER BY id DESC LIMIT 1
-            """, (region, threat_type))
-            if cursor.fetchone():
+        # Strict deduplication check against the latest record for (region, threat_type)
+        cursor.execute("""
+            SELECT id, threat_level, timestamp FROM threat_history 
+            WHERE region = ? AND threat_type = ? AND (is_test = ? OR is_test IS NULL)
+            ORDER BY id DESC LIMIT 1
+        """, (region, threat_type, 1 if is_test else 0))
+        last_rec = cursor.fetchone()
+        if last_rec:
+            last_id, last_level, last_ts = last_rec[0], last_rec[1], last_rec[2]
+            # 1. For official_alarm: never write consecutive identical level (high->high or none->none)
+            if threat_type == "official_alarm" and last_level == level:
                 conn.close()
                 return None
+
+            # 2. Never write consecutive 'none' records for any threat type
+            if level == "none" and last_level == "none":
+                conn.close()
+                return None
+
+            # 3. For identical non-test threat levels within 15 seconds: ignore redundant log
+            if last_level == level and not is_test:
+                cursor.execute("""
+                    SELECT id FROM threat_history 
+                    WHERE id = ? AND timestamp >= datetime('now', '-15 seconds')
+                """, (last_id,))
+                if cursor.fetchone():
+                    conn.close()
+                    return None
 
         cursor.execute(
             "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",

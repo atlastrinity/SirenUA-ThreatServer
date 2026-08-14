@@ -348,17 +348,34 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-
-        # Prevent duplicate 'none' (clear) records for the same region and threat_type within 5 seconds
-        if level == "none" and not is_test:
-            cursor.execute("""
-                SELECT id FROM threat_history 
-                WHERE region = ? AND threat_level = 'none' AND threat_type = ? AND timestamp >= datetime('now', '-5 seconds')
-                ORDER BY id DESC LIMIT 1
-            """, (region, threat_type))
-            if cursor.fetchone():
+        # Strict deduplication check against the latest record for (region, threat_type)
+        cursor.execute("""
+            SELECT id, threat_level, timestamp FROM threat_history 
+            WHERE region = ? AND threat_type = ? AND (is_test = ? OR is_test IS NULL)
+            ORDER BY id DESC LIMIT 1
+        """, (region, threat_type, 1 if is_test else 0))
+        last_rec = cursor.fetchone()
+        if last_rec:
+            last_id, last_level, last_ts = last_rec[0], last_rec[1], last_rec[2]
+            # 1. For official_alarm: never write consecutive identical level (high->high or none->none)
+            if threat_type == THREAT_OFFICIAL_ALARM and last_level == level:
                 conn.close()
                 return None
+
+            # 2. Never write consecutive 'none' records for any threat type
+            if level == "none" and last_level == "none":
+                conn.close()
+                return None
+
+            # 3. For identical non-test threat levels within 15 seconds: ignore redundant log
+            if last_level == level and not is_test:
+                cursor.execute("""
+                    SELECT id FROM threat_history 
+                    WHERE id = ? AND timestamp >= datetime('now', '-15 seconds')
+                """, (last_id,))
+                if cursor.fetchone():
+                    conn.close()
+                    return None
 
         cursor.execute(
             "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
@@ -771,11 +788,26 @@ async def sync_threat_state_to_db(region: str, state, telemetry: dict = None, ru
     
     prev_state_dict = last_logged_states.get(region)
     if not prev_state_dict:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("""
+                SELECT threat_level FROM threat_history 
+                WHERE region = ? AND threat_type = ? 
+                ORDER BY id DESC LIMIT 1
+            """, (region, THREAT_OFFICIAL_ALARM))
+            row = c.fetchone()
+            conn.close()
+            db_active = (row[0] == "high") if row else False
+        except Exception:
+            db_active = False
+
         prev_state_dict = {
             "active_threats": {},
-            "is_active": False,
+            "is_active": db_active,
             "level": "none"
         }
+        last_logged_states[region] = prev_state_dict
             
     prev_active = prev_state_dict["is_active"]
     prev_active_threats = prev_state_dict["active_threats"]
