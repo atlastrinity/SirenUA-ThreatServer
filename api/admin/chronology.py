@@ -202,13 +202,13 @@ def _correlate_single_event(ev: dict, alarm_by_region: dict) -> dict:
     elif pred_acc == "overestimated":
         ev["match_type"] = "overestimated"
         ev["match_reason"] = "Тривога не підтверджена — AI переоцінив загрозу"
-    elif best_alarm and best_delta is not None and abs(best_delta) <= 1800:
-        ev["match_type"] = "confirmed"
-        mins = round(abs(best_delta) / 60)
-        ev["match_reason"] = f"Корельовано з офіційною тривогою ({mins} хв)"
     elif lifecycle == "active":
         ev["match_type"] = "active"
         ev["match_reason"] = "Загроза ще активна, очікуємо результат"
+    elif best_alarm and best_delta is not None and abs(best_delta) <= 1800:
+        ev["match_type"] = "cleared"
+        mins = round(abs(best_delta) / 60)
+        ev["match_reason"] = f"Знято. Корельовано з офіційною тривогою ({mins} хв)"
     else:
         ev["match_type"] = "cleared"
         ev["match_reason"] = "Знято без кореляції з офіційною тривогою"
