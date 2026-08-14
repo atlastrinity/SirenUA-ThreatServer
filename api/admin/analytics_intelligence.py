@@ -233,15 +233,13 @@ async def get_threat_type_distribution(days: int = 30):
 
     try:
         query = f"""
-            SELECT date(datetime(th.timestamp, {tz_modifier})) as day,
-                   th.threat_type,
+            SELECT date(datetime(pe.created_at, {tz_modifier})) as day,
+                   pe.threat_type,
                    COUNT(*) as count
-            FROM threat_history th
-            WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND th.threat_type NOT IN ('{THREAT_OFFICIAL_ALARM}', 'threat_clear')
-              AND th.threat_level != 'none'
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-            GROUP BY day, th.threat_type
+            FROM paired_events pe
+            WHERE pe.created_at >= datetime('now', '-{days} days')
+              AND pe.threat_type NOT IN ('{THREAT_OFFICIAL_ALARM}', 'threat_clear')
+            GROUP BY day, pe.threat_type
             ORDER BY day
         """
         rows = execute_query_as_dicts(query)
@@ -286,20 +284,17 @@ async def get_region_risk_matrix(days: int = 30):
     """Матриця ризиків по областях: ймовірність, частота, типи загроз."""
     try:
         query = f"""
-            SELECT th.region,
+            SELECT pe.region,
                    COUNT(*) as total_events,
-                   th.threat_type,
-                   AVG(th.confidence) as avg_confidence,
+                   pe.threat_type,
+                   AVG(pe.confidence_at_set) as avg_confidence,
                    AVG(pe.duration_seconds) as avg_duration,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
-            FROM threat_history th
-            LEFT JOIN paired_events pe ON pe.threat_event_id = th.id
-            WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND th.threat_type NOT IN ('{THREAT_OFFICIAL_ALARM}', 'threat_clear')
-              AND th.threat_level != 'none'
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-            GROUP BY th.region, th.threat_type
+            FROM paired_events pe
+            WHERE pe.created_at >= datetime('now', '-{days} days')
+              AND pe.threat_type NOT IN ('{THREAT_OFFICIAL_ALARM}', 'threat_clear')
+            GROUP BY pe.region, pe.threat_type
             ORDER BY total_events DESC
         """
         rows = execute_query_as_dicts(query)
@@ -437,19 +432,16 @@ async def get_daily_summary(days: int = 30):
 
     try:
         query = f"""
-            SELECT date(datetime(th.timestamp, {tz_modifier})) as day,
+            SELECT date(datetime(pe.created_at, {tz_modifier})) as day,
                    COUNT(*) as total_events,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
                    SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive,
-                   AVG(th.confidence) as avg_confidence
-            FROM threat_history th
-            LEFT JOIN paired_events pe ON pe.threat_event_id = th.id
-            WHERE th.timestamp >= datetime('now', '-{days} days')
-              AND th.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND th.threat_level != 'none'
-              AND (th.is_test = 0 OR th.is_test IS NULL)
+                   AVG(pe.confidence_at_set) as avg_confidence
+            FROM paired_events pe
+            WHERE pe.created_at >= datetime('now', '-{days} days')
+              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
             GROUP BY day
             ORDER BY day
         """

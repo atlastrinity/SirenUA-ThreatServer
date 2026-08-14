@@ -78,37 +78,31 @@ async def get_admin_dashboard_stats():
 
         # Threats by type (7d)
         type_query = """
-            SELECT th.threat_type, COUNT(*) as count
-            FROM threat_history th
-            WHERE th.timestamp >= datetime('now', '-7 days') 
-              AND th.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND th.threat_level != 'none'
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-            GROUP BY th.threat_type ORDER BY count DESC
+            SELECT pe.threat_type, COUNT(*) as count
+            FROM paired_events pe
+            WHERE pe.created_at >= datetime('now', '-7 days') 
+              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+            GROUP BY pe.threat_type ORDER BY count DESC
         """
         by_type = execute_query_as_dicts(type_query)
 
         # Top regions (7d)
         regions_query = """
-            SELECT th.region, COUNT(*) as count
-            FROM threat_history th
-            WHERE th.timestamp >= datetime('now', '-7 days') 
-              AND th.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND th.threat_level != 'none'
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-            GROUP BY th.region ORDER BY count DESC LIMIT 10
+            SELECT pe.region, COUNT(*) as count
+            FROM paired_events pe
+            WHERE pe.created_at >= datetime('now', '-7 days') 
+              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+            GROUP BY pe.region ORDER BY count DESC LIMIT 10
         """
         top_regions = execute_query_as_dicts(regions_query)
 
         # Hourly distribution (7d) — UTC to Kyiv
         hourly_query = f"""
-            SELECT CAST(strftime('%H', datetime(th.timestamp, {tz_modifier})) AS INTEGER) as hour,
+            SELECT CAST(strftime('%H', datetime(pe.created_at, {tz_modifier})) AS INTEGER) as hour,
                    COUNT(*) as count
-            FROM threat_history th
-            WHERE th.timestamp >= datetime('now', '-7 days') 
-              AND th.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND th.threat_level != 'none'
-              AND (th.is_test = 0 OR th.is_test IS NULL)
+            FROM paired_events pe
+            WHERE pe.created_at >= datetime('now', '-7 days') 
+              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
             GROUP BY hour ORDER BY hour
         """
         hourly = execute_query_as_dicts(hourly_query)
