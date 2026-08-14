@@ -118,7 +118,7 @@ class GeminiPostMortemAnalyzer:
                 logger.warning("⚠️ [Post-Mortem] Відсутній GEMINI_API_KEY для виконання рефлексії.")
                 return {"status": "skipped", "reason": "no_api_key"}
             genai.configure(api_key=api_key)
-            model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+            model_name = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
             model = genai.GenerativeModel(model_name=model_name, system_instruction=POST_MORTEM_SYSTEM_PROMPT)
 
         try:

@@ -23,7 +23,7 @@ class GeminiThreatAnalyzer:
                 single_key = os.environ.get("GEMINI_API_KEY", "")
                 self.api_keys = [single_key] if single_key else []
             
-        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
         self.current_key_idx = 0
         
         if self.api_keys:
