@@ -167,27 +167,30 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     is_official_event = (threat_type == "official_alarm") or (is_official_alarm and not threat_type)
 
     # --- Формування title/body (для банера) та event_type/sound_file ---
+    from core.threat_types import format_threat_notification_title
+    title = format_threat_notification_title(
+        threat_type=threat_type,
+        confidence=confidence,
+        region=region,
+        is_official_alarm=is_official_event,
+        is_clear=is_clear
+    )
+
     if is_clear:
         if is_official_event:
-            title = f"🟢 Відбій тривоги: {region}"
             body = "Офіційну тривогу завершено." if not detail else detail
             event_type = "clear"
             sound_file = "vidbiy.wav"
         else:
-            title = f"🟢 Відбій загрози: {region}"
             body = "Загрозу знято." if not detail else detail
             event_type = "threat_clear"
             sound_file = "clearance.wav"
     else:
         if is_official_event:
-            title = f"🔴 Повітряна тривога: {region}"
             body = detail if detail else "Пройдіть в укриття!"
             event_type = "alarm"
             sound_file = "siren.wav"
         else:
-            level_ukr = {"critical": "КРИТИЧНА", "high": "ВИСОКА", "medium": "СЕРЕДНЯ", "low": "НИЗЬКА"}.get(level, level)
-            type_str = f" ({threat_type})" if threat_type else ""
-            title = f"⚠️ Загроза {level_ukr}: {region}{type_str}"
             body = detail if detail else "Зафіксовано рух ворожих цілей."
             event_type = "threat"
             sound_file = "warning.wav"

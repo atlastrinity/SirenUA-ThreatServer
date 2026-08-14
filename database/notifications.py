@@ -47,32 +47,39 @@ def send_fcm_notification(topic: str, title: str = "", body: str = "", data: dic
         _log_error("database_helpers", "firebase_admin не встановлено", "send_fcm_notification", error_type="firebase_error")
         return False
 
+    from core.threat_types import format_threat_notification_title
     is_clear = (title == "none" or topic == "none" or kwargs.get("level") == "none")
     is_official = kwargs.get("is_official", False) or kwargs.get("is_official_alarm", False)
+    threat_type_val = kwargs.get("threat_type")
+    confidence_val = kwargs.get("confidence")
+    if isinstance(confidence_val, str) and confidence_val.isdigit():
+        confidence_val = int(confidence_val)
 
-    # Format user-facing title and body
+    if title and title not in ("high", "critical", "moderate", "low", "warning", "none"):
+        final_title = title
+    else:
+        final_title = format_threat_notification_title(
+            threat_type=threat_type_val,
+            confidence=confidence_val if isinstance(confidence_val, int) else None,
+            region=topic,
+            is_official_alarm=is_official,
+            is_clear=is_clear
+        )
+
+    # Format user-facing body
     if is_clear:
         if is_official:
-            final_title = f"🟢 ВІДБІЙ ТРИВОГИ — {topic}"
             final_body = "Офіційну тривогу завершено." if not body or body == "none" else body
         else:
-            final_title = f"🟢 ВІДБІЙ ЗАГРОЗИ — {topic}"
             final_body = "Загрозу нейтралізовано. Можна залишати укриття." if not body or body == "none" else body
     else:
-        if title in ("high", "critical", "moderate", "low", "warning"):
-            final_title = f"🚨 ПОВІТРЯНА ТРИВОГА — {topic}"
-        elif title:
-            final_title = title
-        else:
-            final_title = f"🚨 ПОВІТРЯНА ТРИВОГА — {topic}"
-
         detail_text = kwargs.get("detail") or (data if isinstance(data, str) else "")
         if detail_text:
             final_body = str(detail_text)
         elif body and body not in ("high", "critical", "moderate", "low", "shahed", "ballistic", "cruise_missile"):
             final_body = body
         else:
-            threat_name = kwargs.get("threat_type") or "Повітряна загроза"
+            threat_name = threat_type_val or "Повітряна загроза"
             final_body = f"Виявлено загрозу ({threat_name}). Прямуйте в укриття!"
 
     def _send():

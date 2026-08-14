@@ -205,7 +205,35 @@ def test_fcm_topic_mapping():
     # Edge cases
     assert get_fcm_topic("") == "all"
     assert get_fcm_topic(None) == "all"
-    print("✅ FCM Topic Mapping test passed successfully!")
+def test_threat_notification_title_formatting():
+    """Перевірка симетрії формування заголовків сповіщень між бекендом та Swift ThreatConstants."""
+    from core.threat_types import format_threat_notification_title
+
+    # High confidence (>=85%) -> Red circle
+    t1 = format_threat_notification_title("ballistic", 90, "м. Київ")
+    assert t1 == "🔴 Висока ймовірність: Балістична загроза (м. Київ)"
+
+    # Medium confidence (60-84%) -> Orange circle
+    t2 = format_threat_notification_title("shahed", 75, "Київська область")
+    assert t2 == "🟠 Ймовірна загроза: Загроза БпЛА Shahed (Київська область)"
+
+    # Low confidence (<60%) -> Yellow circle
+    t3 = format_threat_notification_title("kab", 45, "Харківська область")
+    assert t3 == "🟡 Можлива загроза: Загроза КАБ (Харківська область)"
+
+    # Official alarm
+    t4 = format_threat_notification_title(None, None, "Черкаська область", is_official_alarm=True)
+    assert t4 == "🔴 Повітряна тривога: Черкаська область"
+
+    # Official clear
+    t5 = format_threat_notification_title(None, None, "Черкаська область", is_official_alarm=True, is_clear=True)
+    assert t5 == "🟢 Відбій тривоги: Черкаська область"
+
+    # Threat clear
+    t6 = format_threat_notification_title("shahed", None, "Одеська область", is_clear=True)
+    assert t6 == "🟢 Відбій загрози: Одеська область"
+
+    print("✅ Notification Title Formatting Symmetry test passed successfully!")
 
 
 if __name__ == "__main__":
@@ -218,4 +246,5 @@ if __name__ == "__main__":
     test_inland_ingress_corridor_extrapolation()
     test_palantir_intelligence_endpoints()
     test_fcm_topic_mapping()
+    test_threat_notification_title_formatting()
     print("\n🎉 ALL THREAT CONSTANTS, TRAJECTORY, PALANTIR & FCM TOPIC TESTS PASSED SUCCESSFULLY!")

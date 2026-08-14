@@ -505,6 +505,58 @@ def get_threat_title(threat_type: Optional[str]) -> str:
         return THREAT_TITLES[THREAT_UNKNOWN]
     return THREAT_TITLES.get(threat_type, THREAT_TITLES[THREAT_UNKNOWN])
 
+NOTIFICATION_THREAT_NAMES: Dict[str, str] = {
+    THREAT_BALLISTIC: "Балістична загроза",
+    THREAT_SHAHED: "Загроза БпЛА Shahed",
+    THREAT_CRUISE_MISSILE: "Загроза крилатих ракет",
+    THREAT_KAB: "Загроза КАБ",
+    THREAT_MIG31K: "Зліт МіГ-31К (Кинджал)",
+    THREAT_TU95: "Зліт Ту-95МС (крилаті ракети)",
+    THREAT_TU22M3: "Зліт Ту-22М3 (ракети Х-22/Х-32)",
+    THREAT_SU35: "Активність Су-34/35 (КАБ/ракети)",
+    "su35": "Активність Су-34/35 (КАБ/ракети)",
+    THREAT_ISKANDER: "Загроза Іскандер-М",
+    THREAT_ARTILLERY: "Загроза артобстрілу",
+    THREAT_ZIRCON: "Загроза ракети Циркон",
+    THREAT_MLRS: "Загроза обстрілу РСЗВ",
+    THREAT_FPV: "Загроза FPV-дронів",
+    THREAT_RECON: "Виявлено розвідувальний БпЛА",
+    THREAT_RECON_UAV: "Виявлено розвідувальний БпЛА",
+    THREAT_OFFICIAL_ALARM: "Офіційна повітряна тривога",
+    THREAT_UNKNOWN: "Повітряна загроза",
+}
+
+def format_threat_notification_title(
+    threat_type: Optional[str],
+    confidence: Optional[int],
+    region: str,
+    is_official_alarm: bool = False,
+    is_clear: bool = False
+) -> str:
+    """
+    Unified title generator ensuring 100% mathematical and string symmetry
+    with Swift ThreatConstants.notificationTitle.
+    """
+    if is_clear:
+        if is_official_alarm:
+            return f"🟢 Відбій тривоги: {region}"
+        return f"🟢 Відбій загрози: {region}"
+
+    if is_official_alarm:
+        return f"🔴 Повітряна тривога: {region}"
+
+    threat_name = NOTIFICATION_THREAT_NAMES.get(threat_type, "Повітряна загроза") if threat_type else "Повітряна загроза"
+    conf = confidence if confidence is not None else 75
+
+    if conf >= 85:
+        indicator = "🔴 Висока ймовірність"
+    elif conf >= 60:
+        indicator = "🟠 Ймовірна загроза"
+    else:
+        indicator = "🟡 Можлива загроза"
+
+    return f"{indicator}: {threat_name} ({region})"
+
 def get_threat_short_name(threat_type: Optional[str]) -> str:
     """Returns short Ukrainian name for a threat object type."""
     if not threat_type:
