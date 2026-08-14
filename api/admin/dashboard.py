@@ -16,14 +16,12 @@ async def get_admin_dashboard_stats():
     tz_modifier = f"'{get_kyiv_tz_modifier()}'"
 
     try:
-        # Total events (7d) excluding official alarms, clearing logs, and test events
+        # Total events (7d) matching paired_events lifecycle sessions
         total_query = """
             SELECT COUNT(*) as c 
-            FROM threat_history th
-            WHERE th.timestamp >= datetime('now', '-7 days') 
-              AND th.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND th.threat_level != 'none'
-              AND (th.is_test = 0 OR th.is_test IS NULL)
+            FROM paired_events pe
+            WHERE pe.created_at >= datetime('now', '-7 days')
+              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
         """
         total_rows = execute_query_as_dicts(total_query)
         total_7d = total_rows[0]["c"] if total_rows else 0

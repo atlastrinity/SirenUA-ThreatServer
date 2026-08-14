@@ -45,7 +45,7 @@ async def get_admin_chronology(
 
         query = '''
             SELECT pe.id, pe.region, pe.threat_level, pe.threat_type,
-                   th.timestamp as threat_timestamp,
+                   COALESCE(th.timestamp, pe.created_at) as threat_timestamp,
                    th.detail as threat_detail,
                    pe.confidence_at_set, pe.confidence_at_clear,
                    pe.was_predictive, pe.prediction_accuracy,
@@ -54,9 +54,9 @@ async def get_admin_chronology(
                    tc.timestamp as clearing_timestamp,
                    tc.resolution_type
             FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
-            WHERE th.timestamp >= datetime('now', ?)
+            WHERE pe.created_at >= datetime('now', ?)
               AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
               AND (th.is_test = 0 OR th.is_test IS NULL)
         '''
@@ -76,12 +76,12 @@ async def get_admin_chronology(
         if prediction_accuracy:
             query = _apply_prediction_accuracy_filter(query, prediction_accuracy)
 
-        query += " ORDER BY th.timestamp DESC LIMIT 500"
+        query += " ORDER BY pe.created_at DESC LIMIT 500"
         rows = execute_query_as_dicts(query, params)
 
         # Daily aggregation
         daily_agg_query = f'''
-            SELECT date(datetime(th.timestamp, {tz_modifier})) as day,
+            SELECT date(datetime(pe.created_at, {tz_modifier})) as day,
                    COUNT(*) as total_events,
                    SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
                    SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
@@ -90,9 +90,9 @@ async def get_admin_chronology(
                    SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
             FROM paired_events pe
-            JOIN threat_history th ON pe.threat_event_id = th.id
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             LEFT JOIN threat_clearings tc ON pe.clearing_event_id = tc.id
-            WHERE th.timestamp >= datetime('now', ?)
+            WHERE pe.created_at >= datetime('now', ?)
               AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
               AND (th.is_test = 0 OR th.is_test IS NULL)
         '''
