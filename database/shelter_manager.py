@@ -139,17 +139,54 @@ OVERPASS_QUERY = """
 area["name:en"="Ukraine"]["type"="boundary"]->.searchArea;
 (
   nwr["amenity"="shelter"]["shelter_type"="bomb_shelter"](area.searchArea);
+  nwr["amenity"="shelter"]["shelter_type"="anti_radiation"](area.searchArea);
   nwr["military"="bunker"]["bunker_type"="bomb_shelter"](area.searchArea);
-  nwr["amenity"="shelter"]["shelter_type"="public_transport"](area.searchArea);
+  nwr["military"="bunker"](area.searchArea);
   nwr["building"="bunker"](area.searchArea);
+  nwr["parking"="underground"](area.searchArea);
+  nwr["amenity"="parking"]["parking"="underground"](area.searchArea);
+  nwr["railway"="station"]["station"="subway"](area.searchArea);
+  nwr["railway"="subway_entrance"](area.searchArea);
+  nwr["emergency"="shelter"](area.searchArea);
+  nwr["emergency"="bomb_shelter"](area.searchArea);
+  nwr["civil_defense"="yes"](area.searchArea);
 );
 out center;
 """
 
+EXCLUDED_SHELTER_TYPES = {
+    "public_transport", "weather_shelter", "sun_shelter", "picnic_shelter",
+    "gazebo", "canopy", "bus_stop", "umbrella", "shade", "rain"
+}
+
+EXCLUDED_NAME_KEYWORDS = [
+    "дощ", "зупинка", "навіс", "альтанка", "павільйон", "павіліон", "тент",
+    "палатка", "шатро", "лавка", "лавочка", "сквер", "пляж", "кафе",
+    "ресторан", "маф", "кіоск", "мангал", "rain", "bus stop", "gazebo",
+    "awning", "tent", "canopy", "picnic", "kiosk", "shed", "tram stop"
+]
+
 
 def _parse_osm_element(elem: dict) -> Optional[Shelter]:
-    """Parse a single OSM element into a Shelter object."""
+    """Parse a single OSM element into a Shelter object, strictly filtering out weather shelters."""
     tags = elem.get("tags", {})
+
+    # 1. Filter out weather shelters, transit stops, and non-defense amenities
+    st_raw = tags.get("shelter_type", "").lower()
+    if st_raw in EXCLUDED_SHELTER_TYPES:
+        return None
+
+    if tags.get("highway") in ("bus_stop", "platform"):
+        return None
+
+    if tags.get("amenity") in ("bus_station", "bench", "restaurant", "cafe", "fast_food", "bar", "pub", "fuel", "toilets", "marketplace"):
+        return None
+
+    if tags.get("leisure") in ("playground", "beach_resort", "picnic_table"):
+        return None
+
+    if tags.get("tourism") in ("picnic_site", "viewpoint", "camp_site"):
+        return None
 
     # Coordinates: for ways/relations use "center", for nodes use lat/lon
     lat = elem.get("lat") or (elem.get("center", {}).get("lat"))
@@ -163,10 +200,15 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
 
     # Name
     name = tags.get("name") or tags.get("name:uk") or tags.get("name:en")
-    if not name:
-        # Build a description from tags
-        st = tags.get("shelter_type", tags.get("bunker_type", ""))
-        name = f"Укриття ({st})" if st else "Укриття"
+    
+    # Check blacklisted keywords in name (skip if it's explicitly an underground parking or subway)
+    is_underground_parking = tags.get("parking") == "underground" or (tags.get("amenity") == "parking" and tags.get("parking") == "underground") or (name and "паркінг" in name.lower())
+    is_subway = tags.get("station") == "subway" or tags.get("railway") in ("subway_entrance", "station") or tags.get("subway") == "yes" or (name and "метро" in name.lower())
+
+    if name and not (is_underground_parking or is_subway):
+        name_lower = name.lower()
+        if any(kw in name_lower for kw in EXCLUDED_NAME_KEYWORDS):
+            return None
 
     # Address
     addr_parts = []
@@ -178,14 +220,35 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
         addr_parts.append(house)
     address = ", ".join(addr_parts) if addr_parts else None
 
-    # Type classification
+    # Type classification: air raid protection & underground civil defence
     shelter_type = "bomb_shelter"
-    if tags.get("station") == "subway" or "метро" in (name or "").lower():
+    if tags.get("station") == "subway" or tags.get("railway") in ("subway_entrance", "station") or tags.get("subway") == "yes" or (name and "метро" in name.lower()):
         shelter_type = "metro"
-    elif tags.get("military") == "bunker":
+    elif tags.get("parking") == "underground" or (tags.get("amenity") == "parking" and tags.get("parking") == "underground") or (name and "підземний паркінг" in name.lower()):
+        shelter_type = "underground_parking"
+    elif tags.get("military") == "bunker" or tags.get("building") == "bunker" or tags.get("bunker_type") == "bomb_shelter" or (name and "бункер" in name.lower()):
         shelter_type = "bunker"
-    elif tags.get("shelter_type") == "public_transport":
+    elif tags.get("shelter_type") in ("anti_radiation", "radiation") or (name and "протирадіаційн" in name.lower()):
+        shelter_type = "radiation_shelter"
+    elif tags.get("tunnel") == "yes" or (name and "підземний перехід" in name.lower()):
         shelter_type = "underground"
+    else:
+        shelter_type = "bomb_shelter"
+
+    # Friendly default name if empty
+    if not name:
+        if shelter_type == "metro":
+            name = "Станція метро (Укриття)"
+        elif shelter_type == "underground_parking":
+            name = "Підземний паркінг"
+        elif shelter_type == "bunker":
+            name = "Бункер / Сховище"
+        elif shelter_type == "radiation_shelter":
+            name = "Протирадіаційне укриття"
+        elif shelter_type == "underground":
+            name = "Підземне укриття"
+        else:
+            name = "Бомбосховище / Укриття"
 
     # Capacity
     cap = tags.get("capacity")
