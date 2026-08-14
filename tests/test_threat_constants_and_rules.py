@@ -236,6 +236,50 @@ def test_threat_notification_title_formatting():
     print("✅ Notification Title Formatting Symmetry test passed successfully!")
 
 
+def test_aviation_strike_profiles():
+    """Перевірка розпізнавання авіаційних профілів, аеродромів та секторів пусків."""
+    from core.threat_types import (
+        resolve_aviation_strike_profile,
+        detect_launch_sector_from_text,
+        RUSSIAN_AIRBASES,
+        AVIATION_LAUNCH_SECTORS,
+        AIRBASE_MOROZOVSK,
+        AIRBASE_BALTIMOR,
+        SECTOR_BELGOROD,
+        SECTOR_AZOV_SEA,
+    )
+
+    # 1. New airbases exist
+    assert AIRBASE_MOROZOVSK in RUSSIAN_AIRBASES
+    assert "Морозовськ" in RUSSIAN_AIRBASES[AIRBASE_MOROZOVSK]["title"]
+
+    # 2. Launch sectors exist
+    assert SECTOR_BELGOROD in AVIATION_LAUNCH_SECTORS
+    assert SECTOR_AZOV_SEA in AVIATION_LAUNCH_SECTORS
+
+    # 3. KAB on Kharkiv sector resolution
+    prof1 = resolve_aviation_strike_profile("kab", "Пуски КАБ на Харків з Бєлгородщини", "Харківська область")
+    assert prof1["is_aviation"] is True
+    assert prof1["carrier_type"] == "su34"
+    assert prof1["launch_sector_name"] == "Рубіж Бєлгородська обл. РФ"
+    assert prof1["launch_sector_latitude"] == 50.60
+    assert prof1["carrier_origin_name"] is not None
+
+    # 4. Tactical Su-35 on Zaporizhzhia
+    prof2 = resolve_aviation_strike_profile("su35", "Су-35 над Азовським морем пуск Х-59", "Запорізька область")
+    assert prof2["is_aviation"] is True
+    assert prof2["carrier_type"] == "su35"
+    assert prof2["launch_sector_name"] == "Акваторія Азовського моря"
+
+    # 5. MiG-31K Kinzhal
+    prof3 = resolve_aviation_strike_profile("mig31k", "Зліт МіГ-31К з Саваслейка", "м. Київ")
+    assert prof3["is_aviation"] is True
+    assert prof3["carrier_type"] == "mig31k"
+    assert "Саваслейка" in prof3["carrier_origin_name"]
+
+    print("✅ Aviation Strike Profiles & Launch Sectors test passed successfully!")
+
+
 if __name__ == "__main__":
     test_threat_types_detection()
     test_airbases_detection()
@@ -247,4 +291,6 @@ if __name__ == "__main__":
     test_palantir_intelligence_endpoints()
     test_fcm_topic_mapping()
     test_threat_notification_title_formatting()
+    test_aviation_strike_profiles()
     print("\n🎉 ALL THREAT CONSTANTS, TRAJECTORY, PALANTIR & FCM TOPIC TESTS PASSED SUCCESSFULLY!")
+

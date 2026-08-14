@@ -48,7 +48,14 @@ class SingleThreat:
                  paired_event_id: Optional[int] = None,
                  eta_seconds: Optional[int] = None,
                  transit_from: Optional[str] = None,
-                 telemetry: Optional[dict] = None):
+                 telemetry: Optional[dict] = None,
+                 carrier_type: Optional[str] = None,
+                 carrier_origin_name: Optional[str] = None,
+                 carrier_origin_latitude: Optional[float] = None,
+                 carrier_origin_longitude: Optional[float] = None,
+                 launch_sector_name: Optional[str] = None,
+                 launch_sector_latitude: Optional[float] = None,
+                 launch_sector_longitude: Optional[float] = None):
         if not eta and detail:
             # Автоматично витягуємо розрахований час на прильот (ETA) з тексту деталізації
             m = re.search(r'Очікуваний час:\s*([~0-9\sа-яА-ЯіІїЇєЄ\-\+]+?)(?:\)|\n|$)', detail, re.IGNORECASE)
@@ -72,6 +79,17 @@ class SingleThreat:
         self.transit_from: Optional[str] = transit_from
         self.telemetry: Optional[dict] = telemetry
 
+        # Auto-resolve aviation profile if not explicitly supplied
+        from core.threat_types import resolve_aviation_strike_profile
+        av_profile = resolve_aviation_strike_profile(threat_type, detail)
+        self.carrier_type: Optional[str] = carrier_type or av_profile.get("carrier_type")
+        self.carrier_origin_name: Optional[str] = carrier_origin_name or av_profile.get("carrier_origin_name")
+        self.carrier_origin_latitude: Optional[float] = carrier_origin_latitude or av_profile.get("carrier_origin_latitude")
+        self.carrier_origin_longitude: Optional[float] = carrier_origin_longitude or av_profile.get("carrier_origin_longitude")
+        self.launch_sector_name: Optional[str] = launch_sector_name or av_profile.get("launch_sector_name")
+        self.launch_sector_latitude: Optional[float] = launch_sector_latitude or av_profile.get("launch_sector_latitude")
+        self.launch_sector_longitude: Optional[float] = launch_sector_longitude or av_profile.get("launch_sector_longitude")
+
     def apply_confidence_decay(self, amount: int = 10) -> int:
         """Зменшує рівень довіри (confidence) при відсутності нових підтверджень."""
         if self.confidence is None:
@@ -90,6 +108,10 @@ class SingleThreat:
             if self.telemetry.get("origin_latitude") is not None and self.telemetry.get("origin_longitude") is not None:
                 origin_lat = self.telemetry["origin_latitude"]
                 origin_lon = self.telemetry["origin_longitude"]
+
+        if origin_lat is None and self.launch_sector_latitude is not None and self.launch_sector_longitude is not None:
+            origin_lat = self.launch_sector_latitude
+            origin_lon = self.launch_sector_longitude
 
         if origin_lat is None and self.detail:
             SPECIAL_ORIGIN_PATTERNS = {
@@ -152,6 +174,13 @@ class SingleThreat:
             "transit_from": self.transit_from,
             "origin_latitude": origin_lat,
             "origin_longitude": origin_lon,
+            "carrier_type": self.carrier_type,
+            "carrier_origin_name": self.carrier_origin_name,
+            "carrier_origin_latitude": self.carrier_origin_latitude,
+            "carrier_origin_longitude": self.carrier_origin_longitude,
+            "launch_sector_name": self.launch_sector_name,
+            "launch_sector_latitude": self.launch_sector_latitude,
+            "launch_sector_longitude": self.launch_sector_longitude,
             "telemetry": self.telemetry,
         }
 
@@ -170,6 +199,13 @@ class SingleThreat:
             paired_event_id=data.get("paired_event_id"),
             eta_seconds=data.get("eta_seconds"),
             transit_from=data.get("transit_from"),
+            carrier_type=data.get("carrier_type"),
+            carrier_origin_name=data.get("carrier_origin_name"),
+            carrier_origin_latitude=data.get("carrier_origin_latitude"),
+            carrier_origin_longitude=data.get("carrier_origin_longitude"),
+            launch_sector_name=data.get("launch_sector_name"),
+            launch_sector_latitude=data.get("launch_sector_latitude"),
+            launch_sector_longitude=data.get("launch_sector_longitude"),
         )
         t.threat_id = data.get("threat_id", t.threat_id)
         t.since = data.get("since", t.since)

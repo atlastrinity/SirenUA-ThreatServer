@@ -306,6 +306,10 @@ AIRBASE_AKHTUBINSK = "akhtubinsk"
 AIRBASE_PRIMORSKO_AKHTARSK = "primorsko_akhtarsk"
 AIRBASE_YEYSK = "yeysk"
 AIRBASE_MILLEROVO = "millerovo"
+AIRBASE_MOROZOVSK = "morozovsk"
+AIRBASE_BUTURLINOVKA = "buturlinovka"
+AIRBASE_KUSHCHEVSKAYA = "kushchevskaya"
+AIRBASE_TAGANROG = "taganrog"
 AIRBASE_KURSK = "kursk"
 AIRBASE_BELGOROD = "belgorod"
 AIRBASE_MOZDOK = "mozdok"
@@ -315,6 +319,8 @@ AIRBASE_DYAGILEVO = "dyagilevo_ryazan"
 AIRBASE_BELBEK = "belbek_crimea"
 AIRBASE_SAKY = "saky_crimea"
 AIRBASE_GVARDEYSKOYE = "gvardeyskoye_crimea"
+AIRBASE_SOLTSY = "soltsy"
+AIRBASE_LIPETSK = "lipetsk"
 LAUNCH_HUB_CHAUDA = "chauda_crimea"
 LAUNCH_HUB_BLACK_SEA = "black_sea"
 LAUNCH_HUB_CASPIAN_SEA = "caspian_sea"
@@ -367,6 +373,30 @@ RUSSIAN_AIRBASES: Dict[str, Dict[str, Any]] = {
         "primary_threat": THREAT_SHAHED,
         "keywords": ["міллерово", "миллерово", "millerovo"],
         "lat_lon": (48.95, 40.30),
+    },
+    AIRBASE_MOROZOVSK: {
+        "title": "Аеродром Морозовськ (Ростовська обл.)",
+        "primary_threat": THREAT_KAB,
+        "keywords": ["морозовськ", "морозовск", "morozovsk"],
+        "lat_lon": (48.31, 41.79),
+    },
+    AIRBASE_BUTURLINOVKA: {
+        "title": "Аеродром Бутурлинівка (Воронезька обл.)",
+        "primary_threat": THREAT_KAB,
+        "keywords": ["бутурлинівка", "бутурлиновка", "buturlinovka"],
+        "lat_lon": (50.84, 40.60),
+    },
+    AIRBASE_KUSHCHEVSKAYA: {
+        "title": "Аеродром Кущевська (Краснодарський край)",
+        "primary_threat": THREAT_KAB,
+        "keywords": ["кущевська", "кущевская", "kushchevskaya"],
+        "lat_lon": (46.54, 39.55),
+    },
+    AIRBASE_TAGANROG: {
+        "title": "Аеродром Таганрог (Ростовська обл.)",
+        "primary_threat": THREAT_SU35,
+        "keywords": ["таганрог", "taganrog"],
+        "lat_lon": (47.20, 38.84),
     },
     AIRBASE_KURSK: {
         "title": "Аеродром Курськ-Східний (Курська обл.)",
@@ -422,6 +452,18 @@ RUSSIAN_AIRBASES: Dict[str, Dict[str, Any]] = {
         "keywords": ["гвардійське", "гвардейское", "gvardeyskoye"],
         "lat_lon": (45.11, 33.97),
     },
+    AIRBASE_SOLTSY: {
+        "title": "Аеродром Сольці (Новгородська обл.)",
+        "primary_threat": THREAT_TU22M3,
+        "keywords": ["сольці", "сольцы", "soltsy"],
+        "lat_lon": (58.14, 30.33),
+    },
+    AIRBASE_LIPETSK: {
+        "title": "Авіацентр Липецьк (Липецька обл.)",
+        "primary_threat": THREAT_SU35,
+        "keywords": ["липецьк", "липецк", "lipetsk"],
+        "lat_lon": (52.64, 39.45),
+    },
     LAUNCH_HUB_CHAUDA: {
         "title": "Мис Чауда (АР Крим)",
         "primary_threat": THREAT_SHAHED,
@@ -439,6 +481,90 @@ RUSSIAN_AIRBASES: Dict[str, Dict[str, Any]] = {
         "primary_threat": THREAT_CRUISE_MISSILE,
         "keywords": ["каспійське море", "каспійського моря", "каспій"],
         "lat_lon": (42.00, 51.00),
+    },
+}
+
+# ==============================================================================
+# AVIATION LAUNCH SECTORS (Рубежі пусків / райони патрулювання тактичної та стратегічної авіації)
+# ==============================================================================
+SECTOR_BELGOROD = "sector_belgorod"
+SECTOR_KURSK = "sector_kursk"
+SECTOR_BRYANSK = "sector_bryansk"
+SECTOR_AZOV_SEA = "sector_azov_sea"
+SECTOR_BLACK_SEA = "sector_black_sea"
+SECTOR_TOT_ZAPORIZHZHIA = "sector_tot_zaporizhzhia"
+SECTOR_TOT_DONETSK = "sector_tot_donetsk"
+SECTOR_TOT_KHERSON = "sector_tot_kherson"
+SECTOR_CASPIAN_SEA = "sector_caspian_sea"
+SECTOR_SARATOV_ENGELS = "sector_saratov_engels"
+SECTOR_RYAZAN_TAMBOV = "sector_ryazan_tambov"
+
+AVIATION_LAUNCH_SECTORS: Dict[str, Dict[str, Any]] = {
+    SECTOR_BELGOROD: {
+        "title": "Рубіж Бєлгородська обл. РФ",
+        "lat_lon": (50.60, 36.58),
+        "target_regions": ["Харківська область", "Сумська область", "Полтавська область"],
+        "keywords": ["бєлгород", "белгород", "бєлгородщин", "шебекіно", "грайворон"],
+    },
+    SECTOR_KURSK: {
+        "title": "Рубіж Курська обл. РФ",
+        "lat_lon": (51.70, 35.50),
+        "target_regions": ["Сумська область", "Чернігівська область", "Полтавська область", "Харківська область"],
+        "keywords": ["курськ", "курск", "курщин", "глушково", "рильськ", "суджа"],
+    },
+    SECTOR_BRYANSK: {
+        "title": "Рубіж Брянська обл. РФ",
+        "lat_lon": (52.50, 33.50),
+        "target_regions": ["Чернігівська область", "Сумська область", "Київська область"],
+        "keywords": ["брянськ", "брянск", "брянщин", "клинці"],
+    },
+    SECTOR_AZOV_SEA: {
+        "title": "Акваторія Азовського моря",
+        "lat_lon": (46.20, 36.50),
+        "target_regions": ["Запорізька область", "Дніпропетровська область", "Донецька область", "Херсонська область"],
+        "keywords": ["азов", "азовськ", "азовське море", "приазов"],
+    },
+    SECTOR_BLACK_SEA: {
+        "title": "Акваторія Чорного моря",
+        "lat_lon": (44.50, 32.00),
+        "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область"],
+        "keywords": ["чорне море", "чорного моря", "севастополь", "тарханкут"],
+    },
+    SECTOR_TOT_ZAPORIZHZHIA: {
+        "title": "Рубіж ТОТ Запорізької обл.",
+        "lat_lon": (47.15, 35.80),
+        "target_regions": ["Запорізька область", "Дніпропетровська область"],
+        "keywords": ["тот запоріз", "окупована запоріз", "токмак", "мелітополь", "пологи", "бердянськ"],
+    },
+    SECTOR_TOT_DONETSK: {
+        "title": "Рубіж ТОТ Донецької обл.",
+        "lat_lon": (47.90, 37.80),
+        "target_regions": ["Донецька область", "Харківська область", "Дніпропетровська область"],
+        "keywords": ["тот донец", "окупована донец", "донецьк", "волноваха", "маріуполь"],
+    },
+    SECTOR_TOT_KHERSON: {
+        "title": "Рубіж ТОТ Херсонської обл. (Лівобережжя)",
+        "lat_lon": (46.50, 33.20),
+        "target_regions": ["Херсонська область", "Миколаївська область"],
+        "keywords": ["лівобережж", "тот херсон", "окупована херсон", "каховка", "скадовськ", "олешки"],
+    },
+    SECTOR_CASPIAN_SEA: {
+        "title": "Район пусків Каспійське море",
+        "lat_lon": (43.00, 50.00),
+        "target_regions": ["Вся Україна"],
+        "keywords": ["каспій", "каспійське море", "каспий"],
+    },
+    SECTOR_SARATOV_ENGELS: {
+        "title": "Район пусків Енгельс / Саратов",
+        "lat_lon": (51.48, 46.21),
+        "target_regions": ["Вся Україна"],
+        "keywords": ["енгельс", "энгельс", "саратов"],
+    },
+    SECTOR_RYAZAN_TAMBOV: {
+        "title": "Рубіж пуску Кинджалів (Рязань / Тамбов / Липецьк)",
+        "lat_lon": (53.50, 40.50),
+        "target_regions": ["Вся Україна"],
+        "keywords": ["саваслейка", "липецьк", "рязань", "тамбов"],
     },
 }
 
@@ -604,3 +730,118 @@ def get_launch_origin_title(origin_key: Optional[str]) -> str:
     if origin_key and origin_key in RUSSIAN_AIRBASES:
         return RUSSIAN_AIRBASES[origin_key]["title"]
     return origin_key or ""
+
+def detect_launch_sector_from_text(text: str) -> Optional[str]:
+    """Identifies aviation launch sector or patrol zone from text."""
+    if not text:
+        return None
+    text_lower = text.lower()
+    for sector_key, info in AVIATION_LAUNCH_SECTORS.items():
+        if any(kw in text_lower for kw in info["keywords"]):
+            return sector_key
+    return None
+
+def get_launch_sector_title(sector_key: Optional[str]) -> str:
+    """Returns official title for an aviation launch sector."""
+    if sector_key and sector_key in AVIATION_LAUNCH_SECTORS:
+        return AVIATION_LAUNCH_SECTORS[sector_key]["title"]
+    return sector_key or ""
+
+def resolve_aviation_strike_profile(
+    threat_type: Optional[str],
+    text: Optional[str] = None,
+    target_region: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Resolves complete two-tier tactical aviation profile:
+    1. Carrier aircraft (Su-34, Su-35, MiG-31K, Tu-95MS, Tu-22M3)
+    2. Origin airbase (with coordinates and title)
+    3. Launch/drop sector (with coordinates and title)
+    4. Munition combat kinetics & ETA
+    """
+    is_aviation = threat_type in [
+        THREAT_KAB, THREAT_SU35, "su35", "su34",
+        THREAT_MIG31K, THREAT_TU95, THREAT_TU22M3,
+        THREAT_CRUISE_MISSILE
+    ] or bool(text and any(w in text.lower() for w in ["каб", "су-34", "су-35", "міг-31", "ту-95", "ту-22", "кинджал", "х-59", "х-69", "х-101", "х-22"]))
+
+    # Default fallback values
+    carrier_type = None
+    airbase_key = None
+    sector_key = None
+
+    if text:
+        airbase_key = detect_launch_origin_from_text(text)
+        sector_key = detect_launch_sector_from_text(text)
+
+    # 1. Determine Carrier Aircraft Type
+    if threat_type == THREAT_KAB:
+        carrier_type = "su34"
+    elif threat_type in [THREAT_SU35, "su35"]:
+        carrier_type = "su35"
+    elif threat_type == THREAT_MIG31K:
+        carrier_type = "mig31k"
+    elif threat_type == THREAT_TU95:
+        carrier_type = "tu95"
+    elif threat_type == THREAT_TU22M3:
+        carrier_type = "tu22m3"
+    elif threat_type == THREAT_CRUISE_MISSILE and text and "калібр" in text.lower():
+        carrier_type = "naval_carrier"
+    elif is_aviation:
+        carrier_type = "tactical_aviation"
+
+    # 2. Sector heuristics if not explicitly mentioned in text
+    if not sector_key and target_region:
+        if target_region in ["Харківська область", "Сумська область"]:
+            sector_key = SECTOR_BELGOROD
+        elif target_region in ["Чернігівська область", "Київська область"]:
+            sector_key = SECTOR_KURSK if threat_type != THREAT_MIG31K else SECTOR_RYAZAN_TAMBOV
+        elif target_region in ["Запорізька область", "Дніпропетровська область"]:
+            sector_key = SECTOR_AZOV_SEA if threat_type == THREAT_KAB else SECTOR_TOT_ZAPORIZHZHIA
+        elif target_region in ["Херсонська область", "Миколаївська область", "Одеська область"]:
+            sector_key = SECTOR_BLACK_SEA if threat_type in [THREAT_CRUISE_MISSILE, THREAT_SU35] else SECTOR_TOT_KHERSON
+        elif target_region == "Донецька область":
+            sector_key = SECTOR_TOT_DONETSK
+
+    # Special handling for strategic aviation
+    if threat_type == THREAT_MIG31K:
+        if not airbase_key:
+            airbase_key = AIRBASE_SAVASLEYKA
+        if not sector_key:
+            sector_key = SECTOR_RYAZAN_TAMBOV
+    elif threat_type == THREAT_TU95:
+        if not airbase_key:
+            airbase_key = AIRBASE_OLENYA
+        if not sector_key:
+            sector_key = SECTOR_CASPIAN_SEA
+    elif threat_type == THREAT_TU22M3:
+        if not airbase_key:
+            airbase_key = AIRBASE_SHAYKOVKA
+        if not sector_key:
+            sector_key = SECTOR_BLACK_SEA if target_region in ["Одеська область", "Миколаївська область"] else SECTOR_KURSK
+
+    # Tactical airbase default fallback based on sector
+    if not airbase_key and is_aviation:
+        if sector_key == SECTOR_BELGOROD:
+            airbase_key = AIRBASE_BALTIMOR
+        elif sector_key == SECTOR_KURSK:
+            airbase_key = AIRBASE_HALINO
+        elif sector_key in [SECTOR_AZOV_SEA, SECTOR_TOT_ZAPORIZHZHIA, SECTOR_TOT_DONETSK]:
+            airbase_key = AIRBASE_MOROZOVSK
+        elif sector_key in [SECTOR_BLACK_SEA, SECTOR_TOT_KHERSON]:
+            airbase_key = AIRBASE_BELBEK
+
+    airbase_info = RUSSIAN_AIRBASES.get(airbase_key) if airbase_key else None
+    sector_info = AVIATION_LAUNCH_SECTORS.get(sector_key) if sector_key else None
+
+    return {
+        "is_aviation": is_aviation,
+        "carrier_type": carrier_type,
+        "carrier_origin_name": airbase_info["title"] if airbase_info else None,
+        "carrier_origin_latitude": airbase_info["lat_lon"][0] if airbase_info else None,
+        "carrier_origin_longitude": airbase_info["lat_lon"][1] if airbase_info else None,
+        "launch_sector_name": sector_info["title"] if sector_info else None,
+        "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else None,
+        "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else None,
+    }
+

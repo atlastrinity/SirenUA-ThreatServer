@@ -28,6 +28,8 @@ from core.threat_types import (
     THREAT_FPV,
     THREAT_OFFICIAL_ALARM,
     THREAT_UNKNOWN,
+    RUSSIAN_AIRBASES,
+    AVIATION_LAUNCH_SECTORS,
 )
 from database.db_helpers import execute_query_as_dicts, execute_write
 
@@ -62,6 +64,9 @@ LAUNCH_HUBS = {
     "Оленегорськ РФ": (68.15, 33.28),
     "Мачулищі РБ": (53.77, 27.55),
     "Енгельс РФ": (51.48, 46.11),
+    "Морозовськ РФ": (48.31, 41.79),
+    "Балтімор (Воронеж) РФ": (51.62, 39.15),
+    "Бутурлинівка РФ": (50.84, 40.60),
     "Моздок РФ": (43.75, 44.65),
     "Шайковка РФ": (54.33, 34.27),
     "Ростовська обл. РФ": (47.24, 39.71),
@@ -72,6 +77,15 @@ LAUNCH_HUBS = {
     "Дягілєво РФ": (54.62, 39.57),
     "Астрахань РФ": (46.35, 48.05),
 }
+
+# Add all official airbases and launch sectors dynamically
+for _k, _info in RUSSIAN_AIRBASES.items():
+    LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
+    LAUNCH_HUBS[_k] = _info["lat_lon"]
+for _k, _info in AVIATION_LAUNCH_SECTORS.items():
+    LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
+    LAUNCH_HUBS[_k] = _info["lat_lon"]
+
 
 
 @router.get("/api/admin/analytics/trajectory_heatmap")
