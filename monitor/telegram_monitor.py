@@ -1368,13 +1368,16 @@ class TelegramThreatMonitor:
         if not target_threat:
             return
             
+        from core.regions import REGION_ALIASES
         transit_source = getattr(target_threat, "transit_from", None)
-        if transit_source and transit_source in self.threat_manager.threats:
-            source_state = self.threat_manager.threats[transit_source]
-            if source_state.level != "none" and any(t.threat_type == threat_type for t in source_state.active_threats):
-                print(f"🟡 [Re-evaluation] Загроза в джерелі ({transit_source}) все ще активна. Залишаємо предиктивну загрозу для {region}.")
-                self._schedule_predictive_reevaluation(region, 300.0, threat_type, group_id)
-                return
+        if transit_source:
+            norm_source = REGION_ALIASES.get(transit_source, transit_source)
+            if norm_source in self.threat_manager.threats:
+                source_state = self.threat_manager.threats[norm_source]
+                if source_state.level != "none" and (source_state.is_active or any(t.threat_type == threat_type for t in source_state.active_threats)):
+                    print(f"🟡 [Re-evaluation] Загроза в джерелі ({norm_source}) все ще активна. Залишаємо предиктивну загрозу для {region}.")
+                    self._schedule_predictive_reevaluation(region, 300.0, threat_type, group_id)
+                    return
 
         print(f"🔍 [Re-evaluation] Початок автоматичної переоцінки загрози для {region} (тип: {threat_type}, група: {group_id})")
         

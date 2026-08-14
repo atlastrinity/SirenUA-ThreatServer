@@ -70,9 +70,11 @@ def should_expire_missile_threat(
 ) -> Tuple[bool, str, str]:
     """
     Перевіряє, чи має бути знята загроза/траєкторія ракети або БПЛА:
-    1. Якщо офіційна тривога в області ЗНЯТА (is_official_alarm_active == False)
-       ТА загроза є швидкісною ракетою/балістикою/КАБ або прогнозною — траєкторія знімається НЕГАЙНО (резолюція 'all_clear_official' або 'intercepted').
-    2. Якщо минув максимальний час польоту (elapsed_seconds > max_flight_seconds) — загроза знімається (резолюція 'expired').
+    1. Для прямих швидкісних загроз (ракета/балістика/КАБ, is_predictive=False): якщо офіційна тривога в області знята
+       і минуло щонайменше 90 секунд з моменту появи — загроза вважається завершеною (приліт/збиття).
+    2. Для прогнозних загроз (жовті зони, is_predictive=True): відсутність офіційної тривоги є штатним станом
+       (вони існують ДО включення сирени), тому вони знімаються за кінематичним розрахунком часу (ETA/таймаут).
+    3. Якщо минув максимальний час польоту (elapsed_seconds > max_flight_seconds) — загроза знімається (expired).
     
     Повертає: (should_expire: bool, resolution_type: str, reason: str)
     """
@@ -97,19 +99,20 @@ def should_expire_missile_threat(
         THREAT_KAB, THREAT_TU95, THREAT_ISKANDER
     ])
 
-    # ПРАВИЛО 1: Офіційна тривога в області знята
-    if not is_official_alarm_active:
-        if is_fast_threat:
-            # Для швидкісних ракет/балістики/КАБ відбій тривоги в області означає приліт/збиття ППО
+    # ПРАВИЛО 1: Прямі швидкісні загрози при знятті офіційної тривоги
+    if not is_predictive and not is_official_alarm_active and is_fast_threat:
+        if elapsed_seconds >= 90:  # Буфер 90с для синхронізації з сиренами
             return True, "intercepted", f"Офіційну тривогу в області знято. Швидкісна загроза {t_type} завершила політ (збита ППО або приліт)."
-        elif is_predictive:
-            # Для прогнозної загрози (жовта зона) відбій тривоги скасовує коридор
-            return True, "all_clear_official", f"Офіційну тривогу в області знято. Прогнозну траєкторію скасовано."
 
-    # ПРАВИЛО 2: Минув максимальний час польоту за кінематикою
-    max_seconds = get_missile_max_flight_seconds(t_type)
+    # ПРАВИЛО 2: Минув максимальний час польоту за кінематикою / ETA
+    eta_sec = getattr(threat_item, "eta_seconds", None)
+    if is_predictive and eta_sec and eta_sec > 0:
+        max_seconds = eta_sec + 300  # ETA + 5 хвилин буфер
+    else:
+        max_seconds = get_missile_max_flight_seconds(t_type)
+
     if elapsed_seconds >= max_seconds:
-        res = "intercepted" if is_fast_threat else "expired"
+        res = "intercepted" if (is_fast_threat and not is_predictive) else "expired"
         return True, res, f"Перевищено максимальний час польоту {int(max_seconds/60)} хв ({int(elapsed_seconds)} сек). Траєкторію вилучено."
 
     return False, "", ""
