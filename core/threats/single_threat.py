@@ -56,7 +56,9 @@ class SingleThreat:
                  launch_sector_name: Optional[str] = None,
                  launch_sector_latitude: Optional[float] = None,
                  launch_sector_longitude: Optional[float] = None,
-                 target_region: Optional[str] = None):
+                 target_region: Optional[str] = None,
+                 since: Optional[str] = None,
+                 last_updated_at: Optional[str] = None):
         if not eta and detail:
             # Автоматично витягуємо розрахований час на прильот (ETA) з тексту деталізації
             m = re.search(r'Очікуваний час:\s*([~0-9\sа-яА-ЯіІїЇєЄ\-\+]+?)(?:\)|\n|$)', detail, re.IGNORECASE)
@@ -68,8 +70,8 @@ class SingleThreat:
         self.level: str = level
         self.threat_type: Optional[str] = threat_type
         self.detail: Optional[str] = detail
-        self.since: str = datetime.now(timezone.utc).isoformat()
-        self.last_updated_at: str = datetime.now(timezone.utc).isoformat()
+        self.since: str = since or datetime.now(timezone.utc).isoformat()
+        self.last_updated_at: str = last_updated_at or self.since
         self.eta: Optional[str] = eta
         self.eta_seconds: Optional[int] = eta_seconds
         self.confidence: Optional[int] = confidence

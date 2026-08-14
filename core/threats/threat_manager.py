@@ -75,7 +75,7 @@ class MockThreatManager:
             cursor.execute("""
                 SELECT p.region, p.threat_level, p.threat_type, p.confidence_at_set, p.gemini_group_id, p.was_predictive,
                        t.attack_vector, t.speed_kmh, t.heading_degrees, t.distance_to_target_km, t.target_cities_coords,
-                       th.detail as threat_detail
+                       th.detail as threat_detail, th.timestamp as threat_timestamp
                 FROM paired_events p
                 LEFT JOIN telemetry_data t ON p.telemetry_id = t.id
                 LEFT JOIN threat_history th ON p.threat_event_id = th.id
@@ -105,6 +105,11 @@ class MockThreatManager:
                                 except Exception:
                                     pass
 
+                        since_ts = row["threat_timestamp"]
+                        if since_ts and isinstance(since_ts, str):
+                            if "T" not in since_ts:
+                                since_ts = since_ts.replace(" ", "T") + "+00:00"
+
                         self.threats[region].set_threat(
                             level=row["threat_level"],
                             threat_type=row["threat_type"],
@@ -112,7 +117,8 @@ class MockThreatManager:
                             confidence=row["confidence_at_set"],
                             is_predictive=bool(row["was_predictive"]),
                             group_id=row["gemini_group_id"],
-                            telemetry=telemetry
+                            telemetry=telemetry,
+                            since=since_ts
                         )
                         restored_count += 1
                 self._execute_save_to_db()

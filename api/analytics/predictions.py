@@ -150,8 +150,56 @@ async def get_region_history(
                 LIMIT ?
             """, (region, utc_start, utc_end, min(limit, 200)))
             rows = cursor.fetchall()
+            
+            # Якщо запитується поточна доба — також підтягуємо діючі активні загрози
+            active_events = []
+            if target_date == now_kyiv.date():
+                from core.globals import threat_manager
+                st = threat_manager.threats.get(region)
+                if st and (st.level != "none" or st.is_active or st.active_threats):
+                    # Перевіряємо активні тактичні загрози
+                    for t in st.active_threats:
+                        if t.level != "none":
+                            t_ts = t.since or utc_start
+                            if "T" in t_ts:
+                                t_ts = t_ts.split(".")[0].replace("T", " ")
+                            # Перевіряємо чи ця активна загроза вже присутня у rows
+                            exists = any(r["threat_type"] == t.threat_type and r["threat_level"] == t.level for r in rows)
+                            if not exists:
+                                active_events.append({
+                                    "id": str(t.threat_id),
+                                    "timestamp": t_ts,
+                                    "region": region,
+                                    "threat_level": t.level,
+                                    "threat_type": t.threat_type or "shahed",
+                                    "detail": t.detail or "Активна загроза",
+                                    "confidence": t.confidence or 90
+                                })
+                    # Перевіряємо активну офіційну тривогу
+                    if st.is_active:
+                        has_active_alarm = any(r["threat_type"] == "official_alarm" and r["threat_level"] != "none" for r in rows)
+                        if not has_active_alarm:
+                            cursor.execute("""
+                                SELECT id, timestamp, region, threat_level, threat_type, detail, confidence
+                                FROM threat_history
+                                WHERE region = ? AND threat_type = 'official_alarm' AND threat_level != 'none' AND is_test = 0
+                                ORDER BY id DESC LIMIT 1
+                            """, (region,))
+                            alarm_row = cursor.fetchone()
+                            if alarm_row:
+                                active_events.append({
+                                    "id": str(alarm_row["id"]),
+                                    "timestamp": alarm_row["timestamp"],
+                                    "region": alarm_row["region"],
+                                    "threat_level": alarm_row["threat_level"],
+                                    "threat_type": alarm_row["threat_type"],
+                                    "detail": alarm_row["detail"],
+                                    "confidence": alarm_row["confidence"]
+                                })
+
             conn.close()
-            return [{
+            
+            fetched = [{
                 "id": str(row["id"]),
                 "timestamp": row["timestamp"],
                 "region": row["region"],
@@ -160,6 +208,8 @@ async def get_region_history(
                 "detail": row["detail"],
                 "confidence": row["confidence"]
             } for row in rows]
+            
+            return active_events + fetched
 
         events = await asyncio.to_thread(_fetch_sqlite)
     except Exception as e:
