@@ -20,6 +20,10 @@ class ThreatState:
         self.is_test: bool = False
 
     @property
+    def region(self) -> str:
+        return self.region_name
+
+    @property
     def is_active(self) -> bool:
         """Повертає True ТІЛЬКИ якщо активна офіційна тривога або це АР Крим/Луганщина (офіційні червоні зони)."""
         if self.region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь", "Луганська область"]:
