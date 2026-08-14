@@ -143,23 +143,23 @@ THREAT_AUTO_CLEAR_DELAYS: Dict[str, Tuple[int, int]] = {
 }
 
 THREAT_DEFAULT_ETAS: Dict[str, Tuple[str, str]] = {
-    THREAT_SHAHED: ("~200 хв", "+1-2 год"),
-    THREAT_CRUISE_MISSILE: ("~55 хв", "+15-30 хв"),
-    THREAT_BALLISTIC: ("~15 хв", "~2-5 хв"),
-    THREAT_MIG31K: ("~40 хв", "~20-40 хв"),
-    THREAT_KAB: ("~5 хв", "~3-5 хв"),
-    THREAT_TU95: ("~110 хв", "~30-90 хв"),
-    THREAT_TU22M3: ("~15 хв", "~3-10 хв"),
-    THREAT_SU35: ("~20 хв", "~5-15 хв"),
-    THREAT_ISKANDER: ("~25 хв", "~2-5 хв"),
-    THREAT_ARTILLERY: ("~10 хв", "~0-5 хв"),
-    THREAT_ZIRCON: ("~5 хв", "~1-3 хв"),
-    THREAT_MLRS: ("~10 хв", "~0-5 хв"),
-    THREAT_FPV: ("~20 хв", "~5-15 хв"),
-    THREAT_RECON: ("~30 хв", "~15-30 хв"),
-    THREAT_RECON_UAV: ("~30 хв", "~15-30 хв"),
+    THREAT_SHAHED: ("до 3 год", "до 1.5 год"),
+    THREAT_CRUISE_MISSILE: ("до 55 хв", "до 30 хв"),
+    THREAT_BALLISTIC: ("до 15 хв", "до 5 хв"),
+    THREAT_MIG31K: ("до 40 хв", "до 40 хв"),
+    THREAT_KAB: ("до 5 хв", "до 5 хв"),
+    THREAT_TU95: ("до 2 год", "до 1.5 год"),
+    THREAT_TU22M3: ("до 15 хв", "до 10 хв"),
+    THREAT_SU35: ("до 20 хв", "до 15 хв"),
+    THREAT_ISKANDER: ("до 25 хв", "до 5 хв"),
+    THREAT_ARTILLERY: ("до 10 хв", "до 5 хв"),
+    THREAT_ZIRCON: ("до 5 хв", "до 3 хв"),
+    THREAT_MLRS: ("до 10 хв", "до 5 хв"),
+    THREAT_FPV: ("до 20 хв", "до 15 хв"),
+    THREAT_RECON: ("до 30 хв", "до 30 хв"),
+    THREAT_RECON_UAV: ("до 30 хв", "до 30 хв"),
     THREAT_OFFICIAL_ALARM: ("-", "-"),
-    THREAT_UNKNOWN: ("~30 хв", "~30 хв"),
+    THREAT_UNKNOWN: ("до 30 хв", "до 30 хв"),
 }
 
 THREAT_PREDICTIVE_WEIGHTS: Dict[str, float] = {
@@ -630,23 +630,19 @@ def get_threat_speed(threat_type: Optional[str], custom_speed: Optional[float] =
     return DEFAULT_SPEEDS_KMH.get(threat_type, DEFAULT_SPEEDS_KMH[THREAT_UNKNOWN])
 
 def format_eta_seconds_to_str(eta_seconds: Optional[int]) -> str:
-    """Formats ETA in seconds into standardized human-readable Ukrainian string (hours as integers, remaining as minutes)."""
+    """Formats ETA in seconds into standardized human-readable Ukrainian string with unified 'до ...' format."""
     if eta_seconds is None or eta_seconds <= 0:
         return "в області"
-    elif eta_seconds < 300:
-        return "~2-5 хв"
-    elif eta_seconds < 900:
-        mins = eta_seconds // 60
-        return f"~{mins}-{mins + 5} хв"
-    elif eta_seconds < 3600:
-        mins = eta_seconds // 60
-        return f"~{mins} хв"
+    
+    total_mins = max(1, round(eta_seconds / 60))
+    if total_mins < 60:
+        return f"до {total_mins} хв"
     else:
-        hours = eta_seconds // 3600
-        mins = (eta_seconds % 3600) // 60
+        hours = total_mins // 60
+        mins = total_mins % 60
         if mins == 0:
-            return f"~{hours} год"
-        return f"~{hours} год {mins} хв"
+            return f"до {hours} год"
+        return f"до {hours} год {mins} хв"
 
 def calculate_kinematic_eta(
     distance_km: float, 

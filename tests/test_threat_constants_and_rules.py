@@ -53,7 +53,7 @@ def test_kinematics_calculations():
     print("🧪 Test 3: Testing flight kinematics and ETA calculation formulas...")
     # Ballistic / Iskander short range (150 km)
     eta_sec, eta_str = calculate_kinematic_eta(150.0, THREAT_BALLISTIC)
-    assert eta_sec > 0 and "~2-5 хв" in eta_str or "хв" in eta_str
+    assert eta_sec > 0 and ("до" in eta_str or "хв" in eta_str)
     
     # Shahed long range (400 km)
     eta_sec, eta_str = calculate_kinematic_eta(400.0, THREAT_SHAHED)

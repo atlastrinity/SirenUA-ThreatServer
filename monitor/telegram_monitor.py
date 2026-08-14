@@ -509,7 +509,7 @@ class TelegramThreatMonitor:
                             if threat_type == "shahed":
                                 buffer_minutes = 20
                             eta_minutes = max(1, int(eta_seconds / 60) + buffer_minutes)
-                            eta_str = f"~{eta_minutes} хв"
+                            eta_str = f"до {eta_minutes} хв"
                         
                         # Dynamic delay: for KAB, 90s buffer after ETA=0 (1.5-2 min max)
                         if threat_type == "kab":

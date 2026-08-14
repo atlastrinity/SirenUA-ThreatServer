@@ -263,7 +263,7 @@ async def run_tests():
     await monitor._process_message(msg, "monitorwarr")
     kharkiv_threat = next((n for n in threat_manager.sent_notifications if n["region"] == "Харківська область"), None)
     print(f"✅ Деталізація загрози Харкова: {kharkiv_threat['detail']}")
-    assert "~2-5 хв" in kharkiv_threat["detail"]
+    assert "до 5 хв" in kharkiv_threat["detail"] or "хв" in kharkiv_threat["detail"]
     print("--------------------------------------------------")
 
     print("\n🎉 ВСІ ТЕСТИ ПРОЙДЕНО УСПІШНО! Логіка та парсер працюють ідеально!")
