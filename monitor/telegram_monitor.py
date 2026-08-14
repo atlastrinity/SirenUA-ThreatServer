@@ -1374,8 +1374,8 @@ class TelegramThreatMonitor:
             norm_source = REGION_ALIASES.get(transit_source, transit_source)
             if norm_source in self.threat_manager.threats:
                 source_state = self.threat_manager.threats[norm_source]
-                if source_state.level != "none" and (source_state.is_active or any(t.threat_type == threat_type for t in source_state.active_threats)):
-                    print(f"🟡 [Re-evaluation] Загроза в джерелі ({norm_source}) все ще активна. Залишаємо предиктивну загрозу для {region}.")
+                if source_state.is_active or source_state.level != "none" or (source_state.active_threats and len(source_state.active_threats) > 0):
+                    print(f"🟡 [Re-evaluation] Загроза/сирена в джерелі ({norm_source}) все ще активна. Залишаємо предиктивну загрозу для {region}.")
                     self._schedule_predictive_reevaluation(region, 300.0, threat_type, group_id)
                     return
 
