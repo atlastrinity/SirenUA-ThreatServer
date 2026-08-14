@@ -216,18 +216,22 @@ async def _fetch_osm_shelters() -> List[Shelter]:
         "User-Agent": "SirenUA-ThreatServer/1.0 (https://sirenua.com)",
         "Accept": "application/json",
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            OVERPASS_URL,
-            data={"data": OVERPASS_QUERY},
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=20),
-        ) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                logger.error(f"Overpass API error {resp.status}: {text[:200]}")
-                return []
-            data = await resp.json(content_type=None)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                OVERPASS_URL,
+                data={"data": OVERPASS_QUERY},
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.warning(f"Overpass API status {resp.status}: {text[:150]}")
+                    return []
+                data = await resp.json(content_type=None)
+    except Exception as e:
+        logger.warning(f"⚠️ Тимчасова помилка зв'язку з Overpass API (OSM): {e}")
+        return []
 
     elements = data.get("elements", [])
     shelters: List[Shelter] = []
