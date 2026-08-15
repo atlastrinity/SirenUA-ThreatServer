@@ -194,16 +194,22 @@ class ThreatState:
     def load_from_dict(self, data: dict):
         self._is_official_active = data.get("is_official_alarm", data.get("is_active", False))
         self.is_test = data.get("is_test", False)
+        from core.regions import extract_region_specific_text
         if "active_threats" in data:
             self.active_threats = [SingleThreat.from_dict(t) for t in data["active_threats"]]
+            for t in self.active_threats:
+                if t.detail:
+                    t.detail = extract_region_specific_text(t.detail, self.region)
         else:
             self.active_threats = []
             level = data.get("level", "none")
             if level != "none":
+                raw_detail = data.get("detail")
+                clean_detail = extract_region_specific_text(raw_detail, self.region) if raw_detail else None
                 t = SingleThreat(
                     level=level,
                     threat_type=data.get("type"),
-                    detail=data.get("detail"),
+                    detail=clean_detail,
                     confidence=data.get("confidence"),
                     eta=data.get("eta"),
                     is_predictive=data.get("is_predictive", False),
