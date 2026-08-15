@@ -38,7 +38,7 @@ def delete_test_history_from_sqlite():
         cursor = conn.cursor()
         cursor.execute("DELETE FROM threat_history WHERE is_test = 1")
         cursor.execute("DELETE FROM threat_clearings WHERE is_test = 1")
-        cursor.execute("DELETE FROM paired_events WHERE threat_level = 'none' OR is_test = 1")
+        cursor.execute("DELETE FROM paired_events WHERE is_test = 1 OR threat_event_id IN (SELECT id FROM threat_history WHERE is_test = 1)")
         conn.commit()
         conn.close()
     except Exception as e:

@@ -80,12 +80,13 @@ def _get_backup_paths(db_path: str = None):
 
 
 def local_sqlite_backup(db_path: str = None) -> bool:
-    """Створює локальний атомарний бекап SQLite."""
+    """Створює локальний атомарний бекап SQLite та щоденні знімки."""
     target_path, backup_dir, backup_path, latest_path = _get_backup_paths(db_path)
     if not os.path.exists(target_path) or os.path.getsize(target_path) == 0:
         return False
         
     try:
+        from datetime import datetime, timezone
         os.makedirs(backup_dir, exist_ok=True)
         src_conn = get_sqlite_connection(target_path)
         dst_conn = sqlite3.connect(backup_path)
@@ -95,6 +96,13 @@ def local_sqlite_backup(db_path: str = None) -> bool:
         src_conn.close()
 
         shutil.copy2(backup_path, latest_path)
+        
+        # Save daily dated rolling snapshot
+        today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+        daily_path = os.path.join(backup_dir, f"threat_analytics_{today_str}.db")
+        if not os.path.exists(daily_path) or os.path.getsize(daily_path) < os.path.getsize(backup_path):
+            shutil.copy2(backup_path, daily_path)
+            
         logger.info(f"💾 [Local DB Backup] Атомарний бекап SQLite збережено у {backup_path}")
         return True
     except Exception as e:
