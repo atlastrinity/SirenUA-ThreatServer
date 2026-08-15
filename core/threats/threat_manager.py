@@ -291,7 +291,8 @@ class MockThreatManager:
                    is_test: bool = False,
                    telemetry: dict = None,
                    rules_applied: list = None,
-                   eta_seconds: Optional[int] = None) -> bool:
+                   eta_seconds: Optional[int] = None,
+                   group_id: Optional[str] = None) -> bool:
         from core.regions import REGION_ALIASES, PERMANENTLY_OCCUPIED_REGIONS
         norm_region = REGION_ALIASES.get(region, region)
         if norm_region not in self.threats or norm_region in PERMANENTLY_OCCUPIED_REGIONS:
@@ -301,8 +302,7 @@ class MockThreatManager:
         old_state = self.threats[region]
         old_level = old_state.level
 
-        group_id = None
-        if telemetry and isinstance(telemetry, dict):
+        if not group_id and telemetry and isinstance(telemetry, dict):
             group_id = telemetry.get("group_id")
 
         if eta_seconds is None and telemetry and isinstance(telemetry, dict):

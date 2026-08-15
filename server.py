@@ -67,30 +67,34 @@ async def poll_aerial_alerts():
                     if response.status == 200:
                         data = await response.json()
                         
-                        if token:
-                            active_alerts = data.get("alerts", [])
-                            active_regions = set()
-                            
-                            for alert in active_alerts:
-                                loc_type = alert.get("location_type")
-                                loc_title = alert.get("location_title")
-                                if loc_title:
-                                    if loc_type == "oblast" or loc_title == "м. Київ":
-                                        active_regions.add(loc_title)
-                            
-                            from core.regions import ALL_REGIONS
-                            official_dict = {}
-                            for region_name in ALL_REGIONS.keys():
-                                is_active = region_name in active_regions
-                                threat_manager.set_alarm_active(region_name, is_active)
-                                official_dict[region_name] = is_active
-                        else:
-                            states = data.get("states", {})
-                            official_dict = {}
-                            for region_name, state_data in states.items():
-                                is_active = state_data.get("alertnow", False)
-                                threat_manager.set_alarm_active(region_name, is_active)
-                                official_dict[region_name] = is_active
+                        if isinstance(data, dict):
+                            if token:
+                                active_alerts = data.get("alerts", [])
+                                active_regions = set()
+                                
+                                for alert in active_alerts:
+                                    if isinstance(alert, dict):
+                                        loc_type = alert.get("location_type")
+                                        loc_title = alert.get("location_title")
+                                        if loc_title:
+                                            if loc_type == "oblast" or loc_title == "м. Київ":
+                                                active_regions.add(loc_title)
+                                
+                                from core.regions import ALL_REGIONS
+                                official_dict = {}
+                                for region_name in ALL_REGIONS.keys():
+                                    is_active = region_name in active_regions
+                                    threat_manager.set_alarm_active(region_name, is_active)
+                                    official_dict[region_name] = is_active
+                            else:
+                                states = data.get("states", {})
+                                official_dict = {}
+                                if isinstance(states, dict):
+                                    for region_name, state_data in states.items():
+                                        if isinstance(state_data, dict):
+                                            is_active = state_data.get("alertnow", False)
+                                            threat_manager.set_alarm_active(region_name, is_active)
+                                            official_dict[region_name] = is_active
 
                         # Автоматично знімаємо протерміновані загрози та загрози у знятих тривогах
                         try:

@@ -28,6 +28,7 @@ from core.config import (
     MEDIUM_KEYWORDS,
     LOW_KEYWORDS,
     CLEAR_KEYWORDS,
+    logger,
 )
 
 from monitor.parser import clean_user_facing_threat_detail
@@ -60,6 +61,7 @@ class TelegramThreatMonitor:
         
         # State for web scraper fallback
         self.last_seen_posts = {channel: None for channel in TARGET_CHANNELS}
+        self._scraper_last_error_time = {channel: 0.0 for channel in TARGET_CHANNELS}
 
     async def _join_target_channels(self):
         if not self.client:
@@ -174,16 +176,23 @@ class TelegramThreatMonitor:
 
     # --- Web Scraper Fallback Loop ---
     async def _scrape_loop(self):
-        async with aiohttp.ClientSession() as session:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        timeout = aiohttp.ClientTimeout(total=15, connect=5)
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
             while self.is_running and not self.use_mtproto:
                 for channel in TARGET_CHANNELS:
                     await self._scrape_channel(session, channel)
-                await asyncio.sleep(20)
+                    await asyncio.sleep(1.5)  # Throttle between channel fetches to prevent Telegram web rate limits
+                await asyncio.sleep(15)
 
     async def _scrape_channel(self, session, channel):
         url = f"https://t.me/s/{channel}"
         try:
-            async with session.get(url, timeout=10) as response:
+            async with session.get(url) as response:
                 if response.status != 200:
                     return
                 html = await response.text()
@@ -237,7 +246,16 @@ class TelegramThreatMonitor:
                         print(f"📖 [Web: {channel}] Нове повідомлення (ID: {current_id}): \"{short_text}...\"")
                         await self._process_message(text, channel)
         except Exception as e:
-            self.log_error("telegram", f"Помилка скрейпера для каналу {channel}: {e}", endpoint="_scrape_channel")
+            err_str = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            import time
+            now_ts = time.time()
+            last_ts = self._scraper_last_error_time.get(channel, 0.0)
+            # Throttle DB error log entry to at most once every 30 minutes per channel to prevent error log spam
+            if now_ts - last_ts > 1800:
+                self._scraper_last_error_time[channel] = now_ts
+                self.log_error("telegram", f"Помилка скрейпера для каналу {channel}: {err_str}", endpoint="_scrape_channel")
+            else:
+                logger.warning(f"⚠️ [Web Scraper] {channel}: {err_str}")
 
     def _find_path(self, start_region: str, end_region: str) -> list[str]:
         """BFS algorithm to find the shortest path between two regions."""
@@ -583,7 +601,7 @@ class TelegramThreatMonitor:
                 self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
                                                confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
                                                is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
-                                               eta_seconds=eta_seconds)
+                                               eta_seconds=eta_seconds, group_id=group_id)
                 self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
                 
                 if is_pred:

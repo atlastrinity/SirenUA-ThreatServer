@@ -122,7 +122,7 @@ When a message clears a threat (is_clear: true), add a "clearing_telemetry" bloc
 
 === TELEMETRY ENRICHMENT ===
 For EVERY message with a threat (threat_level != "none"), add a "telemetry" block:
-- group_id (string)
+- group_id (string): Unique semantic identifier for this specific threat group, wave, or tactical vector (e.g., "shahed_odesa_sea", "shahed_izmail_south", "kab_kharkiv_w1", "missile_kyiv_1"). If multiple distinct groups/waves of the same threat type are mentioned (e.g. "Група 1 на Одесу", "Група 2 на Ізмаїл"), assign distinct group_id values to keep them separated!
 - attack_vector (string): "south_to_north", "east_to_west", "north_to_south", "west_to_east", "southeast_to_northwest", "northeast_to_southwest", "crimea_inland", "sea_to_coast", "border_shelling", "unknown"
 - target_count (int|null)
 - speed_kmh (int|null)
