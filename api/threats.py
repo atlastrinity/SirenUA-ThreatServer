@@ -3,6 +3,7 @@ SirenUA Threat Management API Router.
 FastAPI routes for current threat status feed, scenarios, and overrides.
 """
 
+import os
 import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
@@ -27,21 +28,34 @@ async def get_gemini_status():
     """Повертає поточний статус ШІ-аналізатора Gemini."""
     import core.globals
     telegram_monitor = core.globals.telegram_monitor
+    current_model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
     
     if not IS_LIVE_MODE:
-        return {"status": "mock", "error": "Сервер працює в тестовому (MOCK) режимі"}
+        return {"status": "mock", "error": "Сервер працює в тестовому (MOCK) режимі", "model": current_model}
         
     if telegram_monitor is None or telegram_monitor.analyzer is None:
-        return {"status": "offline", "error": "Моніторинг не запущено"}
+        return {"status": "offline", "error": "Моніторинг не запущено", "model": current_model}
         
     analyzer = telegram_monitor.analyzer
     if not analyzer.is_configured:
-        return {"status": "offline", "error": "API-ключ GEMINI_API_KEY не налаштовано"}
+        return {"status": "offline", "error": "API-ключ GEMINI_API_KEY не налаштовано", "model": getattr(analyzer, "model_name", current_model)}
         
     if analyzer.last_error:
-        return {"status": "error", "error": analyzer.last_error}
+        return {
+            "status": "error",
+            "error": analyzer.last_error,
+            "model": analyzer.model_name,
+            "keys_count": len(analyzer.api_keys),
+            "active_key_index": analyzer.current_key_idx
+        }
         
-    return {"status": "ok", "error": None}
+    return {
+        "status": "ok",
+        "error": None,
+        "model": analyzer.model_name,
+        "keys_count": len(analyzer.api_keys),
+        "active_key_index": analyzer.current_key_idx
+    }
 
 @router.post("/api/threats/mock")
 async def set_mock_threat(request: ThreatSetRequest):

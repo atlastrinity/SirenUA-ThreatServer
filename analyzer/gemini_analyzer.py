@@ -270,13 +270,13 @@ class GeminiThreatAnalyzer:
                 else:
                     # Log error via callback
                     if self._error_callback:
-                        self._error_callback("gemini", error_msg, endpoint="analyze_batch", context=f"messages_count={len(messages)}")
+                        self._error_callback("gemini", error_msg, endpoint="analyze_batch", context=f"model={self.model_name}, messages_count={len(messages)}", error_type="gemini_api_error")
                     return []
         
         # If we exhausted all attempts
-        self.last_error = "Rate Limit Exceeded across all available keys"
+        self.last_error = f"Rate Limit Exceeded across all available keys for model {self.model_name}"
         if self._error_callback:
-            self._error_callback("gemini", "All API keys rate limited", endpoint="analyze_batch", context=f"messages_count={len(messages)}")
+            self._error_callback("gemini", f"All API keys rate limited for model {self.model_name}", endpoint="analyze_batch", context=f"model={self.model_name}, messages_count={len(messages)}", error_type="429_rate_limit")
         return []
 
     @staticmethod
