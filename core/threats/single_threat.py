@@ -79,13 +79,40 @@ class SingleThreat:
         self.is_test: bool = is_test
         self.group_id: Optional[str] = group_id
         self.paired_event_id: Optional[int] = paired_event_id
+        if transit_from is None and telemetry and isinstance(telemetry, dict):
+            transit_from = telemetry.get("transit_from")
+
+        if transit_from is None and detail:
+            match = re.search(r'з\s+([А-Яа-яіЇїЄє\s\'-]+?)(?:\s+області|\s+область|\s+РФ|\s+Криму|щини|чини|\s+\()', detail, re.IGNORECASE)
+            if match:
+                src_text = match.group(1).strip().lower()
+                ORIGIN_MAP = {
+                    "одес": "Одеська область", "одещ": "Одеська область",
+                    "сумск": "Сумська область", "сумськ": "Сумська область", "сумщ": "Сумська область",
+                    "харків": "Харківська область", "харківщ": "Харківська область",
+                    "чернігів": "Чернігівська область", "чернігівщ": "Чернігівська область",
+                    "полтав": "Полтавська область", "полтавщ": "Полтавська область",
+                    "дніпро": "Дніпропетровська область", "дніпропетровщ": "Дніпропетровська область",
+                    "донецьк": "Донецька область", "донечч": "Донецька область",
+                    "луганськ": "Луганська область", "луганщ": "Луганська область",
+                    "запоріж": "Запорізька область",
+                    "херсон": "Херсонська область", "херсонщ": "Херсонська область",
+                    "миколаїв": "Миколаївська область", "миколаївщ": "Миколаївська область",
+                    "київ": "Київська область", "київщ": "Київська область",
+                    "крим": "АР Крим"
+                }
+                for stem, reg in ORIGIN_MAP.items():
+                    if stem in src_text:
+                        transit_from = reg
+                        break
+
         self.transit_from: Optional[str] = transit_from
         self.telemetry: Optional[dict] = telemetry
         self.target_region: Optional[str] = target_region
 
         # Auto-resolve aviation / missile / drone profile if not explicitly supplied
         from core.threat_types import resolve_aviation_strike_profile
-        av_profile = resolve_aviation_strike_profile(threat_type, detail, target_region)
+        av_profile = resolve_aviation_strike_profile(threat_type, detail, target_region, transit_from=self.transit_from)
         self.carrier_type: Optional[str] = carrier_type or av_profile.get("carrier_type")
         self.carrier_origin_name: Optional[str] = carrier_origin_name or av_profile.get("carrier_origin_name")
         self.carrier_origin_latitude: Optional[float] = carrier_origin_latitude or av_profile.get("carrier_origin_latitude")
@@ -113,9 +140,8 @@ class SingleThreat:
                 origin_lat = self.telemetry["origin_latitude"]
                 origin_lon = self.telemetry["origin_longitude"]
 
-        if origin_lat is None and self.launch_sector_latitude is not None and self.launch_sector_longitude is not None:
-            origin_lat = self.launch_sector_latitude
-            origin_lon = self.launch_sector_longitude
+        if origin_lat is None and self.transit_from and self.transit_from in REGION_CENTROIDS:
+            origin_lat, origin_lon = REGION_CENTROIDS[self.transit_from]
 
         if origin_lat is None and self.detail:
             SPECIAL_ORIGIN_PATTERNS = {
@@ -137,29 +163,9 @@ class SingleThreat:
                     origin_lat, origin_lon = coords[0], coords[1]
                     break
 
-            if origin_lat is None:
-                match = re.search(r'з\s+([А-Яа-яіЇїЄє\s\'-]+?)(?:\s+області|\s+область|\s+РФ|\s+Криму|щини|чини|\s+\()', self.detail, re.IGNORECASE)
-                if match:
-                    src_text = match.group(1).strip().lower()
-                    ORIGIN_MAP = {
-                        "одес": "Одеська область", "одещ": "Одеська область",
-                        "сумск": "Сумська область", "сумськ": "Сумська область", "сумщ": "Сумська область",
-                        "харків": "Харківська область", "харківщ": "Харківська область",
-                        "чернігів": "Чернігівська область", "чернігівщ": "Чернігівська область",
-                        "полтав": "Полтавська область", "полтавщ": "Полтавська область",
-                        "дніпро": "Дніпропетровська область", "дніпропетровщ": "Дніпропетровська область",
-                        "донецьк": "Донецька область", "донечч": "Донецька область",
-                        "луганськ": "Луганська область", "луганщ": "Луганська область",
-                        "запоріж": "Запорізька область",
-                        "херсон": "Херсонська область", "херсонщ": "Херсонська область",
-                        "миколаїв": "Миколаївська область", "миколаївщ": "Миколаївська область",
-                        "київ": "Київська область", "київщ": "Київська область",
-                        "крим": "АР Крим"
-                    }
-                    for stem, reg in ORIGIN_MAP.items():
-                        if stem in src_text and reg in REGION_CENTROIDS:
-                            self.transit_from = reg
-                            break
+        if origin_lat is None and self.launch_sector_latitude is not None and self.launch_sector_longitude is not None:
+            origin_lat = self.launch_sector_latitude
+            origin_lon = self.launch_sector_longitude
 
         return {
             "threat_id": self.threat_id,

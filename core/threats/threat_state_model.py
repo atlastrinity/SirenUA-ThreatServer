@@ -335,7 +335,8 @@ class ThreatState:
                    is_test: bool = False, group_id: Optional[str] = None,
                    eta_seconds: Optional[int] = None,
                    telemetry: Optional[dict] = None,
-                   since: Optional[str] = None) -> bool:
+                   since: Optional[str] = None,
+                   transit_from: Optional[str] = None) -> bool:
         if self.region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь"]:
             return False
 
@@ -386,7 +387,8 @@ class ThreatState:
             eta_seconds=eta_seconds,
             target_region=self.region,
             since=since,
-            telemetry=telemetry
+            telemetry=telemetry,
+            transit_from=transit_from
         )
         self.active_threats.append(new_threat)
         return True

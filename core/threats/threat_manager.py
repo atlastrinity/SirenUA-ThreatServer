@@ -298,7 +298,8 @@ class MockThreatManager:
                    telemetry: dict = None,
                    rules_applied: list = None,
                    eta_seconds: Optional[int] = None,
-                   group_id: Optional[str] = None) -> bool:
+                   group_id: Optional[str] = None,
+                   transit_from: Optional[str] = None) -> bool:
         from core.regions import REGION_ALIASES, PERMANENTLY_OCCUPIED_REGIONS
         norm_region = REGION_ALIASES.get(region, region)
         if norm_region not in self.threats or norm_region in PERMANENTLY_OCCUPIED_REGIONS:
@@ -310,6 +311,9 @@ class MockThreatManager:
 
         if not group_id and telemetry and isinstance(telemetry, dict):
             group_id = telemetry.get("group_id")
+
+        if not transit_from and telemetry and isinstance(telemetry, dict):
+            transit_from = telemetry.get("transit_from")
 
         if eta_seconds is None and telemetry and isinstance(telemetry, dict):
             speed = telemetry.get("speed_kmh")
@@ -336,7 +340,8 @@ class MockThreatManager:
         has_changed = self.threats[region].set_threat(
             level, threat_type, detail, confidence, eta,
             is_predictive, is_test, group_id=group_id,
-            eta_seconds=eta_seconds, telemetry=telemetry
+            eta_seconds=eta_seconds, telemetry=telemetry,
+            transit_from=transit_from
         )
         
         if has_changed:

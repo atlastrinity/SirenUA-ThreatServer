@@ -4,6 +4,7 @@ Serves as the single source of truth for all departure and arrival threat object
 """
 
 from typing import Dict, Tuple, Optional, List, Any
+import re
 
 # ==============================================================================
 # 1. THREAT TYPE IDENTIFIER CONSTANTS (Single Source of Truth)
@@ -832,7 +833,8 @@ def get_launch_sector_title(sector_key: Optional[str]) -> str:
 def resolve_aviation_strike_profile(
     threat_type: Optional[str],
     text: Optional[str] = None,
-    target_region: Optional[str] = None
+    target_region: Optional[str] = None,
+    transit_from: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Resolves complete two-tier tactical aviation profile:
@@ -855,6 +857,29 @@ def resolve_aviation_strike_profile(
     if text:
         airbase_key = detect_launch_origin_from_text(text)
         sector_key = detect_launch_sector_from_text(text)
+        if not transit_from:
+            match = re.search(r'з\s+([А-Яа-яіЇїЄє\s\'-]+?)(?:\s+області|\s+область|\s+РФ|\s+Криму|щини|чини|\s+\()', text, re.IGNORECASE)
+            if match:
+                src_text = match.group(1).strip().lower()
+                ORIGIN_MAP = {
+                    "одес": "Одеська область", "одещ": "Одеська область",
+                    "сумск": "Сумська область", "сумськ": "Сумська область", "сумщ": "Сумська область",
+                    "харків": "Харківська область", "харківщ": "Харківська область",
+                    "чернігів": "Чернігівська область", "чернігівщ": "Чернігівська область",
+                    "полтав": "Полтавська область", "полтавщ": "Полтавська область",
+                    "дніпро": "Дніпропетровська область", "дніпропетровщ": "Дніпропетровська область",
+                    "донецьк": "Донецька область", "донечч": "Донецька область",
+                    "луганськ": "Луганська область", "луганщ": "Луганська область",
+                    "запоріж": "Запорізька область",
+                    "херсон": "Херсонська область", "херсонщ": "Херсонська область",
+                    "миколаїв": "Миколаївська область", "миколаївщ": "Миколаївська область",
+                    "київ": "Київська область", "київщ": "Київська область",
+                    "крим": "АР Крим"
+                }
+                for stem, reg in ORIGIN_MAP.items():
+                    if stem in src_text:
+                        transit_from = reg
+                        break
 
     # 1. Determine Carrier Aircraft Type
     if threat_type == THREAT_KAB:
@@ -873,18 +898,30 @@ def resolve_aviation_strike_profile(
         carrier_type = "tactical_aviation"
 
     # 2. Sector heuristics if not explicitly mentioned in text
-    if not sector_key and target_region:
-        if threat_type == THREAT_SHAHED:
-            if target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
-                sector_key = SECTOR_BLACK_SEA
-            elif target_region in ["Сумська область", "Чернігівська область", "Київська область"]:
+    if not sector_key:
+        if transit_from and threat_type == THREAT_SHAHED:
+            if transit_from in ["Сумська область", "Чернігівська область"]:
                 sector_key = SECTOR_KURSK
-            elif target_region in ["Харківська область", "Полтавська область"]:
+            elif transit_from in ["Харківська область"]:
                 sector_key = SECTOR_BELGOROD
-            elif target_region in ["Запорізька область", "Дніпропетровська область"]:
+            elif transit_from in ["Запорізька область", "Дніпропетровська область"]:
                 sector_key = SECTOR_AZOV_SEA
+            elif transit_from in ["Херсонська область", "Миколаївська область", "Одеська область", "АР Крим"]:
+                sector_key = SECTOR_BLACK_SEA
             else:
-                sector_key = SECTOR_PRIMORSKO_AKHTARSK
+                sector_key = SECTOR_KURSK
+        elif target_region:
+            if threat_type == THREAT_SHAHED:
+                if target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
+                    sector_key = SECTOR_BLACK_SEA
+                elif target_region in ["Сумська область", "Чернігівська область", "Київська область"]:
+                    sector_key = SECTOR_KURSK
+                elif target_region in ["Харківська область", "Полтавська область"]:
+                    sector_key = SECTOR_BELGOROD
+                elif target_region in ["Запорізька область", "Дніпропетровська область"]:
+                    sector_key = SECTOR_AZOV_SEA
+                else:
+                    sector_key = SECTOR_PRIMORSKO_AKHTARSK
         elif threat_type == THREAT_BALLISTIC:
             if target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
                 sector_key = SECTOR_CRIMEA_TARKHANKUT

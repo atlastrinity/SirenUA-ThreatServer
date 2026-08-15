@@ -975,7 +975,8 @@ class TelegramThreatMonitor:
                     is_predictive=True,
                     is_test=pred.get("is_test", False),
                     telemetry={"group_id": pred_gid, "transit_from": pred["source_region"]},  # Pass group_id and transit_from for precise origin tracking
-                    eta_seconds=pred.get("eta_seconds")
+                    eta_seconds=pred.get("eta_seconds"),
+                    transit_from=pred["source_region"]
                 )
                 self._schedule_auto_clear(region, auto_clear_delay, threat_type=pred["threat_type"], group_id=pred_gid)
                 predictions_applied += 1
