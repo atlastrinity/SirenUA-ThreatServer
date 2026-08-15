@@ -114,7 +114,7 @@ async def ngrok_watchdog_loop():
         return
     domain = NGROK_DOMAIN or "bobbing-armchair-daylong.ngrok-free.dev"
     while True:
-        await asyncio.sleep(60.0)  # Check every 60 seconds
+        await asyncio.sleep(15.0)  # Check every 15 seconds for rapid auto-recovery
         try:
             active = await is_ngrok_tunnel_active(domain)
             if not active:
