@@ -26,12 +26,12 @@ async def is_ngrok_tunnel_active(target_domain: str = None) -> bool:
                     tunnels = data.get("tunnels", [])
                     if not tunnels:
                         return False
-                    if not target_domain:
-                        return True
-                    for t in tunnels:
-                        public_url = t.get("public_url", "")
-                        if target_domain in public_url:
-                            return True
+                    if target_domain:
+                        for t in tunnels:
+                            public_url = t.get("public_url", "")
+                            if target_domain in public_url:
+                                return True
+                        return False
                     return True
     except Exception:
         return False
