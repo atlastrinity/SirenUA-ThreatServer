@@ -597,10 +597,32 @@ class TelegramThreatMonitor:
                     if launch_origin and launch_origin.lower() != "unknown":
                         telemetry_info.append(f"Напрямок запуску: {launch_origin}")
                         
-                    # 4. Weapon Subtype (Конкретна модель)
+                    # 4. Weapon Subtype (Конкретна модель / ідентифікація загрози)
                     weapon_subtype = telemetry.get("weapon_subtype")
                     if weapon_subtype and weapon_subtype.lower() != "unknown":
                         telemetry_info.append(f"Тип: {weapon_subtype}")
+                    elif threat_type and threat_type.lower() != "unknown":
+                        from core.threat_types import THREAT_TITLES
+                        type_name = THREAT_TITLES.get(threat_type.lower(), threat_type)
+                        telemetry_info.append(f"Тип: {type_name}")
+                    else:
+                        # Fallback identification based on speed and kinematics
+                        speed_val = telemetry.get("speed_kmh")
+                        if speed_val:
+                            try:
+                                sp = float(speed_val)
+                                if sp < 220:
+                                    telemetry_info.append("Тип: Повітряна ціль (ймовірно БпЛА)")
+                                elif sp < 550:
+                                    telemetry_info.append("Тип: Швидкісна ціль (ймовірно реактивний БпЛА / дрон)")
+                                elif sp < 1500:
+                                    telemetry_info.append("Тип: Швидкісна ціль (ймовірно крилата ракета / авіація)")
+                                else:
+                                    telemetry_info.append("Тип: Високошвидкісна ціль (ймовірно балістика / надзвукова)")
+                            except Exception:
+                                telemetry_info.append("Тип: Невстановлена повітряна ціль")
+                        else:
+                            telemetry_info.append("Тип: Невстановлена повітряна ціль")
                         
                     # 5. Speed (Швидкість)
                     speed = telemetry.get("speed_kmh")
