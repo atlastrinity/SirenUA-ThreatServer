@@ -32,13 +32,15 @@ async def get_admin_dashboard_stats():
                 COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END), 0) as confirmed,
                 COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END), 0) as mitigated,
                 COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END), 0) as overestimated,
-                COALESCE(SUM(CASE WHEN pe.lifecycle_status = 'active' AND pe.prediction_accuracy IS NULL THEN 1 ELSE 0 END), 0) as active,
+                COALESCE(SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END), 0) as active,
+                COALESCE(SUM(CASE WHEN pe.lifecycle_status = 'cleared' AND (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) THEN 1 ELSE 0 END), 0) as cleared,
                 COUNT(*) as total
             FROM paired_events pe
             WHERE pe.created_at >= datetime('now', '-7 days')
+              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
         """
         accuracy_rows = execute_query_as_dicts(accuracy_query)
-        acc = accuracy_rows[0] if accuracy_rows else {"confirmed": 0, "mitigated": 0, "overestimated": 0, "active": 0, "total": 0}
+        acc = accuracy_rows[0] if accuracy_rows else {"confirmed": 0, "mitigated": 0, "overestimated": 0, "active": 0, "cleared": 0, "total": 0}
 
         # AI accuracy percentage
         evaluated = (acc["confirmed"] or 0) + (acc["mitigated"] or 0) + (acc["overestimated"] or 0)

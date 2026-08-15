@@ -127,9 +127,9 @@ def should_expire_missile_threat(
         max_seconds = get_missile_max_flight_seconds(t_type)
 
     if elapsed_seconds >= max_seconds:
-        res = "intercepted" if (is_fast_threat and not is_official_alarm_active and not is_predictive) else "expired"
+        res = "intercepted" if (is_fast_threat and not is_predictive) else "expired"
         reason_label = "Прогноз не реалізувався (ціль змінила курс або ліквідована)" if is_predictive else ("Збито ППО або відбій небезпеки" if is_fast_threat else "Час польоту вичерпано")
-        return True, res, f"{reason_label}. Перевищено час польоту ({int(elapsed_seconds)} сек). Траєкторію вилучено."
+        return True, res, f"{reason_label}. Перевищено максимальний час польоту ({int(elapsed_seconds)} сек). Траєкторію вилучено."
 
     return False, "", ""
 
