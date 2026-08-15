@@ -572,8 +572,19 @@ async def get_multihop_flight_chains(days: int = 30):
         chain_counts = {}
         junction_branches = {}
 
-        # 1. Base empirical routes from SHAHED_ROUTES
-        for route_name, route_list in SHAHED_ROUTES.items():
+        # 1. Base empirical routes from SHAHED_ROUTES and Strategic Launch Corridors
+        STRATEGIC_LAUNCH_CORRIDORS = {
+            "azov_to_mykolaiv": ["Акваторія Азовського моря", "Дніпропетровська область", "Миколаївська область"],
+            "azov_to_poltava": ["Акваторія Азовського моря", "Запорізька область", "Дніпропетровська область", "Полтавська область"],
+            "chauda_to_odesa": ["Мис Чауда", "Херсонська область", "Миколаївська область", "Одеська область"],
+            "kursk_to_kyiv": ["Рубіж Курська обл. РФ", "Сумська область", "Полтавська область", "Київська область"],
+            "belgorod_to_dnipro": ["Рубіж Бєлгородська обл. РФ", "Харківська область", "Полтавська область", "Дніпропетровська область"],
+            "black_sea_to_west": ["Акваторія Чорного моря", "Одеська область", "Вінницька область", "Хмельницька область"],
+            "caspian_to_center": ["Район пусків Каспійське море", "Харківська область", "Полтавська область", "Київська область"]
+        }
+
+        all_base_routes = {**SHAHED_ROUTES, **STRATEGIC_LAUNCH_CORRIDORS}
+        for route_name, route_list in all_base_routes.items():
             for i in range(len(route_list) - 1):
                 src = route_list[i]
                 tgt = route_list[i + 1]

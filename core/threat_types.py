@@ -560,13 +560,13 @@ AVIATION_LAUNCH_SECTORS: Dict[str, Dict[str, Any]] = {
     SECTOR_AZOV_SEA: {
         "title": "Акваторія Азовського моря",
         "lat_lon": (46.20, 36.50),
-        "target_regions": ["Запорізька область", "Дніпропетровська область", "Донецька область", "Херсонська область"],
+        "target_regions": ["Запорізька область", "Дніпропетровська область", "Донецька область", "Херсонська область", "Миколаївська область", "Одеська область", "Кіровоградська область", "Полтавська область", "Черкаська область"],
         "keywords": ["азов", "азовськ", "азовське море", "приазов"],
     },
     SECTOR_BLACK_SEA: {
         "title": "Акваторія Чорного моря",
         "lat_lon": (44.50, 32.00),
-        "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область"],
+        "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область", "Кіровоградська область", "Вінницька область", "Черкаська область"],
         "keywords": ["чорне море", "чорного моря", "севастополь", "тарханкут", "з моря", "морського базування", "чорноморськ"],
     },
     SECTOR_TOT_ZAPORIZHZHIA: {
@@ -899,15 +899,17 @@ def resolve_aviation_strike_profile(
 
     # 2. Sector heuristics if not explicitly mentioned in text
     if not sector_key:
-        if transit_from and threat_type == THREAT_SHAHED:
+        if transit_from:
             if transit_from in ["Сумська область", "Чернігівська область"]:
                 sector_key = SECTOR_KURSK
             elif transit_from in ["Харківська область"]:
                 sector_key = SECTOR_BELGOROD
             elif transit_from in ["Запорізька область", "Дніпропетровська область"]:
-                sector_key = SECTOR_AZOV_SEA
+                sector_key = SECTOR_AZOV_SEA if threat_type != THREAT_KAB else SECTOR_TOT_ZAPORIZHZHIA
             elif transit_from in ["Херсонська область", "Миколаївська область", "Одеська область", "АР Крим"]:
-                sector_key = SECTOR_BLACK_SEA
+                sector_key = SECTOR_BLACK_SEA if threat_type in [THREAT_CRUISE_MISSILE, THREAT_SHAHED, THREAT_SU35] else SECTOR_TOT_KHERSON
+            elif transit_from in ["Донецька область", "Луганська область"]:
+                sector_key = SECTOR_TOT_DONETSK if threat_type in [THREAT_KAB, THREAT_ARTILLERY, THREAT_MLRS] else SECTOR_ROSTOV_TAGANROG
             else:
                 sector_key = SECTOR_KURSK
         elif target_region:
