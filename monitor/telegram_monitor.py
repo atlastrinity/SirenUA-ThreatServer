@@ -117,7 +117,7 @@ class TelegramThreatMonitor:
         if session_found:
             print(f"🔥 Знайдено локальний файл сесії: {session_found}. Ініціалізуємо MTProto...")
             try:
-                self.client = TelegramClient(session_found, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+                self.client = TelegramClient(session_found, TELEGRAM_API_ID, TELEGRAM_API_HASH, connection_retries=1, timeout=4)
                 await self.client.connect()
                 
                 if await self.client.is_user_authorized():
