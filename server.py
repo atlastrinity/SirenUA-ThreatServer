@@ -282,6 +282,11 @@ async def lifespan(app: FastAPI):
     # Запуск періодичного бекапу SQLite в Firestore кожні 15 хвилин
     periodic_backup_task = asyncio.create_task(periodic_sqlite_backup())
 
+    # Запуск періодичного розумного локального бекапу з дозаписом кожні 5 хвилин
+    from database.smart_backup import periodic_smart_backup_loop, smart_local_incremental_backup
+    smart_backup_task = asyncio.create_task(periodic_smart_backup_loop())
+    asyncio.create_task(asyncio.to_thread(smart_local_incremental_backup))
+
     # Запуск / перевірка Ngrok тунелю та фонового вотчдога
     from services.ngrok_service import ensure_ngrok_running, ngrok_watchdog_loop
     asyncio.create_task(ensure_ngrok_running())
@@ -299,6 +304,7 @@ async def lifespan(app: FastAPI):
     
     # Зупинка фонового бекапу, вотчдога та опитування
     periodic_backup_task.cancel()
+    smart_backup_task.cancel()
     ngrok_watchdog_task.cancel()
     if aerial_alerts_task:
         aerial_alerts_task.cancel()
@@ -307,6 +313,12 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
             
+    # Фінальний локальний смарт-бекап перед зупинкою
+    try:
+        smart_local_incremental_backup()
+    except Exception as e:
+        logger.error(f"⚠️ [Lifespan Shutdown] Помилка фінального смарт-бекапу: {e}")
+
     await shelter_manager.stop()
     if core.globals.telegram_monitor:
         await core.globals.telegram_monitor.stop()
