@@ -182,7 +182,7 @@ graph TD
    ```bash
    ngrok http 8085
    ```
-   Отриману публічну HTTPS-адресу (наприклад, `https://e7d9-185-94-219-55.ngrok-free.app`) необхідно вказувати у `NetworkManager.serverURL` iOS-додатка.
+   Отриману публічну HTTPS-адресу (наприклад, `https://37f7-2a02-2378-104a-46ac-2cc0-171e-561d-efe4.ngrok-free.app`) необхідно вказувати у `NetworkManager.serverURL` iOS-додатка.
 
 ---
 
