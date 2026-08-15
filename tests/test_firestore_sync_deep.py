@@ -33,12 +33,18 @@ def test_firestore_connectivity():
     db = get_db()
     assert db is not None, "Firestore client must not be None"
     
-    test_ref = db.collection("sirenua_test_sync").document("connectivity_check")
-    test_ref.set({"status": "connected", "verified": True})
-    doc = test_ref.get()
-    assert doc.exists
-    assert doc.to_dict().get("status") == "connected"
-    test_ref.delete()
+    try:
+        from google.api_core.exceptions import ResourceExhausted
+        test_ref = db.collection("sirenua_test_sync").document("connectivity_check")
+        test_ref.set({"status": "connected", "verified": True})
+        doc = test_ref.get()
+        assert doc.exists
+        assert doc.to_dict().get("status") == "connected"
+        test_ref.delete()
+    except Exception as e:
+        if "Quota exceeded" in str(e) or "ResourceExhausted" in type(e).__name__:
+            pytest.skip("Firebase Firestore quota rate limited / exceeded")
+        raise
 
 
 def test_realtime_state_sync():
@@ -47,23 +53,28 @@ def test_realtime_state_sync():
     manager = MockThreatManager()
     test_region = "Чернігівська область"
 
-    # Встановлюємо загрозу
-    manager.set_threat(test_region, "high", "shahed", detail="Синхронізаційний тест стану", is_test=True)
-    manager._execute_save_to_db()
+    try:
+        # Встановлюємо загрозу
+        manager.set_threat(test_region, "high", "shahed", detail="Синхронізаційний тест стану", is_test=True)
+        manager._execute_save_to_db()
 
-    # Перевіряємо в Firestore
-    doc = db.collection("sirenua_state").document("threats").get()
-    assert doc.exists, "Document sirenua_state/threats must exist in Firestore"
-    data = doc.to_dict()
-    assert test_region in data
-    assert data[test_region]["level"] == "high"
-    assert data[test_region]["type"] == "shahed"
+        # Перевіряємо в Firestore
+        doc = db.collection("sirenua_state").document("threats").get()
+        assert doc.exists, "Document sirenua_state/threats must exist in Firestore"
+        data = doc.to_dict()
+        assert test_region in data
+        assert data[test_region]["level"] == "high"
+        assert data[test_region]["type"] == "shahed"
 
-    # Очищуємо стан
-    manager.clear_threat(test_region)
-    manager._execute_save_to_db()
-    doc_after = db.collection("sirenua_state").document("threats").get()
-    assert doc_after.to_dict()[test_region]["level"] == "none"
+        # Очищуємо стан
+        manager.clear_threat(test_region)
+        manager._execute_save_to_db()
+        doc_after = db.collection("sirenua_state").document("threats").get()
+        assert doc_after.to_dict()[test_region]["level"] == "none"
+    except Exception as e:
+        if "Quota exceeded" in str(e) or "ResourceExhausted" in type(e).__name__:
+            pytest.skip("Firebase Firestore quota rate limited / exceeded")
+        raise
 
 
 def test_history_event_sync():
@@ -93,48 +104,63 @@ def test_history_event_sync():
     assert row[1] == test_region
     assert row[3] == unique_detail
 
-    # 2. Запис у Firestore sirenua_history
-    log_threat_to_firestore(
-        region=test_region,
-        level="medium",
-        threat_type="shahed",
-        detail=unique_detail,
-        is_test=True
-    )
-    flush_history_batch()
+    try:
+        # 2. Запис у Firestore sirenua_history
+        log_threat_to_firestore(
+            region=test_region,
+            level="medium",
+            threat_type="shahed",
+            detail=unique_detail,
+            is_test=True
+        )
+        flush_history_batch()
 
-    # Перевірка в Firestore
-    docs = list(db.collection("sirenua_history").where("detail", "==", unique_detail).get())
-    assert len(docs) > 0, "Test threat event must be found in Firestore sirenua_history"
-    assert docs[0].to_dict().get("detail") == unique_detail
-    assert docs[0].to_dict().get("region") == test_region
-    # Clean up test doc
-    docs[0].reference.delete()
+        # Перевірка в Firestore
+        docs = list(db.collection("sirenua_history").where("detail", "==", unique_detail).get())
+        assert len(docs) > 0, "Test threat event must be found in Firestore sirenua_history"
+        assert docs[0].to_dict().get("detail") == unique_detail
+        assert docs[0].to_dict().get("region") == test_region
+        # Clean up test doc
+        docs[0].reference.delete()
+    except Exception as e:
+        if "Quota exceeded" in str(e) or "ResourceExhausted" in type(e).__name__:
+            pytest.skip("Firebase Firestore quota rate limited / exceeded")
+        raise
 
 
 def test_atomic_sqlite_compressed_backup():
     """Перевірка створення атомарного gzip-стиснутого бекапу SQLite в Firestore."""
     db = get_db()
-    success = backup_sqlite_to_firestore()
-    assert success is True, "backup_sqlite_to_firestore() should return True"
+    try:
+        success = backup_sqlite_to_firestore()
+        assert success is True, "backup_sqlite_to_firestore() should return True"
 
-    doc = db.collection("sirenua_backup").document("sqlite_compressed").get()
-    assert doc.exists, "Document sirenua_backup/sqlite_compressed must exist"
-    payload = doc.to_dict()
-    assert "data" in payload
-    assert "tables_backed_up" in payload
-    backed_tables = payload["tables_backed_up"]
-    expected_tables = [
-        "gemini_rules", "paired_events", "threat_history", "threat_clearings",
-        "telemetry_data", "gemini_rules_audit", "error_log",
-        "analytics_reports", "palantir_reports"
-    ]
-    for t in expected_tables:
-        assert t in backed_tables, f"Table {t} must be backed up in Firestore snapshot"
-    assert payload["compressed_size_kb"] > 0
+        doc = db.collection("sirenua_backup").document("sqlite_compressed").get()
+        assert doc.exists, "Document sirenua_backup/sqlite_compressed must exist"
+        payload = doc.to_dict()
+        assert "data" in payload
+        assert "tables_backed_up" in payload
+        backed_tables = payload["tables_backed_up"]
+        expected_tables = [
+            "gemini_rules", "paired_events", "threat_history", "threat_clearings",
+            "telemetry_data", "gemini_rules_audit", "error_log",
+            "analytics_reports", "palantir_reports"
+        ]
+        for t in expected_tables:
+            assert t in backed_tables, f"Table {t} must be backed up in Firestore snapshot"
+        assert payload["compressed_size_kb"] > 0
+    except Exception as e:
+        if "Quota exceeded" in str(e) or "ResourceExhausted" in type(e).__name__:
+            pytest.skip("Firebase Firestore quota rate limited / exceeded")
+        raise
 
 
 def test_test_data_cleanup():
     """Перевірка очищення тестових записів з Firestore та локальної БД."""
-    deleted_count = delete_test_history_from_firestore()
-    assert isinstance(deleted_count, int)
+    try:
+        deleted_count = delete_test_history_from_firestore()
+        assert isinstance(deleted_count, int)
+    except Exception as e:
+        if "Quota exceeded" in str(e) or "ResourceExhausted" in type(e).__name__:
+            pytest.skip("Firebase Firestore quota rate limited / exceeded")
+        raise
