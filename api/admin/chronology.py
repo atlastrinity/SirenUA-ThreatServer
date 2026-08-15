@@ -183,17 +183,11 @@ def _correlate_single_event(ev: dict, alarm_by_region: dict) -> dict:
     pred_acc = ev.get("prediction_accuracy")
     lifecycle = ev.get("lifecycle_status")
 
-    if lifecycle == "active":
-        ev["match_type"] = "active"
-        if pred_acc == "confirmed":
-            ev["match_reason"] = "Загроза активна (підтверджена офіційною тривогою)"
-        elif pred_acc == "mitigated":
-            ev["match_reason"] = "Загроза активна (працює ППО/РЕБ)"
-        else:
-            ev["match_reason"] = "Загроза ще активна, очікуємо результат"
-    elif pred_acc == "confirmed":
+    if pred_acc == "confirmed":
         ev["match_type"] = "confirmed"
-        if best_delta is not None:
+        if lifecycle == "active":
+            ev["match_reason"] = "Загроза активна (підтверджена офіційною тривогою)"
+        elif best_delta is not None:
             if best_delta > 0:
                 mins = round(best_delta / 60)
                 ev["match_reason"] = f"AI визначив загрозу за {mins} хв до офіційної тривоги"
@@ -206,10 +200,16 @@ def _correlate_single_event(ev: dict, alarm_by_region: dict) -> dict:
             ev["match_reason"] = "Підтверджено через результат"
     elif pred_acc == "mitigated":
         ev["match_type"] = "mitigated"
-        ev["match_reason"] = "Загрозу нейтралізовано (ППО/РЕБ)"
+        if lifecycle == "active":
+            ev["match_reason"] = "Загроза активна (працює ППО/РЕБ)"
+        else:
+            ev["match_reason"] = "Загрозу нейтралізовано (ППО/РЕБ)"
     elif pred_acc == "overestimated":
         ev["match_type"] = "overestimated"
         ev["match_reason"] = "Тривога не підтверджена — AI переоцінив загрозу"
+    elif lifecycle == "active":
+        ev["match_type"] = "active"
+        ev["match_reason"] = "Загроза ще активна, очікуємо результат"
     elif best_alarm and best_delta is not None and abs(best_delta) <= 1800:
         ev["match_type"] = "cleared"
         mins = round(abs(best_delta) / 60)
@@ -269,7 +269,7 @@ async def get_admin_chronology_v2(
     match_result: str = None,
     confidence_min: int = None,
     confidence_max: int = None,
-    limit: int = 300
+    limit: int = 500
 ):
     """Хронологія з кореляцією AI-детекцій та офіційних тривог.
 
