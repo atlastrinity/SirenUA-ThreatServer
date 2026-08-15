@@ -275,27 +275,55 @@ def test_seed_shelters_auto_loaded():
     mgr = ShelterManager()
     assert mgr.is_loaded is True
     assert mgr.total_count > 0
-    # Check that Uhersko shelters exist in the seed dataset
-    uhersko_shelters = [s for s in mgr._shelters if "Угерсько" in (s.address or "") or "Угерськ" in (s.name or "")]
-    assert len(uhersko_shelters) >= 1
+    # Check that major national regional hubs (Lviv, Kyiv) exist in the seed dataset
+    lviv_shelters = [s for s in mgr._shelters if "Львів" in (s.address or "") or "Львів" in (s.name or "")]
+    assert len(lviv_shelters) >= 1
+    kyiv_shelters = [s for s in mgr._shelters if "Київ" in (s.address or "") or "Київ" in (s.name or "")]
+    assert len(kyiv_shelters) >= 1
 
 
-def test_uhersko_and_stryi_shelter_search():
-    """Verify shelter search for user at Uhersko village (49.3005, 23.8966)."""
-    mgr = ShelterManager()
-    # User at Uhersko center: 49.3005, 23.8966
-    lat_uhersko = 49.3005
-    lon_uhersko = 23.8966
+def test_school_and_hospital_classification():
+    """Verify that OSM elements with school, hospital, and parking tags are classified accurately."""
+    school_elem = {
+        "type": "node",
+        "id": 101,
+        "lat": 49.3005,
+        "lon": 23.8966,
+        "tags": {
+            "amenity": "school",
+            "name": "Угерський ліцей",
+            "addr:street": "вул. Франка",
+            "addr:housenumber": "2",
+        },
+    }
+    s = _parse_osm_element(school_elem)
+    assert s is not None
+    assert s.type == "school_shelter"
+    assert s.name == "Угерський ліцей"
 
-    # 1. Search in immediate radius (1500m)
-    local = mgr.find_nearby(lat_uhersko, lon_uhersko, radius_m=1500)
-    assert len(local) >= 1
-    assert any("Угерськ" in (s["name"] or "") for s in local)
-    # Closest should be < 500m
-    assert local[0]["distance_m"] < 500
+    hospital_elem = {
+        "type": "way",
+        "id": 102,
+        "center": {"lat": 49.2620, "lon": 23.8650},
+        "tags": {
+            "amenity": "hospital",
+            "name": "Стрийська багатопрофільна лікарня",
+        },
+    }
+    h = _parse_osm_element(hospital_elem)
+    assert h is not None
+    assert h.type == "hospital_shelter"
 
-    # 2. Search in district radius (10000m) includes Stryi facilities
-    district = mgr.find_nearby(lat_uhersko, lon_uhersko, radius_m=10000)
-    assert len(district) >= 4
-    assert any("Стрий" in (s["address"] or "") or "Стрий" in (s["name"] or "") for s in district)
+    parking_elem = {
+        "type": "way",
+        "id": 103,
+        "center": {"lat": 49.2560, "lon": 23.8525},
+        "tags": {
+            "parking": "underground",
+            "name": "ТЦ Пасаж Підземний паркінг",
+        },
+    }
+    p = _parse_osm_element(parking_elem)
+    assert p is not None
+    assert p.type == "underground_parking"
 

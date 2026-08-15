@@ -196,7 +196,13 @@ area["name:en"="Ukraine"]["type"="boundary"]->.searchArea;
   nwr["emergency"="bomb_shelter"](area.searchArea);
   nwr["civil_defense"="yes"](area.searchArea);
   nwr["civil_defense"](area.searchArea);
-  nwr["name"~"укриття|сховище|бомбосховище|ПРУ",i](area.searchArea);
+  nwr["amenity"="school"](area.searchArea);
+  nwr["amenity"="kindergarten"](area.searchArea);
+  nwr["amenity"="hospital"](area.searchArea);
+  nwr["amenity"="clinic"](area.searchArea);
+  nwr["building"="school"](area.searchArea);
+  nwr["building"="hospital"](area.searchArea);
+  nwr["name"~"укриття|сховище|бомбосховище|ПРУ|ліцей|гімназія|школа|дитсадок|лікарня|поліклініка|паркінг|старостат",i](area.searchArea);
 );
 out center;
 """
@@ -267,16 +273,22 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
         addr_parts.append(house)
     address = ", ".join(addr_parts) if addr_parts else None
 
-    # Type classification: air raid protection & underground civil defence
+    # Type classification: air raid protection, underground civil defence, schools, hospitals
     shelter_type = "bomb_shelter"
     if tags.get("station") == "subway" or tags.get("railway") in ("subway_entrance", "station") or tags.get("subway") == "yes" or (name and "метро" in name.lower()):
         shelter_type = "metro"
-    elif tags.get("parking") == "underground" or (tags.get("amenity") == "parking" and tags.get("parking") == "underground") or (name and "підземний паркінг" in name.lower()):
+    elif tags.get("parking") == "underground" or (tags.get("amenity") == "parking" and tags.get("parking") == "underground") or (name and ("підземний паркінг" in name.lower() or "паркінг" in name.lower())):
         shelter_type = "underground_parking"
     elif tags.get("military") == "bunker" or tags.get("building") == "bunker" or tags.get("bunker_type") == "bomb_shelter" or (name and "бункер" in name.lower()):
         shelter_type = "bunker"
-    elif tags.get("shelter_type") in ("anti_radiation", "radiation", "fallout") or (name and "протирадіаційн" in name.lower()):
+    elif tags.get("shelter_type") in ("anti_radiation", "radiation", "fallout") or (name and ("протирадіаційн" in name.lower() or "пру" in name.lower())):
         shelter_type = "radiation_shelter"
+    elif tags.get("amenity") in ("school", "kindergarten") or tags.get("building") == "school" or (name and any(k in name.lower() for k in ("ліцей", "школа", "гімназія", "дитсадок", "садочок", "здо"))):
+        shelter_type = "school_shelter"
+    elif tags.get("amenity") in ("hospital", "clinic") or tags.get("building") == "hospital" or (name and any(k in name.lower() for k in ("лікарня", "поліклініка", "амбулаторія", "госпіталь"))):
+        shelter_type = "hospital_shelter"
+    elif tags.get("amenity") in ("townhall", "public_building") or tags.get("building") == "public" or (name and any(k in name.lower() for k in ("старостат", "сільрада", "сільська рада", "міська рада", "будинок культури"))):
+        shelter_type = "admin_shelter"
     elif tags.get("tunnel") == "yes" or (name and "підземний перехід" in name.lower()):
         shelter_type = "underground"
     else:
@@ -292,6 +304,12 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
             name = "Бункер / Сховище"
         elif shelter_type == "radiation_shelter":
             name = "Протирадіаційне укриття"
+        elif shelter_type == "school_shelter":
+            name = "Найпростіше укриття (Школа / Ліцей)"
+        elif shelter_type == "hospital_shelter":
+            name = "Медичний заклад (ПРУ / Підвал)"
+        elif shelter_type == "admin_shelter":
+            name = "Адміністративна будівля (Старостат)"
         elif shelter_type == "underground":
             name = "Підземне укриття"
         else:
@@ -378,7 +396,15 @@ async def _fetch_targeted_osm_shelters(lat: float, lon: float, radius_m: float =
       nwr["military"="bunker"](around:{r}, {lat}, {lon});
       nwr["building"="bunker"](around:{r}, {lat}, {lon});
       nwr["parking"="underground"](around:{r}, {lat}, {lon});
-      nwr["name"~"укриття|сховище|бомбосховище|ПРУ",i](around:{r}, {lat}, {lon});
+      nwr["amenity"="parking"]["parking"="underground"](around:{r}, {lat}, {lon});
+      nwr["amenity"="school"](around:{r}, {lat}, {lon});
+      nwr["amenity"="kindergarten"](around:{r}, {lat}, {lon});
+      nwr["amenity"="hospital"](around:{r}, {lat}, {lon});
+      nwr["amenity"="clinic"](around:{r}, {lat}, {lon});
+      nwr["building"="school"](around:{r}, {lat}, {lon});
+      nwr["building"="hospital"](around:{r}, {lat}, {lon});
+      nwr["building"="public"](around:{r}, {lat}, {lon});
+      nwr["name"~"укриття|сховище|бомбосховище|ПРУ|ліцей|гімназія|школа|дитсадок|лікарня|поліклініка|паркінг|старостат",i](around:{r}, {lat}, {lon});
     );
     out center;
     """
