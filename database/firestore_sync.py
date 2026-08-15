@@ -241,8 +241,11 @@ def _restore_from_payload(encoded: str) -> bool:
             if not rows:
                 continue
                 
-            # Do not delete existing rows from historical tables during restore
-            if table_name not in ["threat_history", "paired_events", "threat_clearings", "telemetry_data"]:
+            # Absolutely NEVER delete existing rows during restore (append/replace only)
+            if table_name not in [
+                "threat_history", "paired_events", "threat_clearings", "telemetry_data",
+                "gemini_rules", "gemini_rules_audit", "palantir_reports", "analytics_reports"
+            ]:
                 cursor.execute(f"DELETE FROM {table_name}")
             
             for row in rows:

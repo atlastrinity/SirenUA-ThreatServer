@@ -154,6 +154,48 @@ def init_archive_tables(archive_conn: sqlite3.Connection):
             context TEXT
         )
     ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS gemini_rules_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            action TEXT,
+            rule_type TEXT,
+            rule_text TEXT,
+            source_region TEXT,
+            target_region TEXT,
+            threat_type TEXT,
+            reason TEXT
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analytics_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            report_date TEXT,
+            report_type TEXT,
+            summary_text TEXT,
+            trajectory_data TEXT,
+            launch_data TEXT,
+            risk_matrix TEXT,
+            generated_by TEXT
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS palantir_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            report_date TEXT,
+            threat_assessment_summary TEXT,
+            palantir_vectors_json TEXT,
+            launch_hubs_json TEXT,
+            risk_matrix_json TEXT,
+            confidence_index REAL,
+            generated_by TEXT
+        )
+    ''')
     archive_conn.commit()
 
 
@@ -185,6 +227,10 @@ def smart_local_incremental_backup() -> dict:
             ("threat_clearings", "INSERT OR IGNORE INTO archive_db.threat_clearings (timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test) SELECT timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test FROM main.threat_clearings"),
             ("telemetry_data", "INSERT OR IGNORE INTO archive_db.telemetry_data (threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords) SELECT threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords FROM main.telemetry_data"),
             ("gemini_rules", "INSERT OR REPLACE INTO archive_db.gemini_rules (id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated) SELECT id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated FROM main.gemini_rules"),
+            ("gemini_rules_audit", "INSERT OR IGNORE INTO archive_db.gemini_rules_audit (id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason) SELECT id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason FROM main.gemini_rules_audit"),
+            ("palantir_reports", "INSERT OR REPLACE INTO archive_db.palantir_reports (id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by) SELECT id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by FROM main.palantir_reports"),
+            ("analytics_reports", "INSERT OR REPLACE INTO archive_db.analytics_reports (id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by) SELECT id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by FROM main.analytics_reports"),
+            ("error_log", "INSERT OR IGNORE INTO archive_db.error_log (id, timestamp, source, error_type, message, endpoint, context) SELECT id, timestamp, source, error_type, message, endpoint, context FROM main.error_log"),
         ]
 
         total_appended = 0
