@@ -1,16 +1,50 @@
+# Python bytecode & cache
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Environments & Configs
 .env
+.env.*
+!.env.example
+venv/
+.venv/
+env/
+firebase-credentials.json
+
+# Telegram session files
 *.session
 *.session-journal
+*.session.json
+
+# Logs & runtime outputs
 *.log
-firebase-credentials.json
+logs/
+server.log
+
+# Databases & Backups
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 *.bak
+*.json.bak
 backups/
-threats_state.json
-real_threats_state.json
+
+# Threat State Runtime Files
+threats_state.json*
+real_threats_state.json*
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
+.agents/
+.claw/
+
