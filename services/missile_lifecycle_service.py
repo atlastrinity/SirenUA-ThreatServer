@@ -107,14 +107,29 @@ def should_expire_missile_threat(
 
     # ПРАВИЛО 2: Минув максимальний час польоту за кінематикою / ETA
     eta_sec = getattr(threat_item, "eta_seconds", None)
-    if is_predictive and eta_sec and eta_sec > 0:
-        max_seconds = eta_sec + 300  # ETA + 5 хвилин буфер
+    if is_predictive:
+        if eta_sec and eta_sec > 0:
+            if is_fast_threat:
+                buffer_sec = 30  # Швидкісні ракети/балістика/КАБ: 30 секунд буфера
+            elif THREAT_SHAHED in t_type:
+                buffer_sec = 90  # Шахеди/БпЛА: 90 секунд (1.5 хв) буфера
+            else:
+                buffer_sec = 45
+            max_seconds = eta_sec + buffer_sec
+        else:
+            if is_fast_threat:
+                max_seconds = 300  # 5 хвилин максимум для швидкісних без ETA
+            elif THREAT_SHAHED in t_type:
+                max_seconds = 1200 # 20 хвилин для Шахедів без ETA
+            else:
+                max_seconds = get_missile_max_flight_seconds(t_type)
     else:
         max_seconds = get_missile_max_flight_seconds(t_type)
 
     if elapsed_seconds >= max_seconds:
-        res = "intercepted" if (is_fast_threat and not is_predictive) else "expired"
-        return True, res, f"Перевищено максимальний час польоту {int(max_seconds/60)} хв ({int(elapsed_seconds)} сек). Траєкторію вилучено."
+        res = "intercepted" if (is_fast_threat and not is_official_alarm_active and not is_predictive) else "expired"
+        reason_label = "Прогноз не реалізувався (ціль змінила курс або ліквідована)" if is_predictive else ("Збито ППО або відбій небезпеки" if is_fast_threat else "Час польоту вичерпано")
+        return True, res, f"{reason_label}. Перевищено час польоту ({int(elapsed_seconds)} сек). Траєкторію вилучено."
 
     return False, "", ""
 

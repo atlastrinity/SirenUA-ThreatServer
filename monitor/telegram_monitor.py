@@ -610,7 +610,15 @@ class TelegramThreatMonitor:
                 
                 if is_pred:
                     # Determine reevaluation delay (ETA in seconds + grace period)
-                    grace_period = 300  # 5 minutes
+                    t_type_lower = (threat_type or "").lower()
+                    is_fast = any(k in t_type_lower for k in ["cruise_missile", "ballistic", "mig31k", "kab", "tu95", "iskander"])
+                    if is_fast:
+                        grace_period = 30   # 30 seconds buffer for fast missiles/KABs
+                    elif "shahed" in t_type_lower:
+                        grace_period = 90   # 90 seconds (1.5 min) buffer for Shaheds
+                    else:
+                        grace_period = 45
+                        
                     eta_sec = eta_seconds
                     if eta_sec is None:
                         eta_sec = THREAT_ETA_DEFAULTS_SECONDS.get(threat_type, 1800)
