@@ -35,7 +35,8 @@ async def get_admin_chronology(
     days: int = 7,
     threat_type: str = None,
     was_predictive: int = None,
-    prediction_accuracy: str = None
+    prediction_accuracy: str = None,
+    limit: int = 1000
 ):
     """Хронологія загроз: встановлення → зняття, з match_type."""
     tz_modifier = f"'{get_kyiv_tz_modifier()}'"
@@ -76,7 +77,7 @@ async def get_admin_chronology(
         if prediction_accuracy:
             query = _apply_prediction_accuracy_filter(query, prediction_accuracy)
 
-        query += " ORDER BY pe.created_at DESC LIMIT 500"
+        query += f" ORDER BY pe.created_at DESC LIMIT {max(1, min(limit, 5000))}"
         rows = execute_query_as_dicts(query, params)
 
         # Daily aggregation
