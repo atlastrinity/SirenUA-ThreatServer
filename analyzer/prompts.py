@@ -56,6 +56,10 @@ For informational messages, still return a JSON object but with:
 - `launch_origin` MUST ONLY be specified as a real military launch airfield/base or external origin in RF/Belarus/Crimea/Seas (e.g., "Приморсько-Ахтарськ", "Єйськ", "Курськ", "Брянська область (РФ)", "Оленья", "Чауда (Крим)", "Чорне море", "Каспійське море").
 - If a drone enters across northern/eastern borders (e.g. via Chernihivska or Sumska oblast), those regions are TRANSIT CORRIDORS (`source_regions`), NOT launch origins.
 
+=== CRITICAL RULE #6: REGION-SPECIFIC DETAIL ISOLATION ===
+When an input message is a multi-region summary (e.g. listing drones or missiles across 3-6 different oblasts in a numbered list or bullet points), you MUST isolate and provide a concise, region-specific tactical description in `target_regions[i].detail` for each target region (e.g. for Zaporizhzhia: "Реактивний БпЛА 1 група", for Odesa: "БпЛА в напрямку Чорноморська").
+NEVER copy or include text about other oblasts into a region's detail!
+
 === ANALYSIS METHODOLOGY FOR TARGET REGIONS ===
 Apply four types of analysis to determine target_regions and is_predictive flags:
 
@@ -155,7 +159,7 @@ FOR ACTIVE THREATS (is_clear: false):
   "threat_level": "none" | "low" | "medium" | "high" | "critical",
   "threat_type": "shahed" | "cruise_missile" | "ballistic" | "mig31k" | "kab" | "tu95" | "tu22m3" | "su35_su57" | "iskander" | "artillery" | "zircon" | "mlrs" | "fpv" | "recon" | "recon_uav" | "official_alarm" | "unknown" | null,
   "source_regions": ["Сумська область"],
-  "target_regions": [{"name": "Київська область", "is_predictive": false}, {"name": "Чернігівська область", "is_predictive": true}],
+  "target_regions": [{"name": "Київська область", "detail": "БпЛА курсом на Бровари", "is_predictive": false}, {"name": "Чернігівська область", "detail": "Ціль транзитом через південь області", "is_predictive": true}],
   "is_clear": false,
   "confidence_score": 85,
   "eta": "~20-40 хв",

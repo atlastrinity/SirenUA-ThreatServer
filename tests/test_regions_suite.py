@@ -64,8 +64,50 @@ def test_macro_regions():
     assert "Львівська область" in MACRO_REGIONS["west"]
 
 def test_extract_region_specific_text():
-    text = "🛵Харківщина: Шахеди в напрямку Чугуєва.\n🛵Сумщина: БпЛА з півночі."
-    kharkiv_text = extract_region_specific_text(text, "Харківська область")
+    # 1. Emoji bullet lines
+    text1 = "🛵Харківщина: Шахеди в напрямку Чугуєва.\n🛵Сумщина: БпЛА з півночі."
+    kharkiv_text = extract_region_specific_text(text1, "Харківська область")
     assert "Чугуєва" in kharkiv_text
     assert "Сумщина" not in kharkiv_text
+
+    # 2. Section Header format with sub-bullets (Exact user real-world case)
+    text2 = """Дніпропетровська область
+ ◦ Ударний Бп 1 грп.
+ ◦ Реактивний 1 грп.
+Запорізька область
+ ◦ Реактивний 1 грп.
+Кіровоградська область
+ ◦ Реактивний 2 грп.
+Миколаївська область
+ ◦ Реактивний 1 грп."""
+    
+    zaporizhia_text = extract_region_specific_text(text2, "Запорізька область")
+    assert "Запорізька область" in zaporizhia_text
+    assert "Реактивний 1 грп." in zaporizhia_text
+    assert "Дніпропетровська" not in zaporizhia_text
+    assert "Кіровоградська" not in zaporizhia_text
+    assert "Миколаївська" not in zaporizhia_text
+
+    dnipro_text = extract_region_specific_text(text2, "Дніпропетровська область")
+    assert "Дніпропетровська область" in dnipro_text
+    assert "Ударний Бп 1 грп." in dnipro_text
+    assert "Запорізька" not in dnipro_text
+
+    # 3. Numbered list format
+    text3 = """Рух ударних БпЛА:
+1. БпЛА на півдні Харківщини, курс західний.
+2. БпЛА на півночі Дніпропетровщини, курс на Полтавщину.
+3. БпЛА на Запоріжжі в напрямку Дніпра.
+4. БпЛА на півдні Одещини курсом на Татарбунари."""
+
+    zapo_list = extract_region_specific_text(text3, "Запорізька область")
+    assert "БпЛА на Запоріжжі в напрямку Дніпра" in zapo_list
+    assert "Харківщини" not in zapo_list
+    assert "Татарбунари" not in zapo_list
+
+    # 4. Single-region text preservation
+    text4 = "Запоріжжя - загроза застосування балістичного озброєння з півдня!"
+    single_res = extract_region_specific_text(text4, "Запорізька область")
+    assert single_res == text4
+
     print("✅ All core/regions.py unit tests passed cleanly!")

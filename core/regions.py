@@ -374,33 +374,115 @@ def normalize_region_name(raw_name: str) -> str:
 
 def extract_region_specific_text(text: str, target_region: str) -> str:
     """
-    Якщо допис у Telegram містить зведення по кількох областях (наприклад: 🛵Харківщина... 🛵Сумщина... 🛵Одещина...),
-    виділяє тільки блок тексту, що стосується конкретно target_region.
+    Якщо допис у Telegram містить зведення по кількох областях
+    (наприклад:
+      - Обласні блоки: "Дніпропетровська область\\n ◦ Ударний Бп...\\nЗапорізька область\\n ◦ Реактивний..."
+      - Нумеровані пункти: "1. БпЛА на Харківщині...\\n2. БпЛА на Запоріжжі..."
+      - Емодзі/маркери: "🛵Харківщина: ...\\n🛵Сумщина: ..."
+    ),
+    виділяє тільки фрагмент тексту, що стосується конкретно target_region.
     """
     if not text or not target_region:
-        return text
-
-    import re
-    blocks = re.split(r'\n(?=[🛵📍▪️•▶️🔻●]|\b[А-ЯІЇЄ][а-яіїє]+щ?ина:)', text.strip())
-    if len(blocks) <= 1:
-        blocks = text.strip().split("\n\n")
-
-    if len(blocks) <= 1:
         return text
 
     target_data = ALL_REGIONS.get(target_region)
     if not target_data:
         return text
 
+    import re
     keywords = target_data.get("keywords", [])
-    matching_blocks = []
+    lines = text.split("\n")
 
-    for block in blocks:
-        block_lower = block.lower()
-        if any(kw in block_lower for kw in keywords):
-            matching_blocks.append(block.strip())
+    def _detect_region_in_header(line_str: str) -> str | None:
+        line_clean = line_str.strip().lower()
+        # Strip bullets/emojis/punctuation
+        line_clean = re.sub(r'^[🛵📍▪️▫️•◦●▶️🔻🔴⚠️🛸🚀💥🔹🔸➡️—–-]+\s*', '', line_clean)
+        line_clean = re.sub(r'[:—–-]\s*$', '', line_clean).strip()
 
-    if matching_blocks:
-        return "\n\n".join(matching_blocks)
-    
+        # Check in REGION_ALIASES
+        for alias, canon in REGION_ALIASES.items():
+            if line_clean == alias.lower() or line_clean.startswith(alias.lower()):
+                return canon
+
+        for canon, data in ALL_REGIONS.items():
+            for kw in data.get("keywords", []):
+                if re.search(r'\b' + re.escape(kw) + r'(?:щина|щині|щини|щиною|ська|ській|ської|ську|ське)?\b', line_clean):
+                    return canon
+        return None
+
+    # 1. Check Section-Header format (e.g. Oblast Header followed by bulleted items)
+    section_map = []  # list of (header_region, [content_lines])
+    current_region = None
+    current_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        detected = _detect_region_in_header(stripped)
+        is_header = False
+        if detected:
+            clean_hdr = re.sub(r'^[🛵📍▪️▫️•◦●▶️🔻🔴⚠️🛸🚀💥🔹🔸➡️—–-]+\s*', '', stripped)
+            if len(clean_hdr) < 40 or ':' in stripped or '—' in stripped or '-' in stripped or 'область' in stripped.lower() or 'щина' in stripped.lower():
+                is_header = True
+
+        if is_header:
+            if current_region or current_lines:
+                section_map.append((current_region, current_lines))
+            current_region = detected
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    if current_region or current_lines:
+        section_map.append((current_region, current_lines))
+
+    valid_sections = [s for s in section_map if s[0] is not None]
+    if len(valid_sections) >= 2:
+        matching_sections = [s for s in section_map if s[0] == target_region]
+        if matching_sections:
+            res_lines = []
+            for _, slines in matching_sections:
+                res_lines.extend(slines)
+            return "\n".join(res_lines).strip()
+
+    # 2. Numbered or bulleted list item splitting
+    items = re.split(r'\n(?=(?:\d+[\.\)\-]|[-—–•*◦▪️▫️▶️🔻●🛵📍🔴⚠️🛸🚀💥🔹🔸])\s*)', text.strip())
+    if len(items) > 1:
+        matching_items = []
+        for item in items:
+            item_lower = item.lower()
+            if any(kw in item_lower for kw in keywords):
+                matching_items.append(item.strip())
+        if matching_items and len(matching_items) < len(items):
+            return "\n".join(matching_items)
+
+    # 3. Sentence-level isolation if text contains multiple oblasts
+    sentences = re.split(r'(?<=[.!?])\s+|\n+', text.strip())
+    if len(sentences) > 1:
+        matching_sentences = []
+        other_regions_found = False
+
+        all_other_keywords = []
+        for rname, rdata in ALL_REGIONS.items():
+            if rname != target_region:
+                all_other_keywords.extend(rdata.get("keywords", []))
+
+        for s in sentences:
+            s_clean = s.strip()
+            if not s_clean:
+                continue
+            s_lower = s_clean.lower()
+            matches_target = any(kw in s_lower for kw in keywords)
+            matches_other = any(kw in s_lower for kw in all_other_keywords)
+
+            if matches_target:
+                matching_sentences.append(s_clean)
+            elif matches_other:
+                other_regions_found = True
+
+        if matching_sentences and other_regions_found:
+            return "\n".join(matching_sentences)
+
     return text

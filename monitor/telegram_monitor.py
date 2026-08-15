@@ -548,8 +548,12 @@ class TelegramThreatMonitor:
                     if not eta_str:
                         eta_str = fallback_eta
                     
-                from core.regions import extract_region_specific_text
-                region_detail_text = extract_region_specific_text(clean_user_facing_threat_detail(text), region)
+                region_detail_from_ai = tgt.get("detail") if isinstance(tgt, dict) else None
+                if region_detail_from_ai and len(region_detail_from_ai.strip()) > 3:
+                    region_detail_text = clean_user_facing_threat_detail(region_detail_from_ai.strip())
+                else:
+                    from core.regions import extract_region_specific_text
+                    region_detail_text = extract_region_specific_text(clean_user_facing_threat_detail(text), region)
                 
                 detail = region_detail_text
                 
