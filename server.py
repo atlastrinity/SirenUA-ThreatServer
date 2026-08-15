@@ -45,71 +45,155 @@ from core.firebase_init import init_firebase
 aerial_alerts_task = None
 
 async def poll_aerial_alerts():
-    """Фонова задача для опитування офіційного API тривог (alerts.in.ua або ubilling)."""
-    token = os.environ.get("ALERTS_TOKEN")
-    
-    if token:
-        logger.info("Запуск фонового опитування офіційних тривог з alerts.in.ua...")
-        url = "https://api.alerts.in.ua/v1/alerts/active.json"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "SirenUA-ThreatServer/1.0"
-        }
-    else:
-        logger.info("Запуск фонового опитування офіційних тривог з ubilling (резервний режим, ALERTS_TOKEN не знайдено)...")
-        url = "https://ubilling.net.ua/aerialalerts/"
-        headers = {"User-Agent": "SirenUA-ThreatServer/1.0"}
+    """
+    Фонова задача для опитування офіційного API тривог із 3-рівневим каскадом (Fallback):
+    - Tier 1 (Основне першоджерело): api.ukrainealarm.com (підтримка AIR, ARTILLERY, URBAN_FIGHTS, CHEMICAL, NUCLEAR)
+    - Tier 2 (Резерв 1): ubilling.net.ua/aerialalerts/ (публічне швидке дзеркало)
+    - Tier 3 (Резерв 2): api.alerts.in.ua (якщо налаштовано ALERTS_TOKEN)
+    """
+    ukraine_alarm_token = os.environ.get("UKRAINE_ALARM_API_KEY") or os.environ.get("UKRAINE_ALARM_TOKEN")
+    alerts_in_ua_token = os.environ.get("ALERTS_TOKEN")
+
+    logger.info(f"Запуск фонового каскадного опитування офіційних тривог. "
+                f"UkraineAlarm: {'налаштовано' if ukraine_alarm_token else 'очікує ключ'}, "
+                f"Alerts.in.ua: {'налаштовано' if alerts_in_ua_token else 'без токена'}.")
 
     while True:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=8.0) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        if isinstance(data, dict):
-                            if token:
+        from core.regions import ALL_REGIONS, normalize_region_name
+        success = False
+        official_dict = {}
+        alert_types_dict = {}
+        active_source = "none"
+
+        async with aiohttp.ClientSession() as session:
+            # -------------------------------------------------------------
+            # Tier 1: UkraineAlarm API (api.ukrainealarm.com)
+            # -------------------------------------------------------------
+            if ukraine_alarm_token and not success:
+                try:
+                    url = "https://api.ukrainealarm.com/api/v3/alerts"
+                    headers = {
+                        "Authorization": ukraine_alarm_token,
+                        "Accept": "application/json",
+                        "User-Agent": "SirenUA-ThreatServer/1.0"
+                    }
+                    async with session.get(url, headers=headers, timeout=6.0) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if isinstance(data, list):
+                                active_regions_map = {}
+                                for item in data:
+                                    if isinstance(item, dict):
+                                        raw_name = item.get("regionName") or item.get("location_title")
+                                        if raw_name:
+                                            canon_name = normalize_region_name(raw_name)
+                                            active_alerts = item.get("activeAlerts", [])
+                                            # Find primary alert type
+                                            alert_type = "air"
+                                            if active_alerts and isinstance(active_alerts, list):
+                                                for a in active_alerts:
+                                                    if isinstance(a, dict):
+                                                        raw_t = (a.get("type") or "AIR").upper()
+                                                        if raw_t in ("ARTILLERY", "URBAN_FIGHTS", "CHEMICAL", "NUCLEAR"):
+                                                            alert_type = raw_t.lower()
+                                                            break
+                                            active_regions_map[canon_name] = alert_type
+
+                                for region_name in ALL_REGIONS.keys():
+                                    is_active = region_name in active_regions_map
+                                    a_type = active_regions_map.get(region_name)
+                                    official_dict[region_name] = is_active
+                                    alert_types_dict[region_name] = a_type
+                                success = True
+                                active_source = "ukrainealarm.com"
+                        else:
+                            logger.warning(f"Tier 1 (UkraineAlarm) HTTP статус {resp.status}, перемикання на резерв...")
+                except Exception as e:
+                    logger.warning(f"Tier 1 (UkraineAlarm) недоступний: {e}, перемикання на резерв...")
+
+            # -------------------------------------------------------------
+            # Tier 2: UBilling Дзеркало (ubilling.net.ua)
+            # -------------------------------------------------------------
+            if not success:
+                try:
+                    url = "https://ubilling.net.ua/aerialalerts/"
+                    headers = {"User-Agent": "SirenUA-ThreatServer/1.0"}
+                    async with session.get(url, headers=headers, timeout=6.0) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if isinstance(data, dict):
+                                states = data.get("states", {})
+                                if isinstance(states, dict):
+                                    for r_raw, state_data in states.items():
+                                        canon_r = normalize_region_name(r_raw)
+                                        if isinstance(state_data, dict):
+                                            is_act = state_data.get("alertnow", False)
+                                            official_dict[canon_r] = is_act
+                                            alert_types_dict[canon_r] = "air" if is_act else None
+                                    for region_name in ALL_REGIONS.keys():
+                                        if region_name not in official_dict:
+                                            official_dict[region_name] = False
+                                            alert_types_dict[region_name] = None
+                                    success = True
+                                    active_source = "ubilling.net.ua"
+                        else:
+                            logger.warning(f"Tier 2 (UBilling) HTTP статус {resp.status}, перемикання на резерв...")
+                except Exception as e:
+                    logger.warning(f"Tier 2 (UBilling) недоступний: {e}")
+
+            # -------------------------------------------------------------
+            # Tier 3: Alerts.in.ua (api.alerts.in.ua)
+            # -------------------------------------------------------------
+            if not success and alerts_in_ua_token:
+                try:
+                    url = "https://api.alerts.in.ua/v1/alerts/active.json"
+                    headers = {
+                        "Authorization": f"Bearer {alerts_in_ua_token}",
+                        "User-Agent": "SirenUA-ThreatServer/1.0"
+                    }
+                    async with session.get(url, headers=headers, timeout=6.0) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if isinstance(data, dict):
                                 active_alerts = data.get("alerts", [])
-                                active_regions = set()
-                                
+                                active_set = set()
                                 for alert in active_alerts:
                                     if isinstance(alert, dict):
                                         loc_type = alert.get("location_type")
                                         loc_title = alert.get("location_title")
-                                        if loc_title:
-                                            if loc_type == "oblast" or loc_title == "м. Київ":
-                                                active_regions.add(loc_title)
-                                
-                                from core.regions import ALL_REGIONS
-                                official_dict = {}
-                                for region_name in ALL_REGIONS.keys():
-                                    is_active = region_name in active_regions
-                                    threat_manager.set_alarm_active(region_name, is_active)
-                                    official_dict[region_name] = is_active
-                            else:
-                                states = data.get("states", {})
-                                official_dict = {}
-                                if isinstance(states, dict):
-                                    for region_name, state_data in states.items():
-                                        if isinstance(state_data, dict):
-                                            is_active = state_data.get("alertnow", False)
-                                            threat_manager.set_alarm_active(region_name, is_active)
-                                            official_dict[region_name] = is_active
+                                        if loc_title and (loc_type == "oblast" or loc_title == "м. Київ"):
+                                            active_set.add(normalize_region_name(loc_title))
 
-                        # Автоматично знімаємо протерміновані загрози та загрози у знятих тривогах
-                        try:
-                            from services.missile_lifecycle_service import prune_expired_missile_threats
-                            prune_expired_missile_threats(threat_manager, official_dict)
-                        except Exception as prune_err:
-                            logger.error(f"Помилка під час prune_expired_missile_threats: {prune_err}")
-                    else:
-                        logger.warning(f"Помилка опитування тривог (URL: {url}): HTTP статус {response.status}")
-        except Exception as e:
-            logger.error(f"Помилка під час опитування тривог (URL: {url}): {e}")
-            if str(e).strip():
-                log_error_to_db("server", str(e), endpoint="poll_aerial_alerts", context=f"url={url}")
-        
-        sleep_interval = 15.0 if token else 30.0
+                                for region_name in ALL_REGIONS.keys():
+                                    is_act = region_name in active_set
+                                    official_dict[region_name] = is_act
+                                    alert_types_dict[region_name] = "air" if is_act else None
+                                success = True
+                                active_source = "alerts.in.ua"
+                        else:
+                            logger.warning(f"Tier 3 (Alerts.in.ua) HTTP статус {resp.status}")
+                except Exception as e:
+                    logger.warning(f"Tier 3 (Alerts.in.ua) помилка: {e}")
+
+        # -----------------------------------------------------------------
+        # Оновлення ThreatManager та життєвого циклу загроз
+        # -----------------------------------------------------------------
+        if success:
+            for region_name, is_act in official_dict.items():
+                a_type = alert_types_dict.get(region_name)
+                threat_manager.set_alarm_active(region_name, is_act, alert_type=a_type)
+
+            # Автоматично знімаємо протерміновані загрози та загрози у знятих тривогах
+            try:
+                from services.missile_lifecycle_service import prune_expired_missile_threats
+                prune_expired_missile_threats(threat_manager, official_dict)
+            except Exception as prune_err:
+                logger.error(f"Помилка під час prune_expired_missile_threats: {prune_err}")
+        else:
+            logger.error("⚠️ Всі 3 джерела офіційних тривог недоступні (UkraineAlarm -> UBilling -> Alerts.in.ua)!")
+            log_error_to_db("server", "Всі джерела офіційних тривог недоступні", endpoint="poll_aerial_alerts")
+
+        sleep_interval = 15.0 if (ukraine_alarm_token or alerts_in_ua_token) else 20.0
         await asyncio.sleep(sleep_interval)
 
 async def periodic_sqlite_backup():

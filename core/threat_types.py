@@ -16,8 +16,12 @@ THREAT_KAB = "kab"
 THREAT_TU95 = "tu95"
 THREAT_TU22M3 = "tu22m3"
 THREAT_SU35 = "su35_su57"
+THREAT_SU35_ALT = "su35"
 THREAT_ISKANDER = "iskander"
 THREAT_ARTILLERY = "artillery"
+THREAT_URBAN_FIGHTS = "urban_fights"
+THREAT_CHEMICAL = "chemical"
+THREAT_NUCLEAR = "nuclear"
 THREAT_ZIRCON = "zircon"
 THREAT_MLRS = "mlrs"
 THREAT_FPV = "fpv"
@@ -37,6 +41,9 @@ ALL_THREAT_TYPES: List[str] = [
     THREAT_SU35,
     THREAT_ISKANDER,
     THREAT_ARTILLERY,
+    THREAT_URBAN_FIGHTS,
+    THREAT_CHEMICAL,
+    THREAT_NUCLEAR,
     THREAT_ZIRCON,
     THREAT_MLRS,
     THREAT_FPV,
@@ -60,6 +67,9 @@ THREAT_TITLES: Dict[str, str] = {
     THREAT_SU35: "Су-35/Су-57 (тактична авіація)",
     THREAT_ISKANDER: "Іскандер-М",
     THREAT_ARTILLERY: "Артилерія",
+    THREAT_URBAN_FIGHTS: "Вуличні бої",
+    THREAT_CHEMICAL: "Хімічна загроза",
+    THREAT_NUCLEAR: "Радіаційна небезпека",
     THREAT_ZIRCON: "Гіперзвукова ракета 3M22 Циркон",
     THREAT_MLRS: "РСЗВ (Торнадо-С / Град / Ураган)",
     THREAT_FPV: "FPV дрон / Ланцет",
@@ -83,6 +93,9 @@ THREAT_SHORT_NAMES: Dict[str, str] = {
     THREAT_SU35: "Су-35",
     THREAT_ISKANDER: "Іскандер-М",
     THREAT_ARTILLERY: "обстріл",
+    THREAT_URBAN_FIGHTS: "вуличні бої",
+    THREAT_CHEMICAL: "хімнебезпека",
+    THREAT_NUCLEAR: "радіація",
     THREAT_ZIRCON: "Циркон",
     THREAT_MLRS: "РСЗВ",
     THREAT_FPV: "FPV-дрон",
@@ -106,6 +119,9 @@ DEFAULT_SPEEDS_KMH: Dict[str, float] = {
     THREAT_SU35: 950.0,            # ~900-1000 km/h (Kh-59/69 tactical)
     THREAT_ISKANDER: 5500.0,       # ~4500-7000 km/h
     THREAT_ARTILLERY: 1200.0,      # ~1000-2500 km/h
+    THREAT_URBAN_FIGHTS: 0.0,
+    THREAT_CHEMICAL: 50.0,
+    THREAT_NUCLEAR: 0.0,
     THREAT_ZIRCON: 11000.0,        # ~Mach 9 hypersonic (3M22 Zircon)
     THREAT_MLRS: 2200.0,           # ~2000-2500 km/h MLRS rockets
     THREAT_FPV: 140.0,             # ~120-150 km/h kamikaze drones
@@ -133,6 +149,9 @@ THREAT_AUTO_CLEAR_DELAYS: Dict[str, Tuple[int, int]] = {
     THREAT_SU35: (2700, 3600),             # 45 mins
     THREAT_ISKANDER: (1200, 1800),         # 20-30 mins
     THREAT_ARTILLERY: (1800, 1800),        # 30 mins
+    THREAT_URBAN_FIGHTS: (3600, 3600),     # 60 mins
+    THREAT_CHEMICAL: (3600, 3600),         # 60 mins
+    THREAT_NUCLEAR: (7200, 7200),          # 120 mins
     THREAT_ZIRCON: (600, 1200),            # 10-20 mins
     THREAT_MLRS: (1200, 1800),             # 20-30 mins
     THREAT_FPV: (1800, 1800),              # 30 mins
@@ -153,6 +172,9 @@ THREAT_DEFAULT_ETAS: Dict[str, Tuple[str, str]] = {
     THREAT_SU35: ("до 20 хв", "до 15 хв"),
     THREAT_ISKANDER: ("до 25 хв", "до 5 хв"),
     THREAT_ARTILLERY: ("до 10 хв", "до 5 хв"),
+    THREAT_URBAN_FIGHTS: ("в зоні", "в зоні"),
+    THREAT_CHEMICAL: ("до 30 хв", "до 15 хв"),
+    THREAT_NUCLEAR: ("в зоні", "в зоні"),
     THREAT_ZIRCON: ("до 5 хв", "до 3 хв"),
     THREAT_MLRS: ("до 10 хв", "до 5 хв"),
     THREAT_FPV: ("до 20 хв", "до 15 хв"),
@@ -173,6 +195,9 @@ THREAT_PREDICTIVE_WEIGHTS: Dict[str, float] = {
     THREAT_SU35: 0.04,
     THREAT_ISKANDER: 0.0,
     THREAT_ARTILLERY: 0.01,
+    THREAT_URBAN_FIGHTS: 0.0,
+    THREAT_CHEMICAL: 0.0,
+    THREAT_NUCLEAR: 0.0,
     THREAT_ZIRCON: 0.0,
     THREAT_MLRS: 0.01,
     THREAT_FPV: 0.02,
@@ -193,6 +218,9 @@ THREAT_ETA_DEFAULTS_SECONDS: Dict[str, int] = {
     THREAT_SU35: 900,
     THREAT_ISKANDER: 180,
     THREAT_ARTILLERY: 120,
+    THREAT_URBAN_FIGHTS: 0,
+    THREAT_CHEMICAL: 900,
+    THREAT_NUCLEAR: 0,
     THREAT_ZIRCON: 120,
     THREAT_MLRS: 180,
     THREAT_FPV: 900,
@@ -216,6 +244,9 @@ THREAT_ICONS: Dict[str, str] = {
     THREAT_SU35: "airplane.departure",
     THREAT_ISKANDER: "flame.fill",
     THREAT_ARTILLERY: "burst.fill",
+    THREAT_URBAN_FIGHTS: "shield.slash.fill",
+    THREAT_CHEMICAL: "smoke.fill",
+    THREAT_NUCLEAR: "atom",
     THREAT_ZIRCON: "bolt.horizontal.fill",
     THREAT_MLRS: "sparkles",
     THREAT_FPV: "viewfinder",
@@ -688,6 +719,9 @@ NOTIFICATION_THREAT_NAMES: Dict[str, str] = {
     "su35": "Активність Су-34/35 (КАБ/ракети)",
     THREAT_ISKANDER: "Загроза Іскандер-М",
     THREAT_ARTILLERY: "Загроза артобстрілу",
+    THREAT_URBAN_FIGHTS: "Загроза вуличних боїв",
+    THREAT_CHEMICAL: "Хімічна небезпека",
+    THREAT_NUCLEAR: "Радіаційна небезпека",
     THREAT_ZIRCON: "Загроза ракети Циркон",
     THREAT_MLRS: "Загроза обстрілу РСЗВ",
     THREAT_FPV: "Загроза FPV-дронів",

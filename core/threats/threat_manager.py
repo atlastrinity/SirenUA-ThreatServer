@@ -497,13 +497,17 @@ class MockThreatManager:
             for region, state in self.threats.items()
         }
 
-    def set_alarm_active(self, region: str, is_active: bool) -> bool:
+    def set_alarm_active(self, region: str, is_active: bool, alert_type: Optional[str] = None) -> bool:
         from core.regions import PERMANENTLY_OCCUPIED_REGIONS
         if region not in self.threats or region in PERMANENTLY_OCCUPIED_REGIONS:
             return False
         
         if region in self.real_threats_backup:
             self.real_threats_backup[region]["is_active"] = is_active
+            if alert_type:
+                self.real_threats_backup[region]["official_alert_type"] = alert_type
+            elif not is_active:
+                self.real_threats_backup[region]["official_alert_type"] = None
         else:
             self.real_threats_backup[region] = {
                 "level": "none",
@@ -514,20 +518,42 @@ class MockThreatManager:
                 "eta": None,
                 "is_predictive": False,
                 "is_active": is_active,
+                "official_alert_type": alert_type if is_active else None,
                 "is_test": False
             }
 
         if not self.threats[region].is_test:
             current_official = getattr(self.threats[region], "_is_official_active", False)
-            has_changed = (current_official != is_active)
+            current_alert_type = getattr(self.threats[region], "official_alert_type", None)
+            has_changed = (current_official != is_active) or (is_active and alert_type and current_alert_type != alert_type)
             self.threats[region].is_active = is_active
+            self.threats[region].official_alert_type = alert_type if is_active else None
+            
             if has_changed:
                 level_str = "high" if is_active else "none"
-                detail_str = "Повітряна тривога" if is_active else "Відбій повітряної тривоги"
+                
+                # Determine detailed notification and threat type based on official alert type
+                threat_type_code = "official_alarm"
+                alert_type_lower = (alert_type or "").lower()
+                if alert_type_lower in ("artillery", "art"):
+                    threat_type_code = "artillery"
+                    detail_str = "Загроза артилерійського обстрілу" if is_active else "Відбій загрози артобстрілу"
+                elif alert_type_lower in ("urban_fights", "urban"):
+                    threat_type_code = "urban_fights"
+                    detail_str = "Вуличні бої" if is_active else "Відбій загрози вуличних боїв"
+                elif alert_type_lower in ("chemical", "chem"):
+                    threat_type_code = "chemical"
+                    detail_str = "Хімічна небезпека" if is_active else "Відбій хімічної небезпеки"
+                elif alert_type_lower in ("nuclear", "nuc"):
+                    threat_type_code = "nuclear"
+                    detail_str = "Радіаційна небезпека" if is_active else "Відбій радіаційної небезпеки"
+                else:
+                    detail_str = "Повітряна тривога" if is_active else "Відбій повітряної тривоги"
+
                 send_fcm_notification(
                     region=region,
                     level=level_str,
-                    threat_type="official_alarm",
+                    threat_type=threat_type_code,
                     detail=detail_str,
                     is_official_alarm=is_active,
                     is_test=False
@@ -540,6 +566,10 @@ class MockThreatManager:
         else:
             if region in self.real_threats_backup:
                 self.real_threats_backup[region]["is_active"] = is_active
+                if alert_type:
+                    self.real_threats_backup[region]["official_alert_type"] = alert_type
+                elif not is_active:
+                    self.real_threats_backup[region]["official_alert_type"] = None
                 self.save_real_threats_to_db()
             return True
         return False

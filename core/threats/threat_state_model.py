@@ -86,6 +86,7 @@ class ThreatState:
         self.region_name = region_name
         self.active_threats: list[SingleThreat] = []
         self._is_official_active: bool = (region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь"])
+        self.official_alert_type: Optional[str] = None
         self.is_test: bool = False
 
     @property
@@ -158,6 +159,7 @@ class ThreatState:
     def clear(self):
         self.active_threats.clear()
         self._is_official_active = False
+        self.official_alert_type = None
         self.is_test = False
 
     def clear_by_group_id(self, group_id: str) -> Optional[SingleThreat]:
@@ -187,12 +189,14 @@ class ThreatState:
             "eta": primary.eta if primary else None,
             "is_predictive": self.is_predictive,
             "is_active": self.is_active,
+            "official_alert_type": self.official_alert_type if self.is_active else None,
             "is_test": self.is_test,
             "active_threats": [t.to_dict() for t in self.active_threats],
         }
 
     def load_from_dict(self, data: dict):
         self._is_official_active = data.get("is_official_alarm", data.get("is_active", False))
+        self.official_alert_type = data.get("official_alert_type")
         self.is_test = data.get("is_test", False)
         from core.regions import extract_region_specific_text
         if "active_threats" in data:

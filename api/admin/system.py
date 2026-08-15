@@ -69,3 +69,51 @@ async def get_system_info():
             "mode": "live" if IS_LIVE_MODE else "mock",
             "error": str(e)
         }
+
+
+@router.get("/api/admin/sources/status")
+@router.get("/api/sources/status")
+async def get_sources_status():
+    """Повертає статус доступності всіх джерел тривог (Tier 1-3) та аналізатора Gemini."""
+    import core.globals
+    ukraine_alarm_token = os.environ.get("UKRAINE_ALARM_API_KEY") or os.environ.get("UKRAINE_ALARM_TOKEN")
+    alerts_in_ua_token = os.environ.get("ALERTS_TOKEN")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    telegram_monitor = getattr(core.globals, "telegram_monitor", None)
+    sources_info = getattr(core.globals, "sources_status", {})
+
+    return {
+        "status": "ok",
+        "mode": "live" if IS_LIVE_MODE else "mock",
+        "active_source": sources_info.get("active_source", "none"),
+        "sources": {
+            "ukraine_alarm": {
+                "name": "UkraineAlarm API v3 (Tier 1)",
+                "url": "https://api.ukrainealarm.com/api/v3/alerts",
+                "configured": bool(ukraine_alarm_token),
+                "status": "ONLINE" if ukraine_alarm_token else "NEED_KEY"
+            },
+            "ubilling": {
+                "name": "UBilling Дзеркало (Tier 2)",
+                "url": "https://ubilling.net.ua/aerialalerts/",
+                "configured": True,
+                "status": "ONLINE"
+            },
+            "alerts_in_ua": {
+                "name": "Alerts.in.ua API (Tier 3)",
+                "url": "https://api.alerts.in.ua/v1/alerts/active.json",
+                "configured": bool(alerts_in_ua_token),
+                "status": "ONLINE" if alerts_in_ua_token else "NEED_TOKEN"
+            },
+            "threat_server": {
+                "name": "SirenUA ThreatServer Backend",
+                "status": "ONLINE"
+            },
+            "gemini": {
+                "name": "Аналізатор Gemini AI",
+                "configured": bool(gemini_key),
+                "status": "ONLINE" if (gemini_key and telegram_monitor and telegram_monitor.analyzer.is_configured) else ("MOCK" if not IS_LIVE_MODE else "OFFLINE")
+            }
+        }
+    }
+
