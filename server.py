@@ -133,6 +133,13 @@ async def lifespan(app: FastAPI):
     import database.analytics_db
     database.analytics_db.main_loop = asyncio.get_running_loop()
     
+    # Підключення автоматичного збору всіх помилок та логів у таблицю error_log
+    try:
+        from database.error_logger import attach_database_logging_handler
+        attach_database_logging_handler()
+    except Exception as e:
+        logger.warning(f"Error attaching db logging handler: {e}")
+    
     # Ініціалізація Firebase
     init_firebase()
     

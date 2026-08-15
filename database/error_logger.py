@@ -7,8 +7,12 @@ import asyncio
 
 from database.db_helpers import execute_write
 
+import logging
+import time
+
 # Global reference to the main event loop (set from lifespan)
 main_loop = None
+_recent_error_cache = {}
 
 
 def _classify_error_type(error_msg: str, source: str) -> str:
@@ -25,14 +29,14 @@ def _classify_error_type(error_msg: str, source: str) -> str:
         return "firebase_error"
     if "telegram" in error_msg_l or "telethon" in error_msg_l:
         return "telegram_error"
-    if "gemini" in error_msg_l or "generativeai" in error_msg_l or "aiplatform" in error_msg_l or source == "gemini" or source == "analyzer":
+    if "gemini" in error_msg_l or "generativeai" in error_msg_l or "aiplatform" in error_msg_l or source in ["gemini", "analyzer", "gemini_analyzer"]:
         return "gemini_api_error"
     if "json" in error_msg_l or "decode" in error_msg_l or "parse" in error_msg_l:
         return "json_parse_error"
     if "sqlite" in error_msg_l or "database" in error_msg_l or "query" in error_msg_l or "locked" in error_msg_l:
         return "database_error"
     if "not found" in error_msg_l or "404" in error_msg:
-        return "not_found"
+        return "404_not_found"
     if "validate" in error_msg_l or "missing field" in error_msg_l or "pydantic" in error_msg_l or "valueerror" in error_msg_l:
         return "validation_error"
     if "connection" in error_msg_l or "connectionerror" in error_msg_l or "socket" in error_msg_l or "network" in error_msg_l or "http" in error_msg_l:
@@ -60,6 +64,13 @@ def log_error_to_db(
 
     error_msg = str(message)
 
+    # Prevent identical error floods within 15 seconds
+    now = time.time()
+    cache_key = (source, error_msg[:120])
+    if cache_key in _recent_error_cache and (now - _recent_error_cache[cache_key]) < 15:
+        return
+    _recent_error_cache[cache_key] = now
+
     if not error_type or error_type in ["general", "systemic"]:
         error_type = _classify_error_type(error_msg, source)
 
@@ -80,6 +91,54 @@ def log_error_to_db(
         )
     except Exception:
         pass
+
+
+class DatabaseLoggingHandler(logging.Handler):
+    """Handler to funnel any Python logger.error / logger.critical calls directly into error_log."""
+    def __init__(self, level=logging.ERROR):
+        super().__init__(level)
+        self._in_emit = False
+
+    def emit(self, record: logging.LogRecord):
+        if self._in_emit:
+            return
+        self._in_emit = True
+        try:
+            msg = self.format(record)
+            src_raw = record.name.lower()
+            if "sirenua" in src_raw or "server" in src_raw:
+                src = "server"
+            elif "telethon" in src_raw or "telegram" in src_raw:
+                src = "telegram_monitor"
+            elif "firebase" in src_raw or "fcm" in src_raw:
+                src = "firebase"
+            elif "gemini" in src_raw or "analyzer" in src_raw:
+                src = "gemini_analyzer"
+            elif "shelter" in src_raw:
+                src = "shelters"
+            else:
+                src = record.name
+
+            log_error_to_db(
+                source=src,
+                message=msg,
+                endpoint=f"{record.module}.{record.funcName}",
+                context=f"file={record.filename}:{record.lineno}",
+                error_type=_classify_error_type(msg, src)
+            )
+        except Exception:
+            pass
+        finally:
+            self._in_emit = False
+
+
+def attach_database_logging_handler():
+    """Attaches DatabaseLoggingHandler to root and core loggers."""
+    handler = DatabaseLoggingHandler(level=logging.ERROR)
+    formatter = logging.Formatter("%(message)s")
+    handler.setFormatter(formatter)
+    logging.getLogger().addHandler(handler)
+    logging.getLogger("sirenua").addHandler(handler)
 
 
 def log_rule_audit_to_db(
