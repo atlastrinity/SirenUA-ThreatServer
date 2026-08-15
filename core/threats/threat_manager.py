@@ -40,6 +40,12 @@ class MockThreatManager:
         for region in ALL_REGIONS:
             self.threats[region] = ThreatState(region)
 
+    def get_threat(self, region: str) -> Optional[ThreatState]:
+        """Повертає об'єкт ThreatState для вказаного регіону."""
+        from core.regions import normalize_region_name
+        norm = normalize_region_name(region)
+        return self.threats.get(norm)
+
     def save_to_db(self):
         with self._save_lock:
             if getattr(self, '_save_timer', None) is not None:

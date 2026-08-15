@@ -688,6 +688,9 @@ def calculate_kinematic_eta(
         return 0, "в області"
         
     speed = get_threat_speed(threat_type, speed_kmh)
+    if speed <= 0:
+        return 0, "в області"
+        
     eta_seconds = int((distance_km / speed) * 3600)
     
     # Specific object kinematics buffer / launch offset adjustments:
