@@ -29,8 +29,7 @@ def get_db():
     try:
         return firestore.client()
     except Exception as e:
-        logger.error(f"Помилка отримання Firestore клієнта: {e}")
-        _log_error("database_helpers", f"Помилка отримання Firestore клієнта: {e}", "get_db", error_type="firebase_error")
+        logger.warning(f"Firestore клієнт недоступний (пропуск синхронізації): {e}")
         return None
 
 

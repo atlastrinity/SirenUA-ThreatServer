@@ -191,7 +191,6 @@ async def poll_aerial_alerts():
                 logger.error(f"Помилка під час prune_expired_missile_threats: {prune_err}")
         else:
             logger.error("⚠️ Всі 3 джерела офіційних тривог недоступні (UkraineAlarm -> UBilling -> Alerts.in.ua)!")
-            log_error_to_db("server", "Всі джерела офіційних тривог недоступні", endpoint="poll_aerial_alerts")
 
         sleep_interval = 15.0 if (ukraine_alarm_token or alerts_in_ua_token) else 20.0
         await asyncio.sleep(sleep_interval)

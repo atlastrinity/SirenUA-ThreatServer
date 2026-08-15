@@ -64,10 +64,11 @@ def log_error_to_db(
 
     error_msg = str(message)
 
-    # Prevent identical error floods within 15 seconds
+    # Prevent identical error floods within 30 seconds
     now = time.time()
-    cache_key = (source, error_msg[:120])
-    if cache_key in _recent_error_cache and (now - _recent_error_cache[cache_key]) < 15:
+    norm_msg = " ".join(error_msg.split())[:120].lower()
+    cache_key = (source, norm_msg)
+    if cache_key in _recent_error_cache and (now - _recent_error_cache[cache_key]) < 30:
         return
     _recent_error_cache[cache_key] = now
 
@@ -105,6 +106,12 @@ class DatabaseLoggingHandler(logging.Handler):
         self._in_emit = True
         try:
             msg = self.format(record)
+            msg_lower = msg.lower()
+            
+            # Filter normal single-attempt MTProto client background reconnects
+            if "automatic reconnection failed 1 time" in msg_lower or "connection to telegram failed 1 time" in msg_lower:
+                return
+
             src_raw = record.name.lower()
             if "sirenua" in src_raw or "server" in src_raw:
                 src = "server"
