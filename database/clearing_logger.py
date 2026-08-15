@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from core.config import DB_PATH
+import core.config
 from database.db_helpers import get_sqlite_connection
 from database.error_logger import log_error_to_db
 
@@ -142,6 +142,24 @@ def _close_paired_events(
             print(f"🔗 [Paired] Додатково закрито {other_closed} завислих подій для {region}")
 
 
+def _normalize_timestamp_for_db(ts) -> Optional[str]:
+    if not ts:
+        return None
+    try:
+        if isinstance(ts, (int, float)):
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        if isinstance(ts, datetime):
+            return ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        cleaned = str(ts).replace("Z", "+00:00")
+        if "T" in cleaned:
+            dt = datetime.fromisoformat(cleaned)
+            return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        return cleaned
+    except Exception:
+        return str(ts)
+
+
 def log_clearing_to_db(
     region: str,
     clearing_telemetry: dict = None,
@@ -152,6 +170,7 @@ def log_clearing_to_db(
     is_test: bool = False,
     threat_type: str = None,
     skip_history_log: bool = False,
+    clearing_timestamp: Optional[str] = None,
 ):
     """Log threat clearing event linked to original threat. Closes active paired events."""
     if not clearing_telemetry:
@@ -160,7 +179,7 @@ def log_clearing_to_db(
     detected_type = threat_type or _detect_threat_type_from_text(message_text)
 
     try:
-        conn = get_sqlite_connection(DB_PATH)
+        conn = get_sqlite_connection(core.config.DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -176,10 +195,24 @@ def log_clearing_to_db(
         threat_set_ts = row["timestamp"]
         threat_duration_sec = None
 
+        norm_clear_ts = _normalize_timestamp_for_db(clearing_timestamp)
+        now_dt = None
+        if norm_clear_ts:
+            try:
+                now_dt = datetime.fromisoformat(norm_clear_ts.replace(" ", "T") + "+00:00")
+            except Exception:
+                now_dt = datetime.now(timezone.utc)
+        else:
+            now_dt = datetime.now(timezone.utc)
+
         try:
-            set_time = datetime.fromisoformat(threat_set_ts.replace('Z', '+00:00') if threat_set_ts else "")
-            now = datetime.now(timezone.utc)
-            threat_duration_sec = int((now - set_time.replace(tzinfo=timezone.utc)).total_seconds())
+            set_time_str = threat_set_ts.replace('Z', '+00:00') if threat_set_ts else ""
+            if "T" not in set_time_str and " " in set_time_str:
+                set_time_str = set_time_str.replace(" ", "T") + "+00:00"
+            set_time = datetime.fromisoformat(set_time_str)
+            if set_time.tzinfo is None:
+                set_time = set_time.replace(tzinfo=timezone.utc)
+            threat_duration_sec = int((now_dt - set_time).total_seconds())
             if threat_duration_sec < 0:
                 threat_duration_sec = None
         except Exception:
@@ -187,48 +220,93 @@ def log_clearing_to_db(
 
         tags_json = json.dumps(clearing_telemetry.get("clearing_context_tags", []), ensure_ascii=False)
 
-        cursor.execute('''
-            INSERT INTO threat_clearings (
-                region, original_threat_event_id, linked_group_id, linked_correlation_group,
-                resolution_type, intercepted_count, total_targets_in_wave,
-                impact_confirmed, damage_assessment, civilian_casualties_reported,
-                infrastructure_hit, air_defense_effectiveness, threat_duration_assessment,
-                prediction_accuracy_hint, was_predictive,
-                original_threat_level, original_threat_type, original_confidence,
-                clearing_confidence, clearing_context_tags,
-                source_reliability, time_of_day_category,
-                clearing_source_channel, clearing_message_text,
-                threat_set_timestamp, threat_duration_seconds, is_test
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            region,
-            original_event_id,
-            clearing_telemetry.get("linked_group_id"),
-            clearing_telemetry.get("linked_correlation_group"),
-            clearing_telemetry.get("resolution_type", "unknown"),
-            clearing_telemetry.get("intercepted_count"),
-            clearing_telemetry.get("total_targets_in_wave"),
-            1 if clearing_telemetry.get("impact_confirmed") else 0,
-            clearing_telemetry.get("damage_assessment", "unknown"),
-            1 if clearing_telemetry.get("civilian_casualties_reported") else 0,
-            clearing_telemetry.get("infrastructure_hit"),
-            clearing_telemetry.get("air_defense_effectiveness", "unknown"),
-            clearing_telemetry.get("threat_duration_assessment", "unknown"),
-            clearing_telemetry.get("prediction_accuracy_hint", "not_applicable"),
-            1 if was_predictive else 0,
-            original_level,
-            original_type,
-            original_confidence,
-            clearing_confidence,
-            tags_json,
-            clearing_telemetry.get("source_reliability", "medium"),
-            clearing_telemetry.get("time_of_day_category", "unknown"),
-            source_channel,
-            message_text[:500] if message_text else None,
-            threat_set_ts,
-            threat_duration_sec,
-            1 if is_test else 0
-        ))
+        if norm_clear_ts:
+            cursor.execute('''
+                INSERT INTO threat_clearings (
+                    timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group,
+                    resolution_type, intercepted_count, total_targets_in_wave,
+                    impact_confirmed, damage_assessment, civilian_casualties_reported,
+                    infrastructure_hit, air_defense_effectiveness, threat_duration_assessment,
+                    prediction_accuracy_hint, was_predictive,
+                    original_threat_level, original_threat_type, original_confidence,
+                    clearing_confidence, clearing_context_tags,
+                    source_reliability, time_of_day_category,
+                    clearing_source_channel, clearing_message_text,
+                    threat_set_timestamp, threat_duration_seconds, is_test
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                norm_clear_ts,
+                region,
+                original_event_id,
+                clearing_telemetry.get("linked_group_id"),
+                clearing_telemetry.get("linked_correlation_group"),
+                clearing_telemetry.get("resolution_type", "unknown"),
+                clearing_telemetry.get("intercepted_count"),
+                clearing_telemetry.get("total_targets_in_wave"),
+                1 if clearing_telemetry.get("impact_confirmed") else 0,
+                clearing_telemetry.get("damage_assessment", "unknown"),
+                1 if clearing_telemetry.get("civilian_casualties_reported") else 0,
+                clearing_telemetry.get("infrastructure_hit"),
+                clearing_telemetry.get("air_defense_effectiveness", "unknown"),
+                clearing_telemetry.get("threat_duration_assessment", "unknown"),
+                clearing_telemetry.get("prediction_accuracy_hint", "not_applicable"),
+                1 if was_predictive else 0,
+                original_level,
+                original_type,
+                original_confidence,
+                clearing_confidence,
+                tags_json,
+                clearing_telemetry.get("source_reliability", "medium"),
+                clearing_telemetry.get("time_of_day_category", "unknown"),
+                source_channel,
+                message_text[:500] if message_text else None,
+                threat_set_ts,
+                threat_duration_sec,
+                1 if is_test else 0
+            ))
+        else:
+            cursor.execute('''
+                INSERT INTO threat_clearings (
+                    region, original_threat_event_id, linked_group_id, linked_correlation_group,
+                    resolution_type, intercepted_count, total_targets_in_wave,
+                    impact_confirmed, damage_assessment, civilian_casualties_reported,
+                    infrastructure_hit, air_defense_effectiveness, threat_duration_assessment,
+                    prediction_accuracy_hint, was_predictive,
+                    original_threat_level, original_threat_type, original_confidence,
+                    clearing_confidence, clearing_context_tags,
+                    source_reliability, time_of_day_category,
+                    clearing_source_channel, clearing_message_text,
+                    threat_set_timestamp, threat_duration_seconds, is_test
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                region,
+                original_event_id,
+                clearing_telemetry.get("linked_group_id"),
+                clearing_telemetry.get("linked_correlation_group"),
+                clearing_telemetry.get("resolution_type", "unknown"),
+                clearing_telemetry.get("intercepted_count"),
+                clearing_telemetry.get("total_targets_in_wave"),
+                1 if clearing_telemetry.get("impact_confirmed") else 0,
+                clearing_telemetry.get("damage_assessment", "unknown"),
+                1 if clearing_telemetry.get("civilian_casualties_reported") else 0,
+                clearing_telemetry.get("infrastructure_hit"),
+                clearing_telemetry.get("air_defense_effectiveness", "unknown"),
+                clearing_telemetry.get("threat_duration_assessment", "unknown"),
+                clearing_telemetry.get("prediction_accuracy_hint", "not_applicable"),
+                1 if was_predictive else 0,
+                original_level,
+                original_type,
+                original_confidence,
+                clearing_confidence,
+                tags_json,
+                clearing_telemetry.get("source_reliability", "medium"),
+                clearing_telemetry.get("time_of_day_category", "unknown"),
+                source_channel,
+                message_text[:500] if message_text else None,
+                threat_set_ts,
+                threat_duration_sec,
+                1 if is_test else 0
+            ))
 
         clearing_id = cursor.lastrowid
         prediction_accuracy = clearing_telemetry.get("prediction_accuracy_hint", "not_applicable")
@@ -259,7 +337,8 @@ def log_clearing_to_db(
                     threat_type=saved_type,
                     detail=clear_detail,
                     confidence=clearing_confidence or 100,
-                    is_test=is_test
+                    is_test=is_test,
+                    event_timestamp=norm_clear_ts
                 )
                 log_threat_to_firestore(
                     region=region,
@@ -267,7 +346,8 @@ def log_clearing_to_db(
                     threat_type=saved_type,
                     detail=clear_detail,
                     confidence=clearing_confidence or 100,
-                    is_test=is_test
+                    is_test=is_test,
+                    timestamp=norm_clear_ts
                 )
             except Exception as e:
                 print(f"⚠️ [Clearing History] Failed to record clear event in history: {e}")

@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import time
+from datetime import datetime, timezone
 from typing import Optional
 from telethon import TelegramClient, events
 import aiohttp
@@ -168,9 +169,16 @@ class TelegramThreatMonitor:
                 except:
                     channel = "unknown"
                 
+                msg_date = None
+                if getattr(event.message, 'date', None):
+                    try:
+                        msg_date = event.message.date.astimezone(timezone.utc).isoformat()
+                    except Exception:
+                        msg_date = str(event.message.date)
+                
                 short_text = text.strip().replace('\n', ' ')[:80]
                 print(f"⚡ [MTProto: {channel}] Нове повідомлення: \"{short_text}...\"")
-                await self._process_message(text, channel)
+                await self._process_message(text, channel, message_date=msg_date)
 
     async def stop(self):
         self.is_running = False
@@ -251,9 +259,14 @@ class TelegramThreatMonitor:
                             br.replace_with("\n")
                         text = text_div.get_text()
                         
+                        msg_date = None
+                        time_tag = msg.select_one('time[datetime]')
+                        if time_tag and time_tag.get('datetime'):
+                            msg_date = time_tag['datetime']
+                        
                         short_text = text.strip().replace('\n', ' ')[:80]
                         print(f"📖 [Web: {channel}] Нове повідомлення (ID: {current_id}): \"{short_text}...\"")
-                        await self._process_message(text, channel)
+                        await self._process_message(text, channel, message_date=msg_date)
         except Exception as e:
             err_str = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             # Network and timeout errors during periodic web scraping are normal transient events
@@ -347,6 +360,10 @@ class TelegramThreatMonitor:
                     context_messages = [m for m in self.message_history if m not in threat_messages][-10:]
                     results = await self.analyzer.analyze_batch(threat_messages, context_messages=context_messages)
                     if results:
+                        batch_date = threat_messages[-1].get("message_date") if threat_messages else None
+                        for res_item in results:
+                            if isinstance(res_item, dict) and "message_date" not in res_item:
+                                res_item["message_date"] = batch_date
                         # Enable batch mode: skip individual Firestore saves during batch processing
                         self.threat_manager._batch_mode = True
                         try:
@@ -390,6 +407,7 @@ class TelegramThreatMonitor:
             if telemetry and isinstance(telemetry, dict):
                 group_id = telemetry.get("group_id")
             rules_applied = item.get("rules_applied", [])
+            msg_date = item.get("message_date")
             
             # Validate confidence as int
             if confidence is not None:
@@ -418,7 +436,8 @@ class TelegramThreatMonitor:
                                 source_channel=source_channel,
                                 message_text=text,
                                 clearing_confidence=confidence,
-                                was_predictive=False
+                                was_predictive=False,
+                                clearing_timestamp=msg_date
                             )
                     res_type = clearing_telemetry.get("resolution_type", "unknown") if clearing_telemetry else "unknown"
                     print(f"🟢 [Gemini] Зняття загрози для ВСІХ областей (тип: {res_type})")
@@ -443,7 +462,8 @@ class TelegramThreatMonitor:
                             message_text=text,
                             clearing_confidence=confidence,
                             was_predictive=was_pred,
-                            threat_type=threat_type
+                            threat_type=threat_type,
+                            clearing_timestamp=msg_date
                         )
                         
                         clearing_gid = clearing_telemetry.get("linked_group_id") if clearing_telemetry else None
@@ -607,7 +627,8 @@ class TelegramThreatMonitor:
                 self.threat_manager.set_threat(region, adjusted_level, threat_type, detail,
                                                confidence=region_confidence, eta=eta_str, is_predictive=is_pred,
                                                is_test=is_test, telemetry=telemetry, rules_applied=rules_applied,
-                                               eta_seconds=eta_seconds, group_id=group_id)
+                                               eta_seconds=eta_seconds, group_id=group_id,
+                                               since=msg_date)
                 self._schedule_auto_clear(region, delay, threat_type=threat_type, group_id=group_id)
                 
                 if is_pred:
@@ -1057,27 +1078,30 @@ class TelegramThreatMonitor:
         return 0.0
 
 
-    async def _process_message(self, text, channel):
+    async def _process_message(self, text, channel, message_date: Optional[str] = None):
+        msg_date = message_date or datetime.now(timezone.utc).isoformat()
         # Store in rolling channel buffer
         channel_key = channel.lower().strip() if isinstance(channel, str) else channel
         if channel_key in self.channel_message_buffers:
             self.channel_message_buffers[channel_key].append({
                 "text": text,
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                "message_date": msg_date
             })
             if len(self.channel_message_buffers[channel_key]) > 10:
                 self.channel_message_buffers[channel_key] = self.channel_message_buffers[channel_key][-10:]
 
         if self.analyzer.is_configured:
             # Queue for Gemini
-            await self.message_queue.put({"channel": channel, "text": text})
+            await self.message_queue.put({"channel": channel, "text": text, "message_date": msg_date})
             print(f"📥 Повідомлення додано до черги ШІ. В черзі: {self.message_queue.qsize()}")
         else:
             # Fallback to Regex
-            await self._process_message_regex(text, channel)
+            await self._process_message_regex(text, channel, message_date=msg_date)
 
     # --- Message Parser Logic (Shared by both MTProto & Web Scraper) ---
-    async def _process_message_regex(self, text, channel, is_test: bool = False):
+    async def _process_message_regex(self, text, channel, is_test: bool = False, message_date: Optional[str] = None):
+        msg_date = message_date or datetime.now(timezone.utc).isoformat()
         # Clean double spaces and split into lines, then logical sentences
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         segments = []
@@ -1112,6 +1136,16 @@ class TelegramThreatMonitor:
                         self.threat_manager.clear_threat(region)
                         self._cancel_clear_tasks(region)
                         cleared_regions.add(region)
+                        from database.analytics_db import log_clearing_to_db
+                        log_clearing_to_db(
+                            region=region,
+                            source_channel=channel,
+                            message_text=segment,
+                            clearing_confidence=80,
+                            was_predictive=False,
+                            is_test=is_test,
+                            clearing_timestamp=msg_date
+                        )
                 else:
                     # If it says 'clear' but names no regions, it might be a general clear.
                     # We only clear all if the entire message contains no other region mentions
@@ -1216,7 +1250,7 @@ class TelegramThreatMonitor:
 
                     self.threat_manager.set_threat(region, level, threat_type, detail,
                                                   confidence=regex_confidence, eta=eta_str, is_predictive=is_pred,
-                                                  is_test=is_test)
+                                                  is_test=is_test, since=msg_date)
                     self._schedule_auto_clear(region, delay)
                     set_regions[region] = level
 

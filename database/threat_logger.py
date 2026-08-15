@@ -6,8 +6,9 @@ Functions: log_threat_to_db, log_threat_to_firestore, flush_history_batch, valid
 import json
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
-from core.config import DB_PATH
+import core.config
 from database.db_helpers import get_db, is_duplicate_event, get_sqlite_connection, run_firestore_with_retry
 from database.error_logger import log_error_to_db
 
@@ -34,6 +35,24 @@ def queue_history_for_batch(doc_data: dict, region: str):
             _batch_timer.start()
 
 
+def _normalize_timestamp_for_db(ts) -> Optional[str]:
+    if not ts:
+        return None
+    try:
+        if isinstance(ts, (int, float)):
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        if isinstance(ts, datetime):
+            return ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        cleaned = str(ts).replace("Z", "+00:00")
+        if "T" in cleaned:
+            dt = datetime.fromisoformat(cleaned)
+            return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        return cleaned
+    except Exception:
+        return str(ts)
+
+
 def log_threat_to_db(
     region: str,
     level: str,
@@ -44,10 +63,11 @@ def log_threat_to_db(
     is_test: bool = False,
     rules_applied: list = None,
     is_predictive: bool = False,
+    event_timestamp: Optional[str] = None,
 ):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
     try:
-        conn = get_sqlite_connection(DB_PATH)
+        conn = get_sqlite_connection(core.config.DB_PATH)
         cursor = conn.cursor()
 
         # Strict deduplication check against the latest record for (region, threat_type)
@@ -79,10 +99,17 @@ def log_threat_to_db(
                     conn.close()
                     return None
 
-        cursor.execute(
-            "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
-            (region, level, threat_type, detail, confidence, 1 if is_test else 0)
-        )
+        norm_ts = _normalize_timestamp_for_db(event_timestamp)
+        if norm_ts:
+            cursor.execute(
+                "INSERT INTO threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (norm_ts, region, level, threat_type, detail, confidence, 1 if is_test else 0)
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
+                (region, level, threat_type, detail, confidence, 1 if is_test else 0)
+            )
         event_id = cursor.lastrowid
 
         telemetry_id = None
@@ -130,16 +157,28 @@ def log_threat_to_db(
 
         if level != "none" and event_id and threat_type != "official_alarm":
             rules_applied_json = json.dumps(rules_applied) if rules_applied else None
-            cursor.execute('''
-                INSERT INTO paired_events (
-                    region, threat_event_id, telemetry_id, lifecycle_status,
-                    threat_level, threat_type, confidence_at_set, was_predictive,
-                    gemini_group_id, rules_applied
-                ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
-            ''', (
-                region, event_id, telemetry_id, level, threat_type,
-                confidence, 1 if is_predictive else 0, group_id, rules_applied_json
-            ))
+            if norm_ts:
+                cursor.execute('''
+                    INSERT INTO paired_events (
+                        created_at, region, threat_event_id, telemetry_id, lifecycle_status,
+                        threat_level, threat_type, confidence_at_set, was_predictive,
+                        gemini_group_id, rules_applied
+                    ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                ''', (
+                    norm_ts, region, event_id, telemetry_id, level, threat_type,
+                    confidence, 1 if is_predictive else 0, group_id, rules_applied_json
+                ))
+            else:
+                cursor.execute('''
+                    INSERT INTO paired_events (
+                        region, threat_event_id, telemetry_id, lifecycle_status,
+                        threat_level, threat_type, confidence_at_set, was_predictive,
+                        gemini_group_id, rules_applied
+                    ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                ''', (
+                    region, event_id, telemetry_id, level, threat_type,
+                    confidence, 1 if is_predictive else 0, group_id, rules_applied_json
+                ))
 
         conn.commit()
         conn.close()
@@ -158,6 +197,7 @@ def log_threat_to_firestore(
     confidence: int = None,
     telemetry: dict = None,
     is_test: bool = False,
+    timestamp: str = None,
 ):
     """Buffers threat event for atomic batched write to Firebase Firestore."""
     db = get_db()
@@ -167,13 +207,13 @@ def log_threat_to_firestore(
     if not is_test and is_duplicate_event(region, level, threat_type):
         return
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    ts_str = _normalize_timestamp_for_db(timestamp) or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     unique_id = int(time.time() * 1000)
 
     doc_data = {
         "id": unique_id,
         "region": region,
-        "timestamp": timestamp,
+        "timestamp": ts_str,
         "threat_level": level,
         "threat_type": threat_type,
         "detail": detail,
@@ -229,7 +269,7 @@ def flush_history_batch():
 def validate_prediction_on_alarm(region: str):
     """Marks predictive paired_events as 'confirmed' when official alarm activates."""
     try:
-        conn = get_sqlite_connection(DB_PATH)
+        conn = get_sqlite_connection(core.config.DB_PATH)
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE paired_events 

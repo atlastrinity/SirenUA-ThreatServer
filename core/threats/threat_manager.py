@@ -299,7 +299,8 @@ class MockThreatManager:
                    rules_applied: list = None,
                    eta_seconds: Optional[int] = None,
                    group_id: Optional[str] = None,
-                   transit_from: Optional[str] = None) -> bool:
+                   transit_from: Optional[str] = None,
+                   since: Optional[str] = None) -> bool:
         from core.regions import REGION_ALIASES, PERMANENTLY_OCCUPIED_REGIONS
         norm_region = REGION_ALIASES.get(region, region)
         if norm_region not in self.threats or norm_region in PERMANENTLY_OCCUPIED_REGIONS:
@@ -341,7 +342,7 @@ class MockThreatManager:
             level, threat_type, detail, confidence, eta,
             is_predictive, is_test, group_id=group_id,
             eta_seconds=eta_seconds, telemetry=telemetry,
-            transit_from=transit_from
+            transit_from=transit_from, since=since
         )
         
         if has_changed:
