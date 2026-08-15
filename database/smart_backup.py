@@ -4,8 +4,6 @@ Executes an append-only incremental backup every 5 minutes, ensuring historical 
 """
 
 import os
-import sys
-import time
 import shutil
 import sqlite3
 import asyncio
