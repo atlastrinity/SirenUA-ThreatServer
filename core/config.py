@@ -34,6 +34,10 @@ if os.path.exists("threat_server"):
 TELEGRAM_API_ID = int(os.environ.get("TELEGRAM_API_ID", 20294647))
 TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "454a9c055308a8d118608bb6b032bc30")
 
+# Ngrok Domain Configuration
+NGROK_DOMAIN = os.environ.get("NGROK_DOMAIN", "bobbing-armchair-daylong.ngrok-free.dev")
+NGROK_URL = os.environ.get("NGROK_URL", f"https://{NGROK_DOMAIN}")
+
 # Target Telegram channels to monitor
 TARGET_CHANNELS = [
     "kpszsu",            # Повітряні Сили ЗСУ
