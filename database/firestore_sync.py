@@ -24,9 +24,7 @@ except ImportError:
 
 def get_db():
     """Отримує Firestore клієнта."""
-    if not HAS_FIREBASE or firestore is None:
-        logger.error("firebase_admin не встановлено")
-        _log_error("database_helpers", "firebase_admin не встановлено", "get_db", error_type="firebase_error")
+    if not HAS_FIREBASE or firestore is None or not firebase_admin._apps:
         return None
     try:
         return firestore.client()

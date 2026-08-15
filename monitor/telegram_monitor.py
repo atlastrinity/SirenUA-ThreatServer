@@ -130,10 +130,19 @@ class TelegramThreatMonitor:
                     return
                 else:
                     print("⚠️ Файл сесії знайдено, але користувач не авторизований.")
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                    self.client = None
             except Exception as e:
                 print(f"⚠️ Помилка ініціалізації MTProto: {e}")
                 if self.client:
-                    await self.client.disconnect()
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                    self.client = None
                     
         print("🟡 Сесію юзербота не знайдено або не авторизовано. Запускаємо резервний Web Scraper...")
         self.use_mtproto = False
