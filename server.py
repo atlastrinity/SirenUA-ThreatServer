@@ -282,6 +282,11 @@ async def lifespan(app: FastAPI):
     # Запуск періодичного бекапу SQLite в Firestore кожні 15 хвилин
     periodic_backup_task = asyncio.create_task(periodic_sqlite_backup())
 
+    # Запуск / перевірка Ngrok тунелю та фонового вотчдога
+    from services.ngrok_service import ensure_ngrok_running, ngrok_watchdog_loop
+    asyncio.create_task(ensure_ngrok_running())
+    ngrok_watchdog_task = asyncio.create_task(ngrok_watchdog_loop())
+
     if IS_LIVE_MODE:
         from monitor.telegram_monitor import TelegramThreatMonitor
         core.globals.telegram_monitor = TelegramThreatMonitor(threat_manager)
@@ -292,8 +297,9 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Зупинка фонового бекапу та опитування
+    # Зупинка фонового бекапу, вотчдога та опитування
     periodic_backup_task.cancel()
+    ngrok_watchdog_task.cancel()
     if aerial_alerts_task:
         aerial_alerts_task.cancel()
         try:
