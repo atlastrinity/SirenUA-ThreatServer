@@ -15,20 +15,16 @@ router = APIRouter()
 @router.get("/api/shelters")
 async def get_shelters(lat: float, lon: float, radius: float = 1500, limit: int = 50):
     """Пошук найближчих укриттів у заданому радіусі (метри)."""
-    if not shelter_manager.is_loaded:
-        return {
-            "count": 0,
-            "radius_m": radius,
-            "total_in_db": 0,
-            "status": "loading",
-            "shelters": [],
-        }
-
     # Clamp values
     radius = max(100, min(radius, 50_000))  # 100m — 50km
     limit = max(1, min(limit, 100))
 
-    results = shelter_manager.find_nearby(lat, lon, radius, limit=limit)
+    if not shelter_manager.is_loaded and shelter_manager.total_count == 0:
+        # Load seed data or perform targeted query
+        results = await shelter_manager.find_nearby_async(lat, lon, radius, limit=limit)
+    else:
+        results = await shelter_manager.find_nearby_async(lat, lon, radius, limit=limit)
+
     return {
         "count": len(results),
         "radius_m": radius,

@@ -268,3 +268,34 @@ async def test_shelters_api_endpoint():
         assert data["count"] >= 1
         assert data["shelters"][0]["name"] == "Бомбосховище Центр"
         assert "distance_m" in data["shelters"][0]
+
+
+def test_seed_shelters_auto_loaded():
+    """Verify that ShelterManager loads seed shelters immediately upon instantiation."""
+    mgr = ShelterManager()
+    assert mgr.is_loaded is True
+    assert mgr.total_count > 0
+    # Check that Uhersko shelters exist in the seed dataset
+    uhersko_shelters = [s for s in mgr._shelters if "Угерсько" in (s.address or "") or "Угерськ" in (s.name or "")]
+    assert len(uhersko_shelters) >= 1
+
+
+def test_uhersko_and_stryi_shelter_search():
+    """Verify shelter search for user at Uhersko village (49.3005, 23.8966)."""
+    mgr = ShelterManager()
+    # User at Uhersko center: 49.3005, 23.8966
+    lat_uhersko = 49.3005
+    lon_uhersko = 23.8966
+
+    # 1. Search in immediate radius (1500m)
+    local = mgr.find_nearby(lat_uhersko, lon_uhersko, radius_m=1500)
+    assert len(local) >= 1
+    assert any("Угерськ" in (s["name"] or "") for s in local)
+    # Closest should be < 500m
+    assert local[0]["distance_m"] < 500
+
+    # 2. Search in district radius (10000m) includes Stryi facilities
+    district = mgr.find_nearby(lat_uhersko, lon_uhersko, radius_m=10000)
+    assert len(district) >= 4
+    assert any("Стрий" in (s["address"] or "") or "Стрий" in (s["name"] or "") for s in district)
+

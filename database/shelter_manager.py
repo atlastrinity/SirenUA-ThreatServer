@@ -129,6 +129,46 @@ class _GridIndex:
 
 
 # ──────────────────────────────────────────────────────────────
+# Pre-seeded official civil defense shelters loader
+# ──────────────────────────────────────────────────────────────
+
+def _fetch_seed_shelters() -> List[Shelter]:
+    """Load local pre-seeded verified shelters from database/data/shelters_seed.json."""
+    possible_paths = [
+        os.path.join(os.path.dirname(__file__), "data", "shelters_seed.json"),
+        os.path.join(os.path.dirname(__file__), "..", "data", "shelters_seed.json"),
+        os.path.join(os.getcwd(), "SirenUA-ThreatServer", "database", "data", "shelters_seed.json"),
+        os.path.join(os.getcwd(), "database", "data", "shelters_seed.json"),
+    ]
+    for path in possible_paths:
+        if os.path.exists(path):
+            try:
+                import json
+                with open(path, "r", encoding="utf-8") as f:
+                    items = json.load(f)
+                shelters = []
+                for it in items:
+                    shelters.append(
+                        Shelter(
+                            id=it["id"],
+                            name=it.get("name"),
+                            address=it.get("address"),
+                            lat=float(it["lat"]),
+                            lon=float(it["lon"]),
+                            type=it.get("type", "bomb_shelter"),
+                            capacity=it.get("capacity"),
+                            accessible=bool(it.get("accessible", False)),
+                            source=it.get("source", "gov"),
+                        )
+                    )
+                logger.info(f"✅ Завантажено {len(shelters)} базових перевірених укриттів з {os.path.basename(path)}")
+                return shelters
+            except Exception as e:
+                logger.warning(f"⚠️ Помилка читання seed shelters з {path}: {e}")
+    return []
+
+
+# ──────────────────────────────────────────────────────────────
 # Overpass API loader
 # ──────────────────────────────────────────────────────────────
 
@@ -140,6 +180,11 @@ area["name:en"="Ukraine"]["type"="boundary"]->.searchArea;
 (
   nwr["amenity"="shelter"]["shelter_type"="bomb_shelter"](area.searchArea);
   nwr["amenity"="shelter"]["shelter_type"="anti_radiation"](area.searchArea);
+  nwr["amenity"="shelter"]["shelter_type"="radiation"](area.searchArea);
+  nwr["amenity"="shelter"]["shelter_type"="fallout"](area.searchArea);
+  nwr["amenity"="shelter"]["shelter_type"="protective_shelter"](area.searchArea);
+  nwr["amenity"="shelter"]["shelter_type"="basic_shelter"](area.searchArea);
+  nwr["amenity"="shelter"]["shelter_type"="dual_use"](area.searchArea);
   nwr["military"="bunker"]["bunker_type"="bomb_shelter"](area.searchArea);
   nwr["military"="bunker"](area.searchArea);
   nwr["building"="bunker"](area.searchArea);
@@ -150,6 +195,8 @@ area["name:en"="Ukraine"]["type"="boundary"]->.searchArea;
   nwr["emergency"="shelter"](area.searchArea);
   nwr["emergency"="bomb_shelter"](area.searchArea);
   nwr["civil_defense"="yes"](area.searchArea);
+  nwr["civil_defense"](area.searchArea);
+  nwr["name"~"укриття|сховище|бомбосховище|ПРУ",i](area.searchArea);
 );
 out center;
 """
@@ -228,7 +275,7 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
         shelter_type = "underground_parking"
     elif tags.get("military") == "bunker" or tags.get("building") == "bunker" or tags.get("bunker_type") == "bomb_shelter" or (name and "бункер" in name.lower()):
         shelter_type = "bunker"
-    elif tags.get("shelter_type") in ("anti_radiation", "radiation") or (name and "протирадіаційн" in name.lower()):
+    elif tags.get("shelter_type") in ("anti_radiation", "radiation", "fallout") or (name and "протирадіаційн" in name.lower()):
         shelter_type = "radiation_shelter"
     elif tags.get("tunnel") == "yes" or (name and "підземний перехід" in name.lower()):
         shelter_type = "underground"
@@ -285,7 +332,7 @@ async def _fetch_osm_shelters() -> List[Shelter]:
                 OVERPASS_URL,
                 data={"data": OVERPASS_QUERY},
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=45),
             ) as resp:
                 if resp.status != 200:
                     text = await resp.text()
@@ -314,6 +361,53 @@ async def _fetch_osm_shelters() -> List[Shelter]:
     elapsed = time.time() - t0
     logger.info(f"✅ Завантажено {len(shelters)} укриттів з OSM за {elapsed:.1f}с")
     return shelters
+
+
+async def _fetch_targeted_osm_shelters(lat: float, lon: float, radius_m: float = 15000) -> List[Shelter]:
+    """Perform a fast targeted Overpass query around (lat, lon) for rural/suburban areas."""
+    r = int(min(max(radius_m, 1000), 30000))
+    query = f"""
+    [out:json][timeout:8];
+    (
+      nwr["amenity"="shelter"](around:{r}, {lat}, {lon});
+      nwr["shelter_type"](around:{r}, {lat}, {lon});
+      nwr["civil_defense"="yes"](around:{r}, {lat}, {lon});
+      nwr["civil_defense"](around:{r}, {lat}, {lon});
+      nwr["emergency"="shelter"](around:{r}, {lat}, {lon});
+      nwr["emergency"="bomb_shelter"](around:{r}, {lat}, {lon});
+      nwr["military"="bunker"](around:{r}, {lat}, {lon});
+      nwr["building"="bunker"](around:{r}, {lat}, {lon});
+      nwr["parking"="underground"](around:{r}, {lat}, {lon});
+      nwr["name"~"укриття|сховище|бомбосховище|ПРУ",i](around:{r}, {lat}, {lon});
+    );
+    out center;
+    """
+    headers = {
+        "User-Agent": "SirenUA-ThreatServer/1.0 (https://sirenua.com)",
+        "Accept": "application/json",
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                OVERPASS_URL,
+                data={"data": query},
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    elems = data.get("elements", [])
+                    res: List[Shelter] = []
+                    for el in elems:
+                        s = _parse_osm_element(el)
+                        if s:
+                            res.append(s)
+                    if res:
+                        logger.info(f"🎯 Targeted Overpass query знайшов {len(res)} укриттів навколо ({lat}, {lon})")
+                    return res
+    except Exception as e:
+        logger.debug(f"Targeted Overpass query failed for ({lat}, {lon}): {e}")
+    return []
 
 
 async def _fetch_firestore_shelters() -> List[Shelter]:
@@ -381,6 +475,15 @@ class ShelterManager:
         self._loaded = False
         self._refresh_task: Optional[asyncio.Task] = None
         self._last_load_time: Optional[float] = None
+        
+        # Pre-seed immediately at initialization so the manager is never empty
+        seed = _fetch_seed_shelters()
+        if seed:
+            for s in seed:
+                self._index.insert(s)
+                self._shelters.append(s)
+            self._loaded = True
+            self._last_load_time = time.time()
 
     @property
     def is_loaded(self) -> bool:
@@ -391,25 +494,25 @@ class ShelterManager:
         return len(self._shelters)
 
     async def load(self):
-        """Initial load of shelters from OSM and Firestore."""
-        osm_shelters = await _fetch_osm_shelters()
+        """Initial and periodic load of shelters from seed data, Firestore and OSM."""
+        seed_shelters = _fetch_seed_shelters()
         gov_shelters = await _fetch_firestore_shelters()
+        osm_shelters = await _fetch_osm_shelters()
         
         idx = _GridIndex()
         final_shelters = []
         
-        # 1. Спочатку додаємо офіційні укриття
-        for s in gov_shelters:
+        # 1. Додаємо базові та офіційні укриття
+        for s in seed_shelters + gov_shelters:
             idx.insert(s)
             final_shelters.append(s)
             
-        # 2. Додаємо OSM укриття, уникаючи дублікатів (радіус 15 метрів)
+        # 2. Додаємо OSM укриття, уникаючи дублікатів (радіус 20 метрів)
         skipped = 0
         for s in osm_shelters:
-            if gov_shelters:
-                nearby = idx.find_nearby(s.lat, s.lon, radius_m=15.0, limit=1)
-                # Якщо поруч є офіційне укриття, пропускаємо OSM
-                if nearby and nearby[0].source == "gov":
+            if final_shelters:
+                nearby = idx.find_nearby(s.lat, s.lon, radius_m=20.0, limit=1)
+                if nearby:
                     skipped += 1
                     continue
             
@@ -432,7 +535,7 @@ class ShelterManager:
     def find_nearby(self, lat: float, lon: float, radius_m: float = 1500,
                     limit: int = 50) -> List[dict]:
         """Find shelters within radius_m of (lat, lon)."""
-        if not self._loaded:
+        if not self._loaded and not self._shelters:
             return []
 
         results = self._index.find_nearby(lat, lon, radius_m, limit=limit)
@@ -440,6 +543,24 @@ class ShelterManager:
             s.to_dict(distance_m=_haversine(lat, lon, s.lat, s.lon))
             for s in results
         ]
+
+    async def find_nearby_async(self, lat: float, lon: float, radius_m: float = 1500,
+                                limit: int = 50) -> List[dict]:
+        """Find shelters, querying targeted live OSM if in-memory spatial index has 0 local results."""
+        results = self.find_nearby(lat, lon, radius_m, limit=limit)
+        if results:
+            return results
+
+        # If in-memory is empty for this specific location, attempt fast targeted query
+        targeted = await _fetch_targeted_osm_shelters(lat, lon, radius_m=max(radius_m, 10000))
+        if targeted:
+            for s in targeted:
+                existing = self._index.find_nearby(s.lat, s.lon, radius_m=20.0, limit=1)
+                if not existing:
+                    self._index.insert(s)
+                    self._shelters.append(s)
+            results = self.find_nearby(lat, lon, radius_m, limit=limit)
+        return results
 
     async def start_refresh_loop(self):
         """Start background refresh task."""
