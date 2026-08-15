@@ -319,24 +319,8 @@ def _seed_mock_data(cursor: sqlite3.Cursor):
             except Exception as e:
                 print(f"⚠️ Error seeding paired events: {e}")
 
-    # Seed sample error_log entries
-    cursor.execute("SELECT COUNT(*) as c FROM error_log")
-    if cursor.fetchone()[0] == 0:
-        try:
-            cursor.execute("""
-                INSERT INTO error_log (timestamp, source, error_type, message, endpoint, context)
-                VALUES (datetime('now', '-2 hours'), 'gemini_analyzer', 'gemini_api_error', '429 Quota exceeded for model gemini-1.5-flash. Falling back to regex parser.', '/api/gemini/status', 'model=gemini-1.5-flash')
-            """)
-            cursor.execute("""
-                INSERT INTO error_log (timestamp, source, error_type, message, endpoint, context)
-                VALUES (datetime('now', '-1 hours'), 'telegram_monitor', 'network_error', 'Connection reset by peer during Telegram channel poll. Reconnected in 2.5s.', 'telethon_poll', 'channel=@vanek_nikolaev')
-            """)
-            cursor.execute("""
-                INSERT INTO error_log (timestamp, source, error_type, message, endpoint, context)
-                VALUES (datetime('now', '-30 minutes'), 'firebase', 'firebase_error', 'FCM send failed: Requested entity was not found. Topic: region_kyiv_city', 'send_fcm_notification', 'region=м. Київ, topic=region_kyiv_city')
-            """)
-        except Exception as e:
-            print(f"⚠️ Error seeding mock errors: {e}")
+    # Do not seed mock errors — error_log must only record real runtime errors
+    pass
 
 
 def seed_if_empty():
