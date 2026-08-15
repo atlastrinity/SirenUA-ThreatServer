@@ -990,3 +990,85 @@ def resolve_aviation_strike_profile(
         "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else None,
     }
 
+
+def infer_threat_type_details(
+    threat_type: Optional[str] = None,
+    telemetry: Optional[Dict[str, Any]] = None,
+    text: Optional[str] = None
+) -> str:
+    """
+    Intelligently determines the Ukrainian display string for any threat object.
+    If threat_type is known, returns the official registered title (and weapon subtype if present).
+    If threat_type is unknown, systematically checks text keywords, Russian launch airbases/origins,
+    and kinematic radar cruising speeds across all 20 threat types in the registry.
+    """
+    telemetry = telemetry or {}
+    weapon_subtype = telemetry.get("weapon_subtype")
+    if weapon_subtype and str(weapon_subtype).lower() not in ["unknown", "none", ""]:
+        return str(weapon_subtype)
+
+    # 1. Direct match with registered threat types
+    if threat_type and threat_type.lower() != THREAT_UNKNOWN and threat_type.lower() in THREAT_TITLES:
+        return THREAT_TITLES[threat_type.lower()]
+
+    # 2. Text keyword detection if text is provided
+    if text:
+        detected = detect_threat_type_from_text(text)
+        if detected and detected != THREAT_UNKNOWN and detected in THREAT_TITLES:
+            return THREAT_TITLES[detected]
+
+    # 3. Airbase / Launch Hub detection
+    launch_origin = telemetry.get("launch_origin") or (detect_launch_origin_from_text(text) if text else None)
+    if launch_origin:
+        lo_lower = str(launch_origin).lower()
+        if any(h in lo_lower for h in ["саваслейка"]):
+            return "МіГ-31К (Кинджал)"
+        elif any(h in lo_lower for h in ["оленья", "енгельс"]):
+            return "Ту-95МС (крилаті ракети)"
+        elif any(h in lo_lower for h in ["шайковка", "моздок"]):
+            return "Ту-22М3 (ракети Х-22/Х-32)"
+        elif any(h in lo_lower for h in ["приморсько", "єйськ", "чауда", "курськ"]):
+            return "БПЛА Shahed-136"
+        elif any(h in lo_lower for h in ["капустин", "бєлгород"]):
+            return "Балістичне озброєння / Іскандер-М"
+        elif any(h in lo_lower for h in ["чорне море", "каспій"]):
+            return "Крилаті ракети (Калібр/Х-101)"
+
+    # 4. Kinematics & Radar Speed Profiling (covering all 20 registered types)
+    speed = telemetry.get("speed_kmh")
+    if speed:
+        try:
+            sp = float(speed)
+            if sp <= 50:
+                return "Хімічна / локальна загроза"
+            elif sp <= 145:
+                return "Малошвидкісна ціль (ймовірно FPV-дрон або розвідувальний БпЛА)"
+            elif sp <= 240:
+                return "Повітряна ціль (ймовірно ударний БпЛА Shahed-136)"
+            elif sp <= 550:
+                return "Швидкісна ціль (ймовірно реактивний БпЛА / швидкісний дрон)"
+            elif sp <= 1100:
+                return "Швидкісна ціль (ймовірно крилата ракета Х-101/Калібр або КАБ)"
+            elif sp <= 1700:
+                return "Швидкісна ціль (ймовірно авіаційна ракета або артилерійський снаряд)"
+            elif sp <= 3200:
+                return "Високошвидкісна ціль (ймовірно РСЗВ / аеробалістична ракета Кинджал)"
+            elif sp <= 8000:
+                return "Надзвукова / балістична ціль (ймовірно надзвукова ракета Х-22 або Іскандер-М)"
+            else:
+                return "Гіперзвукова ракета (ймовірно 3M22 Циркон)"
+        except (ValueError, TypeError):
+            pass
+
+    # 5. Altitude profiling if speed is missing
+    alt = telemetry.get("altitude_category")
+    if alt:
+        alt_l = str(alt).lower()
+        if alt_l == "low":
+            return "Низьковисотна ціль (ймовірно БпЛА або крилата ракета)"
+        elif alt_l == "high":
+            return "Висотна ціль (ймовірно тактична авіація або балістика)"
+
+    return "Невстановлена повітряна ціль"
+
+
