@@ -247,15 +247,8 @@ class TelegramThreatMonitor:
                         await self._process_message(text, channel)
         except Exception as e:
             err_str = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
-            import time
-            now_ts = time.time()
-            last_ts = self._scraper_last_error_time.get(channel, 0.0)
-            # Throttle DB error log entry to at most once every 30 minutes per channel to prevent error log spam
-            if now_ts - last_ts > 1800:
-                self._scraper_last_error_time[channel] = now_ts
-                self.log_error("telegram", f"Помилка скрейпера для каналу {channel}: {err_str}", endpoint="_scrape_channel")
-            else:
-                logger.warning(f"⚠️ [Web Scraper] {channel}: {err_str}")
+            # Network and timeout errors during periodic web scraping are normal transient events
+            logger.warning(f"⚠️ [Web Scraper] {channel}: {err_str}")
 
     def _find_path(self, start_region: str, end_region: str) -> list[str]:
         """BFS algorithm to find the shortest path between two regions."""
