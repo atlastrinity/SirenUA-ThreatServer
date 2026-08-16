@@ -716,19 +716,36 @@ async def get_multihop_flight_chains(days: int = 30):
 
         # 2. From gemini_rules route patterns
         rules_query = """
-            SELECT source_region, target_region, evidence_count
+            SELECT source_region, target_region, evidence_count, accuracy_score
             FROM gemini_rules
             WHERE rule_type = 'route_pattern' AND is_active = 1
         """
         rules_rows = execute_query_as_dicts(rules_query)
+        rule_map = {}
         for r in rules_rows:
             src = r["source_region"]
             tgt = r["target_region"]
             cnt = r.get("evidence_count") or 1
+            acc = r.get("accuracy_score") or 0.6
+            weight = max(1, int(round(cnt * (acc / 0.5))))
             if src and tgt:
                 if src not in junction_branches:
                     junction_branches[src] = {}
-                junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + cnt
+                junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + weight
+
+                if src not in rule_map:
+                    rule_map[src] = []
+                rule_map[src].append((tgt, cnt, acc))
+
+        # Synthesize multi-hop Markov chains from connected learned route rules
+        for src, next_nodes in rule_map.items():
+            for mid, cnt1, acc1 in next_nodes:
+                if mid in rule_map:
+                    for tgt, cnt2, acc2 in rule_map[mid]:
+                        if tgt != src:
+                            chain_str = f"{src} ➔ {mid} ➔ {tgt}"
+                            comb_weight = max(1, int(round(min(cnt1, cnt2) * ((acc1 + acc2) / 1.0))))
+                            chain_counts[chain_str] = chain_counts.get(chain_str, 0) + comb_weight
 
         # 3. From paired_events sequences
         query = """

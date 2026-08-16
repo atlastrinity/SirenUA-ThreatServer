@@ -862,6 +862,17 @@ class TelegramThreatMonitor:
                     distance_km = math.sqrt(dlat**2 + dlon**2)
                     if speed and speed > 0:
                         eta_seconds = int((distance_km / speed) * 3600)
+
+                # Check if learned eta_math rule exists in DB
+                try:
+                    learned_eta = self._get_learned_eta_math(source_region, adj_region, threat_type)
+                    if learned_eta is not None and learned_eta > 0:
+                        if eta_seconds is not None:
+                            eta_seconds = int(learned_eta * 0.65 + eta_seconds * 0.35)
+                        else:
+                            eta_seconds = learned_eta
+                except Exception:
+                    pass
                 
                 # Calculate final prediction score
                 base_score = direction_score * 0.6
@@ -1094,13 +1105,53 @@ class TelegramThreatMonitor:
             pass
         return {}
 
+    def _get_learned_eta_math(self, source: str, target: str, threat_type: str) -> Optional[int]:
+        """Fetch empirical flight duration in seconds from learned gemini_rules (eta_math)."""
+        try:
+            import sqlite3
+            import json
+            conn = sqlite3.connect("threat_analytics.db")
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT rule_json, accuracy_score FROM gemini_rules
+                WHERE rule_type = 'eta_math'
+                  AND source_region = ? AND target_region = ? AND threat_type = ?
+                  AND is_active = 1 AND accuracy_score >= 0.55
+                ORDER BY (accuracy_score * evidence_count) DESC LIMIT 1
+            ''', (source, target, threat_type))
+            row = cursor.fetchone()
+            conn.close()
+            if row and row[0]:
+                data = json.loads(row[0])
+                avg_min = data.get("avg_eta_minutes")
+                if avg_min and avg_min > 0:
+                    return int(avg_min * 60)
+        except Exception:
+            pass
+        return None
+
     def _get_historical_route_score(self, source: str, target: str) -> float:
-        """Check DB for historical threat progression from source → target region."""
+        """Check DB for historical threat progression from source → target region, combining gemini_rules and threat_clearings."""
         try:
             import sqlite3
             conn = sqlite3.connect("threat_analytics.db")
             cursor = conn.cursor()
-            # Look for clearings where target had a threat shortly after source
+
+            # 1. Primary check: learned empirical route_pattern rules
+            cursor.execute('''
+                SELECT accuracy_score, evidence_count FROM gemini_rules
+                WHERE rule_type = 'route_pattern'
+                  AND source_region = ? AND target_region = ?
+                  AND is_active = 1 AND accuracy_score >= 0.55
+                ORDER BY (accuracy_score * evidence_count) DESC LIMIT 1
+            ''', (source, target))
+            rule_row = cursor.fetchone()
+            if rule_row:
+                acc = rule_row[0] or 0.6
+                conn.close()
+                return min(0.35, max(0.15, round(acc * 0.35, 2)))
+
+            # 2. Secondary check: historical threat_clearings confirmations
             cursor.execute('''
                 SELECT COUNT(*) FROM threat_clearings
                 WHERE region = ? AND linked_group_id IN (
