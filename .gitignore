@@ -26,6 +26,8 @@ firebase-credentials.json
 *.log
 logs/
 server.log
+*.pid
+server.pid
 
 # Databases & Backups
 *.db

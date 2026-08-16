@@ -12,7 +12,7 @@ async def run_rules_learner_loop(monitor_instance):
     
     while getattr(monitor_instance, "is_running", False):
         try:
-            count = run_rules_learner(monitor_instance)
+            count = await asyncio.to_thread(run_rules_learner, monitor_instance)
             if count > 0:
                 print(f"🧠 [Rules Learner] Автонавчання завершено: {count} правил створено/оновлено")
         except Exception as e:
