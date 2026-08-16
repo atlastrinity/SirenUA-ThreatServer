@@ -210,42 +210,52 @@ def smart_local_incremental_backup() -> dict:
 
     src_conn = None
     dst_conn = None
+    archive_conn = None
     try:
         from database.connection import get_sqlite_connection
         # 1. Initialize archive DB
         archive_conn = get_sqlite_connection(archive_path)
-        init_archive_tables(archive_conn)
-        archive_conn.close()
+        try:
+            init_archive_tables(archive_conn)
+        finally:
+            archive_conn.close()
+            archive_conn = None
 
         # 2. Attach archive DB to live DB connection and copy new rows
         src_conn = get_sqlite_connection(DB_PATH)
-        src_conn.execute(f"ATTACH DATABASE '{archive_path}' AS archive_db")
-
-        tables_to_sync = [
-            ("threat_history", "INSERT OR IGNORE INTO archive_db.threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test) SELECT timestamp, region, threat_level, threat_type, detail, confidence, is_test FROM main.threat_history"),
-            ("paired_events", "INSERT OR IGNORE INTO archive_db.paired_events (created_at, region, threat_event_id, telemetry_id, clearing_event_id, lifecycle_status, threat_level, threat_type, confidence_at_set, confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds, gemini_group_id, rules_applied) SELECT created_at, region, threat_event_id, telemetry_id, clearing_event_id, lifecycle_status, threat_level, threat_type, confidence_at_set, confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds, gemini_group_id, rules_applied FROM main.paired_events"),
-            ("threat_clearings", "INSERT OR IGNORE INTO archive_db.threat_clearings (timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test) SELECT timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test FROM main.threat_clearings"),
-            ("telemetry_data", "INSERT OR IGNORE INTO archive_db.telemetry_data (threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords) SELECT threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords FROM main.telemetry_data"),
-            ("gemini_rules", "INSERT OR REPLACE INTO archive_db.gemini_rules (id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated) SELECT id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated FROM main.gemini_rules"),
-            ("gemini_rules_audit", "INSERT OR IGNORE INTO archive_db.gemini_rules_audit (id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason) SELECT id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason FROM main.gemini_rules_audit"),
-            ("palantir_reports", "INSERT OR REPLACE INTO archive_db.palantir_reports (id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by) SELECT id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by FROM main.palantir_reports"),
-            ("analytics_reports", "INSERT OR REPLACE INTO archive_db.analytics_reports (id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by) SELECT id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by FROM main.analytics_reports"),
-            ("error_log", "INSERT OR IGNORE INTO archive_db.error_log (id, timestamp, source, error_type, message, endpoint, context) SELECT id, timestamp, source, error_type, message, endpoint, context FROM main.error_log"),
-        ]
-
         total_appended = 0
-        for table, query in tables_to_sync:
-            try:
-                cur = src_conn.execute(query)
-                added_stats[table] = cur.rowcount
-                if cur.rowcount > 0:
-                    total_appended += cur.rowcount
-            except Exception as te:
-                logger.debug(f"[Smart Backup] Помилка синхронізації таблиці {table}: {te}")
+        try:
+            src_conn.execute(f"ATTACH DATABASE '{archive_path}' AS archive_db")
 
-        src_conn.commit()
-        src_conn.close()
-        src_conn = None
+            tables_to_sync = [
+                ("threat_history", "INSERT OR IGNORE INTO archive_db.threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test) SELECT timestamp, region, threat_level, threat_type, detail, confidence, is_test FROM main.threat_history"),
+                ("paired_events", "INSERT OR IGNORE INTO archive_db.paired_events (created_at, region, threat_event_id, telemetry_id, clearing_event_id, lifecycle_status, threat_level, threat_type, confidence_at_set, confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds, gemini_group_id, rules_applied) SELECT created_at, region, threat_event_id, telemetry_id, clearing_event_id, lifecycle_status, threat_level, threat_type, confidence_at_set, confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds, gemini_group_id, rules_applied FROM main.paired_events"),
+                ("threat_clearings", "INSERT OR IGNORE INTO archive_db.threat_clearings (timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test) SELECT timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test FROM main.threat_clearings"),
+                ("telemetry_data", "INSERT OR IGNORE INTO archive_db.telemetry_data (threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords) SELECT threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords FROM main.telemetry_data"),
+                ("gemini_rules", "INSERT OR REPLACE INTO archive_db.gemini_rules (id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated) SELECT id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated FROM main.gemini_rules"),
+                ("gemini_rules_audit", "INSERT OR IGNORE INTO archive_db.gemini_rules_audit (id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason) SELECT id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason FROM main.gemini_rules_audit"),
+                ("palantir_reports", "INSERT OR REPLACE INTO archive_db.palantir_reports (id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by) SELECT id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by FROM main.palantir_reports"),
+                ("analytics_reports", "INSERT OR REPLACE INTO archive_db.analytics_reports (id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by) SELECT id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by FROM main.analytics_reports"),
+                ("error_log", "INSERT OR IGNORE INTO archive_db.error_log (id, timestamp, source, error_type, message, endpoint, context) SELECT id, timestamp, source, error_type, message, endpoint, context FROM main.error_log"),
+            ]
+
+            for table, query in tables_to_sync:
+                try:
+                    cur = src_conn.execute(query)
+                    added_stats[table] = cur.rowcount
+                    if cur.rowcount > 0:
+                        total_appended += cur.rowcount
+                except Exception as te:
+                    logger.debug(f"[Smart Backup] Помилка синхронізації таблиці {table}: {te}")
+
+            src_conn.commit()
+        finally:
+            try:
+                src_conn.execute("DETACH DATABASE archive_db")
+            except Exception:
+                pass
+            src_conn.close()
+            src_conn = None
 
         # 3. Also update latest full snapshot file with non-blocking chunked backup
         base_dir = os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else "."
@@ -253,11 +263,21 @@ def smart_local_incremental_backup() -> dict:
         
         src_conn = get_sqlite_connection(DB_PATH)
         dst_conn = get_sqlite_connection(latest_path)
-        src_conn.backup(dst_conn, pages=100, sleep=0.01)
-        dst_conn.close()
-        dst_conn = None
-        src_conn.close()
-        src_conn = None
+        try:
+            src_conn.backup(dst_conn, pages=100, sleep=0.01)
+        finally:
+            if dst_conn:
+                try:
+                    dst_conn.close()
+                except Exception:
+                    pass
+                dst_conn = None
+            if src_conn:
+                try:
+                    src_conn.close()
+                except Exception:
+                    pass
+                src_conn = None
 
         if total_appended > 0:
             logger.info(f"💾 [Smart Backup 5m] Успішно дозаписано {total_appended} нових подій у постійний архів ({archive_path}).")
@@ -266,6 +286,11 @@ def smart_local_incremental_backup() -> dict:
         logger.error(f"❌ [Smart Backup Error] Помилка розумного бекапу: {e}")
         return {"status": "error", "error": str(e)}
     finally:
+        if archive_conn:
+            try:
+                archive_conn.close()
+            except Exception:
+                pass
         if dst_conn:
             try:
                 dst_conn.close()
