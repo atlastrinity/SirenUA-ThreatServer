@@ -371,6 +371,69 @@ class GeminiRulesLearner:
             print(f"⚠️ [Rules Learner] Помилка навчання авіаційних патернів: {e}")
         return rules_updated
 
+    def _learn_launch_site_patterns(self, cursor) -> int:
+        """Derives weapon-specific ground pad, naval base, and airfield correlation rules (launch_site_pattern)."""
+        rules_updated = 0
+        try:
+            cursor.execute('''
+                SELECT 
+                    td.launch_origin,
+                    pe.region as target_region,
+                    pe.threat_type,
+                    COUNT(*) as occurrence_count,
+                    AVG(CASE WHEN pe.prediction_accuracy IN ('confirmed', 'mitigated') THEN 1.0 
+                             WHEN pe.prediction_accuracy = 'partially_confirmed' THEN 0.7
+                             WHEN pe.prediction_accuracy = 'overestimated' THEN 0.2
+                             ELSE 0.5 END) as accuracy
+                FROM paired_events pe
+                JOIN telemetry_data td ON pe.telemetry_id = td.id
+                WHERE pe.lifecycle_status = 'cleared'
+                  AND td.launch_origin IS NOT NULL
+                  AND LENGTH(TRIM(td.launch_origin)) > 2
+                  AND pe.created_at >= datetime('now', '-30 days')
+                GROUP BY td.launch_origin, pe.region, pe.threat_type
+                HAVING occurrence_count >= 2
+            ''')
+
+            for row in cursor.fetchall():
+                src = row["launch_origin"]
+                tgt = row["target_region"]
+                threat_type = row["threat_type"]
+                count = row["occurrence_count"]
+                acc = round(row["accuracy"], 2)
+
+                rule_text = (f"Майданчик пуску [{threat_type}] '{src}' має {acc*100:.0f}% точність "
+                             f"застосування по напрямку {tgt} (підтверджено {count} раз)")
+
+                rule_json = json.dumps({
+                    "launch_origin": src,
+                    "target_region": tgt,
+                    "threat_type": threat_type,
+                    "accuracy": acc,
+                    "count": count
+                }, ensure_ascii=False)
+
+                cursor.execute('''
+                    DELETE FROM gemini_rules 
+                    WHERE rule_type = 'launch_site_pattern' 
+                      AND source_region = ? AND target_region = ? AND threat_type = ?
+                ''', (src, tgt, threat_type))
+
+                cursor.execute('''
+                    INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type,
+                        rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
+                    VALUES ('launch_site_pattern', ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                ''', (src, tgt, threat_type, rule_text, rule_json, count, acc))
+
+                rules_updated += 1
+                if self._rule_audit_callback:
+                    self._rule_audit_callback("added", rule_type="launch_site_pattern", rule_text=rule_text,
+                        source_region=src, target_region=tgt, threat_type=threat_type,
+                        reason=f"launch_site_rule: count={count}, accuracy={acc:.2f}")
+        except Exception as e:
+            print(f"⚠️ [Rules Learner] Помилка навчання майданчиків пуску: {e}")
+        return rules_updated
+
     def run_rules_learner(self) -> int:
         """Central Rules Learner loop executed autonomously."""
         try:
@@ -384,12 +447,13 @@ class GeminiRulesLearner:
             r3 = self._learn_time_patterns(cursor)
             r4 = self._learn_eta_math_patterns(cursor)
             r5 = self._learn_aviation_strike_patterns(cursor)
+            r6 = self._learn_launch_site_patterns(cursor)
 
             conn.commit()
             conn.close()
 
-            total_learned = r1 + r2 + r3 + r4 + r5
-            print(f"🧠 [Rules Learner] Навчання завершено: {total_learned} активних правил (маршрути: {r1}, confidence: {r2}, час: {r3}, ETA: {r4}, авіація: {r5})")
+            total_learned = r1 + r2 + r3 + r4 + r5 + r6
+            print(f"🧠 [Rules Learner] Навчання завершено: {total_learned} активних правил (маршрути: {r1}, confidence: {r2}, час: {r3}, ETA: {r4}, авіація: {r5}, майданчики: {r6})")
             return total_learned
         except Exception as e:
             print(f"⚠️ [Rules Learner] Помилка виконання циклу навчання: {e}")

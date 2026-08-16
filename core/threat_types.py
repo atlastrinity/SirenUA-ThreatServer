@@ -356,6 +356,8 @@ AIRBASE_SAKY = "saky_crimea"
 AIRBASE_GVARDEYSKOYE = "gvardeyskoye_crimea"
 AIRBASE_SOLTSY = "soltsy"
 AIRBASE_LIPETSK = "lipetsk"
+AIRBASE_SESHCHA = "seshcha"
+AIRBASE_KRYMSK = "krymsk"
 LAUNCH_HUB_CHAUDA = "chauda_crimea"
 LAUNCH_HUB_BLACK_SEA = "black_sea"
 LAUNCH_HUB_CASPIAN_SEA = "caspian_sea"
@@ -494,10 +496,22 @@ RUSSIAN_AIRBASES: Dict[str, Dict[str, Any]] = {
         "lat_lon": (58.14, 30.33),
     },
     AIRBASE_LIPETSK: {
-        "title": "Авіацентр Липецьк (Липецька обл.)",
+        "title": "Авіацентр Липецьк-2 (Липецька обл.)",
         "primary_threat": THREAT_SU35,
         "keywords": ["липецьк", "липецк", "lipetsk"],
         "lat_lon": (52.64, 39.45),
+    },
+    AIRBASE_KRYMSK: {
+        "title": "Аеродром Кримськ (Краснодарський край)",
+        "primary_threat": THREAT_SU35,
+        "keywords": ["кримськ", "крымск", "krymsk"],
+        "lat_lon": (44.96, 37.99),
+    },
+    AIRBASE_SESHCHA: {
+        "title": "Авіабаза Сеща (Брянська обл.)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["сеща", "seshcha"],
+        "lat_lon": (53.71, 33.34),
     },
     LAUNCH_HUB_CHAUDA: {
         "title": "Мис Чауда (АР Крим)",
@@ -516,6 +530,360 @@ RUSSIAN_AIRBASES: Dict[str, Dict[str, Any]] = {
         "primary_threat": THREAT_CRUISE_MISSILE,
         "keywords": ["каспійське море", "каспійського моря", "каспій"],
         "lat_lon": (42.00, 51.00),
+    },
+}
+
+# ==============================================================================
+# 🛰️ GROUND DRONE LAUNCH SITES (Наземні полігони та майданчики пуску БпЛА Shahed/Гербера)
+# ==============================================================================
+DRONE_SITE_CHAUDA = "drone_site_chauda"
+DRONE_SITE_PRIMORSKO_AKHTARSK = "drone_site_primorsko_akhtarsk"
+DRONE_SITE_YEYSK = "drone_site_yeysk"
+DRONE_SITE_KURSK = "drone_site_kursk"
+DRONE_SITE_OREL = "drone_site_orel"
+DRONE_SITE_SESHCHA = "drone_site_seshcha"
+DRONE_SITE_MILLEROVO = "drone_site_millerovo"
+DRONE_SITE_GVARDEYSKOYE = "drone_site_gvardeyskoye"
+
+DRONE_LAUNCH_SITES: Dict[str, Dict[str, Any]] = {
+    DRONE_SITE_CHAUDA: {
+        "title": "Мис Чауда (АР Крим)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["чауда", "chauda", "крим", "ар крим", "феодосія", "чорне море"],
+        "lat_lon": (45.00, 35.83),
+        "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область", "Кіровоградська область", "Вінницька область", "Черкаська область"],
+    },
+    DRONE_SITE_PRIMORSKO_AKHTARSK: {
+        "title": "Приморсько-Ахтарськ (Краснодарський край РФ)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["приморсько-ахтарськ", "приморско-ахтарск", "приморськ", "ахтарськ"],
+        "lat_lon": (46.05, 38.16),
+        "target_regions": ["Запорізька область", "Дніпропетровська область", "Полтавська область", "Харківська область", "Кіровоградська область"],
+    },
+    DRONE_SITE_YEYSK: {
+        "title": "Єйськ (Краснодарський край РФ)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["єйськ", "ейск", "yeysk"],
+        "lat_lon": (46.68, 38.25),
+        "target_regions": ["Запорізька область", "Дніпропетровська область", "Донецька область", "Харківська область"],
+    },
+    DRONE_SITE_KURSK: {
+        "title": "Полігон Халіно / Курськ (РФ)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["курськ", "курск", "халіно", "kursk"],
+        "lat_lon": (51.75, 36.29),
+        "target_regions": ["Сумська область", "Чернігівська область", "Полтавська область", "Київська область", "Черкаська область"],
+    },
+    DRONE_SITE_OREL: {
+        "title": "Полігон Південний / Орел (РФ)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["орел", "орьол", "orel"],
+        "lat_lon": (52.93, 36.00),
+        "target_regions": ["Сумська область", "Чернігівська область", "Київська область", "Житомирська область"],
+    },
+    DRONE_SITE_SESHCHA: {
+        "title": "Авіабаза Сеща (Брянська обл. РФ)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["сеща", "брянськ", "брянск", "seshcha"],
+        "lat_lon": (53.71, 33.34),
+        "target_regions": ["Чернігівська область", "Київська область", "Житомирська область"],
+    },
+    DRONE_SITE_MILLEROVO: {
+        "title": "Міллерово (Ростовська обл. РФ)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["міллерово", "миллерово", "millerovo"],
+        "lat_lon": (48.95, 40.30),
+        "target_regions": ["Харківська область", "Дніпропетровська область", "Донецька область", "Полтавська область"],
+    },
+    DRONE_SITE_GVARDEYSKOYE: {
+        "title": "Гвардійське / Джанкой (АР Крим)",
+        "primary_threat": THREAT_SHAHED,
+        "keywords": ["гвардійське", "джанкой", "гвардейское"],
+        "lat_lon": (45.11, 33.97),
+        "target_regions": ["Херсонська область", "Миколаївська область", "Одеська область", "Запорізька область"],
+    },
+}
+
+# ==============================================================================
+# ⚓ NAVAL LAUNCH BASES & SEAS (Морські райони базування флоту для ракет «Калібр»/«Циркон»)
+# ==============================================================================
+NAVAL_BASE_BLACK_SEA = "naval_base_black_sea"
+NAVAL_BASE_CASPIAN_SEA = "naval_base_caspian_sea"
+NAVAL_BASE_NOVOROSSIYSK = "naval_base_novorossiysk"
+NAVAL_BASE_SEVASTOPOL = "naval_base_sevastopol"
+
+NAVAL_LAUNCH_BASES: Dict[str, Dict[str, Any]] = {
+    NAVAL_BASE_BLACK_SEA: {
+        "title": "Акваторія Чорного моря (Флот РФ)",
+        "primary_threat": THREAT_CRUISE_MISSILE,
+        "keywords": ["чорне море", "чорного моря", "чм", "фрегат", "варшавянка", "калібр з моря"],
+        "lat_lon": (44.50, 32.00),
+        "target_regions": ["Одеська область", "Миколаївська область", "Вінницька область", "Хмельницька область", "Львівська область", "Черкаська область"],
+    },
+    NAVAL_BASE_CASPIAN_SEA: {
+        "title": "Акваторія Каспійського моря (Флотилія РФ)",
+        "primary_threat": THREAT_CRUISE_MISSILE,
+        "keywords": ["каспійське море", "каспійського моря", "каспій", "дагестан", "буян-м"],
+        "lat_lon": (42.00, 51.50),
+        "target_regions": ["Київська область", "Полтавська область", "Черкаська область", "Дніпропетровська область", "Харківська область"],
+    },
+    NAVAL_BASE_NOVOROSSIYSK: {
+        "title": "Військово-морська база Новоросійськ (Краснодарський край)",
+        "primary_threat": THREAT_CRUISE_MISSILE,
+        "keywords": ["новоросійськ", "новороссийск", "вмб новоросійськ"],
+        "lat_lon": (44.72, 37.78),
+        "target_regions": ["Одеська область", "Миколаївська область", "Вінницька область"],
+    },
+    NAVAL_BASE_SEVASTOPOL: {
+        "title": "Севастопольська бухта (ТОТ Крим)",
+        "primary_threat": THREAT_CRUISE_MISSILE,
+        "keywords": ["севастополь", "севастопольська бухта", "південна бухта"],
+        "lat_lon": (44.62, 33.53),
+        "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область"],
+    },
+}
+
+# ==============================================================================
+# 🚀 BALLISTIC & COASTAL MISSILE SITES (Позиційні райони ОТРК Іскандер-М/KN-23/Бастіон/С-300)
+# ==============================================================================
+BALLISTIC_SITE_TARKHANKUT = "ballistic_site_tarkhankut"
+BALLISTIC_SITE_DZHANkOY = "ballistic_site_dzhankoy"
+BALLISTIC_SITE_BELGOROD = "ballistic_site_belgorod"
+BALLISTIC_SITE_KURSK = "ballistic_site_kursk"
+BALLISTIC_SITE_BRYANSK = "ballistic_site_bryansk"
+BALLISTIC_SITE_VORONEZH = "ballistic_site_voronezh"
+BALLISTIC_SITE_ROSTOV = "ballistic_site_rostov"
+BALLISTIC_SITE_KAPUSTIN_YAR = "ballistic_site_kapustin_yar"
+BALLISTIC_SITE_TOT_ZAPORIZHZHIA = "ballistic_site_tot_zaporizhzhia"
+
+BALLISTIC_LAUNCH_SITES: Dict[str, Dict[str, Any]] = {
+    BALLISTIC_SITE_TARKHANKUT: {
+        "title": "Позиційний район мис Тарханкут (АР Крим)",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["тарханкут", "бастіон", "онікс", "іскандер крим"],
+        "lat_lon": (45.34, 32.50),
+        "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область"],
+    },
+    BALLISTIC_SITE_DZHANkOY: {
+        "title": "Позиційний район Джанкой / Чауда (АР Крим)",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["джанкой", "чауда балістика", "іскандер джанкой"],
+        "lat_lon": (45.71, 34.39),
+        "target_regions": ["Запорізька область", "Дніпропетровська область", "Миколаївська область", "Одеська область"],
+    },
+    BALLISTIC_SITE_BELGOROD: {
+        "title": "Позиційний район Бєлгородська обл. РФ",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["бєлгород", "белгород", "с-300 бєлгород", "іскандер бєлгород"],
+        "lat_lon": (50.60, 36.58),
+        "target_regions": ["Харківська область", "Сумська область", "Полтавська область"],
+    },
+    BALLISTIC_SITE_KURSK: {
+        "title": "Позиційний район Курська обл. РФ",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["курськ", "курск", "іскандер курськ", "kn-23"],
+        "lat_lon": (51.70, 35.50),
+        "target_regions": ["Сумська область", "Чернігівська область", "Київська область", "Полтавська область"],
+    },
+    BALLISTIC_SITE_BRYANSK: {
+        "title": "Позиційний район Брянська обл. РФ (Клинці/Унеча)",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["брянськ", "клинці", "унеча", "брянск"],
+        "lat_lon": (52.50, 33.50),
+        "target_regions": ["Чернігівська область", "Київська область", "Житомирська область"],
+    },
+    BALLISTIC_SITE_VORONEZH: {
+        "title": "Позиційний район Воронезька обл. РФ",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["воронеж", "воронезька"],
+        "lat_lon": (51.00, 39.50),
+        "target_regions": ["Харківська область", "Полтавська область", "Дніпропетровська область"],
+    },
+    BALLISTIC_SITE_ROSTOV: {
+        "title": "Позиційний район Ростовська обл. / Таганрог РФ",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["ростов", "таганрог", "іскандер ростов"],
+        "lat_lon": (47.25, 39.00),
+        "target_regions": ["Донецька область", "Запорізька область", "Дніпропетровська область", "Харківська область"],
+    },
+    BALLISTIC_SITE_KAPUSTIN_YAR: {
+        "title": "Полігон Капустін Яр (Астраханська обл. РФ)",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["капустін яр", "капустин яр", "орєшнік", "рс-26"],
+        "lat_lon": (48.58, 45.74),
+        "target_regions": ["Дніпропетровська область", "Київська область", "Львівська область", "Харківська область"],
+    },
+    BALLISTIC_SITE_TOT_ZAPORIZHZHIA: {
+        "title": "Позиційний район ТОТ Запорізької обл. (Бердянськ/Мелітополь)",
+        "primary_threat": THREAT_BALLISTIC,
+        "keywords": ["бердянськ", "мелітополь", "тот запоріз", "с-300 запоріж"],
+        "lat_lon": (47.15, 35.80),
+        "target_regions": ["Запорізька область", "Дніпропетровська область"],
+    },
+}
+
+# ==============================================================================
+# 💥 ARTILLERY & MLRS FIRING POSITIONS (Вогневі позиції ствольної артилерії та РСЗВ)
+# ==============================================================================
+ARTILLERY_POS_TOT_ZAPORIZHZHIA = "artillery_pos_tot_zaporizhzhia"
+ARTILLERY_POS_TOT_KHERSON = "artillery_pos_tot_kherson"
+ARTILLERY_POS_TOT_DONETSK = "artillery_pos_tot_donetsk"
+ARTILLERY_POS_TOT_LUHANSK = "artillery_pos_tot_luhansk"
+ARTILLERY_POS_BELGOROD_BORDER = "artillery_pos_belgorod_border"
+ARTILLERY_POS_KURSK_BORDER = "artillery_pos_kursk_border"
+ARTILLERY_POS_BRYANSK_BORDER = "artillery_pos_bryansk_border"
+ARTILLERY_POS_KINBURN_SPIT = "artillery_pos_kinburn_spit"
+
+ARTILLERY_MLRS_LAUNCH_SITES: Dict[str, Dict[str, Any]] = {
+    ARTILLERY_POS_TOT_ZAPORIZHZHIA: {
+        "title": "Вогневі позиції ТОТ Запорізької обл. (Енергодар / Пологи)",
+        "primary_threat": THREAT_ARTILLERY,
+        "keywords": ["енергодар", "кам'янка-дніпровська", "пологи", "василівка", "дніпрорудне", "запорізька арт"],
+        "lat_lon": (47.45, 34.65),
+        "target_regions": ["Запорізька область", "Дніпропетровська область"],
+    },
+    ARTILLERY_POS_TOT_KHERSON: {
+        "title": "Вогневі позиції ТОТ Херсонської обл. (Олешки / Каховка)",
+        "primary_threat": THREAT_ARTILLERY,
+        "keywords": ["олешки", "каховка", "гола пристань", "лівий берег", "херсонська арт"],
+        "lat_lon": (46.61, 32.72),
+        "target_regions": ["Херсонська область", "Миколаївська область"],
+    },
+    ARTILLERY_POS_TOT_DONETSK: {
+        "title": "Вогневі позиції ТОТ Донецької обл. (Горлівка / Донецьк / Волноваха)",
+        "primary_threat": THREAT_ARTILLERY,
+        "keywords": ["горлівка", "донецьк арт", "волноваха", "макіївка", "донецька арт"],
+        "lat_lon": (48.00, 37.80),
+        "target_regions": ["Донецька область", "Харківська область", "Дніпропетровська область"],
+    },
+    ARTILLERY_POS_TOT_LUHANSK: {
+        "title": "Вогневі позиції ТОТ Луганської обл. (Кремінна / Лисичанськ)",
+        "primary_threat": THREAT_ARTILLERY,
+        "keywords": ["кремінна", "лисичанськ", "рубіжне", "луганська арт"],
+        "lat_lon": (48.95, 38.25),
+        "target_regions": ["Харківська область", "Донецька область", "Луганська область"],
+    },
+    ARTILLERY_POS_BELGOROD_BORDER: {
+        "title": "Вогневі позиції Бєлгородської обл. РФ (Шебекіно / Грайворон)",
+        "primary_threat": THREAT_ARTILLERY,
+        "keywords": ["шебекіно", "грайворон", "валуйки", "бєлгород арт"],
+        "lat_lon": (50.41, 36.89),
+        "target_regions": ["Харківська область", "Сумська область"],
+    },
+    ARTILLERY_POS_KURSK_BORDER: {
+        "title": "Вогневі позиції Курської обл. РФ (Тьоткіно / Глушково)",
+        "primary_threat": THREAT_ARTILLERY,
+        "keywords": ["тьоткіно", "глушково", "суджа", "курськ арт"],
+        "lat_lon": (51.27, 34.60),
+        "target_regions": ["Сумська область", "Чернігівська область"],
+    },
+    ARTILLERY_POS_BRYANSK_BORDER: {
+        "title": "Вогневі позиції Брянської обл. РФ (Климово / Суземка)",
+        "primary_threat": THREAT_ARTILLERY,
+        "keywords": ["климово", "суземка", "стародуб", "брянськ арт"],
+        "lat_lon": (52.38, 32.18),
+        "target_regions": ["Чернігівська область", "Сумська область"],
+    },
+    ARTILLERY_POS_KINBURN_SPIT: {
+        "title": "Вогневі позиції Кінбурнська коса (ТОТ Херсон/Миколаїв)",
+        "primary_threat": THREAT_ARTILLERY,
+        "keywords": ["кінбурн", "кінбурнська коса", "очаків арт", "куцуруб"],
+        "lat_lon": (46.52, 31.65),
+        "target_regions": ["Миколаївська область", "Херсонська область"],
+    },
+}
+
+# ==============================================================================
+# 🎮 FPV & RECON DRONE LAUNCH POSITIONS (Позиції розрахунків FPV та БпЛА розвідки)
+# ==============================================================================
+FPV_POS_ZAPORIZHZHIA = "fpv_pos_zaporizhzhia"
+FPV_POS_KHERSON = "fpv_pos_kherson"
+FPV_POS_DONETSK = "fpv_pos_donetsk"
+FPV_POS_KHARKIV = "fpv_pos_kharkiv"
+FPV_POS_SUMY_BORDER = "fpv_pos_sumy_border"
+FPV_POS_CRIMEA = "fpv_pos_crimea"
+
+FPV_RECON_LAUNCH_SITES: Dict[str, Dict[str, Any]] = {
+    FPV_POS_ZAPORIZHZHIA: {
+        "title": "Передові позиції ЛБЗ (Запорізький напрямок)",
+        "primary_threat": THREAT_FPV,
+        "keywords": ["оріхів фпв", "роботине", "гуляйполе фпв", "запорізький напрямок фпв"],
+        "lat_lon": (47.50, 35.80),
+        "target_regions": ["Запорізька область", "Дніпропетровська область"],
+    },
+    FPV_POS_KHERSON: {
+        "title": "Передові позиції лівий берег Дніпра (Херсонський напрямок)",
+        "primary_threat": THREAT_FPV,
+        "keywords": ["кринки", "козачі лагері", "лівий берег фпв", "херсонський напрямок фпв"],
+        "lat_lon": (46.65, 32.65),
+        "target_regions": ["Херсонська область", "Миколаївська область"],
+    },
+    FPV_POS_DONETSK: {
+        "title": "Передові позиції ЛБЗ (Покровський / Торецький напрямок)",
+        "primary_threat": THREAT_FPV,
+        "keywords": ["покровськ фпв", "торецьк фпв", "курахове фпв", "донецький напрямок фпв"],
+        "lat_lon": (48.15, 37.30),
+        "target_regions": ["Донецька область", "Дніпропетровська область"],
+    },
+    FPV_POS_KHARKIV: {
+        "title": "Передові позиції ЛБЗ (Куп'янський / Вовчанський напрямок)",
+        "primary_threat": THREAT_FPV,
+        "keywords": ["куп'янськ фпв", "вовчанськ фпв", "харківський напрямок фпв", "липці"],
+        "lat_lon": (50.10, 37.10),
+        "target_regions": ["Харківська область"],
+    },
+    FPV_POS_SUMY_BORDER: {
+        "title": "Прикордонні позиції РФ (Сумський / Чернігівський напрямок)",
+        "primary_threat": THREAT_FPV,
+        "keywords": ["сумське прикордоння фпв", "чернігівське прикордоння фпв"],
+        "lat_lon": (51.50, 35.00),
+        "target_regions": ["Сумська область", "Чернігівська область"],
+    },
+    FPV_POS_CRIMEA: {
+        "title": "Авіамайданчики та полігони ТОТ Криму (Гвардійське / Джанкой)",
+        "primary_threat": THREAT_RECON_UAV,
+        "keywords": ["орлан крим", "зала крим", "суперкам крим", "джанкой бпла"],
+        "lat_lon": (45.20, 34.00),
+        "target_regions": ["Херсонська область", "Миколаївська область", "Одеська область", "Запорізька область"],
+    },
+}
+
+# ==============================================================================
+# 🛡️ SPECIAL HAZARDS & COMBAT ZONES (Вуличні бої / Радіація / Хімнебезпека / Циркон)
+# ==============================================================================
+SITE_ZIRCON_CRIMEA = "site_zircon_crimea"
+SITE_ZNPP_ZONE = "site_znpp_zone"
+SITE_URBAN_DONETSK = "site_urban_donetsk"
+SITE_URBAN_KHARKIV = "site_urban_kharkiv"
+
+SPECIAL_THREAT_SITES: Dict[str, Dict[str, Any]] = {
+    SITE_ZIRCON_CRIMEA: {
+        "title": "БРК Бастіон / Кораблі ЧФ (ТОТ Крим / Севастополь)",
+        "primary_threat": THREAT_ZIRCON,
+        "keywords": ["циркон", "zircon", "3м22", "гіперзвук з криму"],
+        "lat_lon": (44.60, 33.50),
+        "target_regions": ["Київська область", "Одеська область", "Миколаївська область", "Дніпропетровська область", "Запорізька область"],
+    },
+    SITE_ZNPP_ZONE: {
+        "title": "Зона ризику ЗАЕС (м. Енергодар)",
+        "primary_threat": THREAT_NUCLEAR,
+        "keywords": ["заес", "енергодар радіація", "ядерна небезпека", "запорізька аес"],
+        "lat_lon": (47.51, 34.58),
+        "target_regions": ["Запорізька область", "Дніпропетровська область", "Херсонська область", "Миколаївська область"],
+    },
+    SITE_URBAN_DONETSK: {
+        "title": "Район активних міських боїв (Донеччина)",
+        "primary_threat": THREAT_URBAN_FIGHTS,
+        "keywords": ["міські бої покровськ", "міські бої торецьк", "міські бої часів яр"],
+        "lat_lon": (48.28, 37.18),
+        "target_regions": ["Донецька область"],
+    },
+    SITE_URBAN_KHARKIV: {
+        "title": "Район активних міських боїв (Куп'янськ / Вовчанськ)",
+        "primary_threat": THREAT_URBAN_FIGHTS,
+        "keywords": ["міські бої куп'янськ", "міські бої вовчанськ"],
+        "lat_lon": (50.29, 36.94),
+        "target_regions": ["Харківська область"],
     },
 }
 
@@ -804,18 +1172,42 @@ def detect_threat_type_from_text(text: str) -> Optional[str]:
     return THREAT_UNKNOWN
 
 def detect_launch_origin_from_text(text: str) -> Optional[str]:
-    """Identifies Russian airfield or launch hub from text using centralized registry."""
+    """Identifies Russian airfield, drone pad, naval base, artillery pos, or launch hub from text using all registries."""
+    if not text:
+        return None
     text_lower = text.lower()
-    for origin_key, info in RUSSIAN_AIRBASES.items():
-        if any(kw in text_lower for kw in info["keywords"]):
-            return origin_key
+    all_registries = [
+        RUSSIAN_AIRBASES,
+        DRONE_LAUNCH_SITES,
+        NAVAL_LAUNCH_BASES,
+        BALLISTIC_LAUNCH_SITES,
+        ARTILLERY_MLRS_LAUNCH_SITES,
+        FPV_RECON_LAUNCH_SITES,
+        SPECIAL_THREAT_SITES
+    ]
+    for reg in all_registries:
+        for origin_key, info in reg.items():
+            if any(kw in text_lower for kw in info.get("keywords", [])):
+                return origin_key
     return None
 
 def get_launch_origin_title(origin_key: Optional[str]) -> str:
-    """Returns official title for an airbase or launch hub."""
-    if origin_key and origin_key in RUSSIAN_AIRBASES:
-        return RUSSIAN_AIRBASES[origin_key]["title"]
-    return origin_key or ""
+    """Returns official title for an airbase, launch pad, naval base, or firing position."""
+    if not origin_key:
+        return ""
+    all_registries = [
+        RUSSIAN_AIRBASES,
+        DRONE_LAUNCH_SITES,
+        NAVAL_LAUNCH_BASES,
+        BALLISTIC_LAUNCH_SITES,
+        ARTILLERY_MLRS_LAUNCH_SITES,
+        FPV_RECON_LAUNCH_SITES,
+        SPECIAL_THREAT_SITES
+    ]
+    for reg in all_registries:
+        if origin_key in reg:
+            return reg[origin_key]["title"]
+    return origin_key
 
 def detect_launch_sector_from_text(text: str) -> Optional[str]:
     """Identifies aviation launch sector or patrol zone from text."""
@@ -840,11 +1232,11 @@ def resolve_aviation_strike_profile(
     transit_from: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Resolves complete two-tier tactical aviation profile:
-    1. Carrier aircraft (Su-34, Su-35, MiG-31K, Tu-95MS, Tu-22M3)
-    2. Origin airbase (with coordinates and title)
-    3. Launch/drop sector (with coordinates and title)
-    4. Munition combat kinetics & ETA
+    Resolves complete two-tier tactical profile for ALL 20 weapon categories and ALL Ukrainian regions:
+    1. Platform type (drone_pad, airbase, naval_vessel, ballistic_launcher, artillery_position, fpv_recon_pad, combat_zone, special_hazard_zone)
+    2. Origin launch base / airfield / polygon / firing position (with coordinates and title)
+    3. Launch/drop sector / flight approach corridor (with coordinates and title)
+    4. Carrier / munition classification
     """
     is_aviation = threat_type in [
         THREAT_KAB, THREAT_SU35, "su35", "su34",
@@ -852,11 +1244,14 @@ def resolve_aviation_strike_profile(
         THREAT_CRUISE_MISSILE
     ] or bool(text and any(w in text.lower() for w in ["каб", "су-34", "су-35", "міг-31", "ту-95", "ту-22", "кинджал", "х-59", "х-69", "х-101", "х-22"]))
 
-    # Default fallback values
     carrier_type = None
     airbase_key = None
     sector_key = None
+    platform_type = "airbase" if is_aviation else "unknown"
 
+    text_lower = text.lower() if text else ""
+
+    # Check explicit origins and sectors in text
     if text:
         airbase_key = detect_launch_origin_from_text(text)
         sector_key = detect_launch_sector_from_text(text)
@@ -884,7 +1279,285 @@ def resolve_aviation_strike_profile(
                         transit_from = reg
                         break
 
-    # 1. Determine Carrier Aircraft Type
+    # =========================================================================
+    # A. БПЛА / ДРОНИ (Shahed-136, Реактивні БпЛА, Гербера)
+    # Фізичний майданчик пуску — ЗАВЖДИ сухопутний полігон РФ/Криму!
+    # =========================================================================
+    if threat_type in [THREAT_SHAHED, "shahed", "shahed_136", "reactive_uav"]:
+        platform_type = "drone_pad"
+        carrier_type = "drone_launcher"
+        
+        # Check drone site keywords in text
+        drone_site_found = None
+        for site_key, site_info in DRONE_LAUNCH_SITES.items():
+            if any(kw in text_lower for kw in site_info["keywords"]):
+                drone_site_found = site_key
+                break
+        
+        # 1. If specific drone site explicitly mentioned in text, use it as physical launchpad
+        if drone_site_found:
+            airbase_key = drone_site_found
+            if not sector_key:
+                if airbase_key == DRONE_SITE_CHAUDA:
+                    sector_key = SECTOR_BLACK_SEA
+                elif airbase_key in [DRONE_SITE_PRIMORSKO_AKHTARSK, DRONE_SITE_YEYSK]:
+                    sector_key = SECTOR_AZOV_SEA if target_region in ["Запорізька область", "Дніпропетровська область"] else SECTOR_PRIMORSKO_AKHTARSK
+                elif airbase_key in [DRONE_SITE_KURSK, DRONE_SITE_OREL]:
+                    sector_key = SECTOR_KURSK
+                elif airbase_key == DRONE_SITE_MILLEROVO:
+                    sector_key = SECTOR_BELGOROD
+        else:
+            # 2. Regional heuristics for all 26 Ukrainian regions
+            if "чорн" in text_lower or "мор" in text_lower or target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
+                airbase_key = DRONE_SITE_CHAUDA
+                sector_key = SECTOR_BLACK_SEA
+            elif target_region in ["Запорізька область", "Дніпропетровська область", "Донецька область"]:
+                airbase_key = DRONE_SITE_PRIMORSKO_AKHTARSK
+                sector_key = SECTOR_AZOV_SEA
+            elif target_region in ["Сумська область", "Чернігівська область", "Київська область", "Житомирська область"]:
+                airbase_key = DRONE_SITE_OREL if "орел" in text_lower else DRONE_SITE_KURSK
+                sector_key = SECTOR_KURSK
+            elif target_region in ["Харківська область", "Полтавська область"]:
+                airbase_key = DRONE_SITE_MILLEROVO if "міллеров" in text_lower else DRONE_SITE_PRIMORSKO_AKHTARSK
+                sector_key = SECTOR_BELGOROD
+            elif target_region in ["Вінницька область", "Хмельницька область", "Черкаська область", "Кіровоградська область"]:
+                airbase_key = DRONE_SITE_CHAUDA if "південь" in text_lower else DRONE_SITE_PRIMORSKO_AKHTARSK
+                sector_key = SECTOR_BLACK_SEA if "південь" in text_lower else SECTOR_PRIMORSKO_AKHTARSK
+            elif target_region in ["Львівська область", "Тернопільська область", "Івано-Франківська область", "Рівненська область", "Волинська область", "Чернівецька область", "Закарпатська область"]:
+                airbase_key = DRONE_SITE_KURSK if "північ" in text_lower else DRONE_SITE_CHAUDA
+                sector_key = SECTOR_KURSK if "північ" in text_lower else SECTOR_BLACK_SEA
+            else:
+                airbase_key = DRONE_SITE_PRIMORSKO_AKHTARSK
+                if not sector_key:
+                    sector_key = SECTOR_PRIMORSKO_AKHTARSK
+
+        pad_info = DRONE_LAUNCH_SITES.get(airbase_key) or RUSSIAN_AIRBASES.get(airbase_key)
+        sector_info = AVIATION_LAUNCH_SECTORS.get(sector_key)
+        return {
+            "is_aviation": False,
+            "platform_type": platform_type,
+            "carrier_type": carrier_type,
+            "carrier_origin_name": pad_info["title"] if pad_info else "Мис Чауда (АР Крим)",
+            "carrier_origin_latitude": pad_info["lat_lon"][0] if pad_info else 45.00,
+            "carrier_origin_longitude": pad_info["lat_lon"][1] if pad_info else 35.83,
+            "launch_sector_name": sector_info["title"] if sector_info else "Акваторія Чорного моря",
+            "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else 44.50,
+            "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else 32.00,
+        }
+
+    # =========================================================================
+    # B. FPV-ДРОНИ ТА РОЗВІДУВАЛЬНІ БПЛА (Орлан-10, Zala, Supercam, FPV)
+    # =========================================================================
+    if threat_type in [THREAT_FPV, THREAT_RECON, THREAT_RECON_UAV, "fpv", "recon", "recon_uav"]:
+        platform_type = "fpv_recon_pad"
+        carrier_type = "fpv_recon_operator"
+        
+        fpv_key = None
+        for site_key, site_info in FPV_RECON_LAUNCH_SITES.items():
+            if any(kw in text_lower for kw in site_info["keywords"]):
+                fpv_key = site_key
+                break
+        
+        if not fpv_key:
+            if target_region in ["Запорізька область", "Дніпропетровська область"]:
+                fpv_key = FPV_POS_ZAPORIZHZHIA
+                sector_key = SECTOR_TOT_ZAPORIZHZHIA
+            elif target_region in ["Херсонська область", "Миколаївська область", "Одеська область"]:
+                fpv_key = FPV_POS_KHERSON
+                sector_key = SECTOR_TOT_KHERSON
+            elif target_region in ["Донецька область", "Луганська область"]:
+                fpv_key = FPV_POS_DONETSK
+                sector_key = SECTOR_TOT_DONETSK
+            elif target_region in ["Харківська область"]:
+                fpv_key = FPV_POS_KHARKIV
+                sector_key = SECTOR_BELGOROD
+            elif target_region in ["Сумська область", "Чернігівська область"]:
+                fpv_key = FPV_POS_SUMY_BORDER
+                sector_key = SECTOR_KURSK
+            else:
+                fpv_key = FPV_POS_CRIMEA
+                sector_key = SECTOR_BLACK_SEA
+
+        fpv_info = FPV_RECON_LAUNCH_SITES.get(fpv_key)
+        sector_info = AVIATION_LAUNCH_SECTORS.get(sector_key)
+        return {
+            "is_aviation": False,
+            "platform_type": platform_type,
+            "carrier_type": carrier_type,
+            "carrier_origin_name": fpv_info["title"] if fpv_info else "Передові позиції ЛБЗ",
+            "carrier_origin_latitude": fpv_info["lat_lon"][0] if fpv_info else 47.50,
+            "carrier_origin_longitude": fpv_info["lat_lon"][1] if fpv_info else 35.80,
+            "launch_sector_name": sector_info["title"] if sector_info else (fpv_info["title"] if fpv_info else None),
+            "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else 47.50,
+            "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else 35.80,
+        }
+
+    # =========================================================================
+    # C. СТВОЛЬНА АРТИЛЕРІЯ ТА РСЗВ (Град, Ураган, Смерч, Торнадо-С)
+    # =========================================================================
+    if threat_type in [THREAT_ARTILLERY, THREAT_MLRS, "artillery", "mlrs"]:
+        platform_type = "artillery_position"
+        carrier_type = "artillery_battery"
+        
+        art_key = None
+        for site_key, site_info in ARTILLERY_MLRS_LAUNCH_SITES.items():
+            if any(kw in text_lower for kw in site_info["keywords"]):
+                art_key = site_key
+                break
+        
+        if not art_key:
+            if target_region in ["Миколаївська область", "Одеська область"] and ("кінбурн" in text_lower or "очаків" in text_lower):
+                art_key = ARTILLERY_POS_KINBURN_SPIT
+                sector_key = SECTOR_BLACK_SEA
+            elif target_region in ["Херсонська область", "Миколаївська область"]:
+                art_key = ARTILLERY_POS_TOT_KHERSON
+                sector_key = SECTOR_TOT_KHERSON
+            elif target_region in ["Запорізька область", "Дніпропетровська область"]:
+                art_key = ARTILLERY_POS_TOT_ZAPORIZHZHIA
+                sector_key = SECTOR_TOT_ZAPORIZHZHIA
+            elif target_region in ["Донецька область"]:
+                art_key = ARTILLERY_POS_TOT_DONETSK
+                sector_key = SECTOR_TOT_DONETSK
+            elif target_region in ["Харківська область"]:
+                art_key = ARTILLERY_POS_BELGOROD_BORDER
+                sector_key = SECTOR_BELGOROD
+            elif target_region in ["Сумська область"]:
+                art_key = ARTILLERY_POS_KURSK_BORDER
+                sector_key = SECTOR_KURSK
+            elif target_region in ["Чернігівська область"]:
+                art_key = ARTILLERY_POS_BRYANSK_BORDER
+                sector_key = SECTOR_BRYANSK
+            else:
+                art_key = ARTILLERY_POS_TOT_DONETSK
+                sector_key = SECTOR_TOT_DONETSK
+
+        art_info = ARTILLERY_MLRS_LAUNCH_SITES.get(art_key)
+        sector_info = AVIATION_LAUNCH_SECTORS.get(sector_key)
+        return {
+            "is_aviation": False,
+            "platform_type": platform_type,
+            "carrier_type": carrier_type,
+            "carrier_origin_name": art_info["title"] if art_info else "Вогневі позиції ворога",
+            "carrier_origin_latitude": art_info["lat_lon"][0] if art_info else 47.45,
+            "carrier_origin_longitude": art_info["lat_lon"][1] if art_info else 34.65,
+            "launch_sector_name": sector_info["title"] if sector_info else (art_info["title"] if art_info else None),
+            "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else 47.45,
+            "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else 34.65,
+        }
+
+    # =========================================================================
+    # D. СПЕЦІАЛЬНІ ЗАГРОЗИ: ЦИРКОН, ВУЛИЧНІ БОЇ, РАДІАЦІЯ, ХІМНЕБЕЗПЕКА
+    # =========================================================================
+    if threat_type in [THREAT_ZIRCON, THREAT_URBAN_FIGHTS, THREAT_NUCLEAR, THREAT_CHEMICAL, "zircon", "urban_fights", "nuclear", "chemical"]:
+        if threat_type in [THREAT_ZIRCON, "zircon"]:
+            platform_type = "coastal_hypersonic"
+            carrier_type = "bastion_zircon"
+            site_info = SPECIAL_THREAT_SITES[SITE_ZIRCON_CRIMEA]
+            sector_info = AVIATION_LAUNCH_SECTORS[SECTOR_BLACK_SEA]
+        elif threat_type in [THREAT_NUCLEAR, "nuclear"]:
+            platform_type = "special_hazard_zone"
+            carrier_type = "cbrn_threat"
+            site_info = SPECIAL_THREAT_SITES[SITE_ZNPP_ZONE]
+            sector_info = AVIATION_LAUNCH_SECTORS[SECTOR_TOT_ZAPORIZHZHIA]
+        elif threat_type in [THREAT_URBAN_FIGHTS, "urban_fights"]:
+            platform_type = "combat_zone"
+            carrier_type = "ground_forces"
+            site_info = SPECIAL_THREAT_SITES[SITE_URBAN_KHARKIV] if target_region == "Харківська область" else SPECIAL_THREAT_SITES[SITE_URBAN_DONETSK]
+            sector_info = AVIATION_LAUNCH_SECTORS[SECTOR_TOT_DONETSK]
+        else:
+            platform_type = "special_hazard_zone"
+            carrier_type = "cbrn_threat"
+            site_info = SPECIAL_THREAT_SITES[SITE_ZNPP_ZONE]
+            sector_info = AVIATION_LAUNCH_SECTORS[SECTOR_TOT_ZAPORIZHZHIA]
+
+        return {
+            "is_aviation": False,
+            "platform_type": platform_type,
+            "carrier_type": carrier_type,
+            "carrier_origin_name": site_info["title"],
+            "carrier_origin_latitude": site_info["lat_lon"][0],
+            "carrier_origin_longitude": site_info["lat_lon"][1],
+            "launch_sector_name": sector_info["title"] if sector_info else site_info["title"],
+            "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else site_info["lat_lon"][0],
+            "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else site_info["lat_lon"][1],
+        }
+
+    # =========================================================================
+    # E. МОРСЬКІ НОСІЇ (Калібр / Циркон з Чорного чи Каспійського морів)
+    # =========================================================================
+    if threat_type == THREAT_CRUISE_MISSILE and (any(kw in text_lower for kw in ["калібр", "мор", "чорн", "фрегат", "підводн", "варшавянк"]) or (target_region in ["Одеська область", "Миколаївська область"] and not airbase_key)):
+        platform_type = "naval_vessel"
+        carrier_type = "naval_carrier"
+        if "каспій" in text_lower:
+            base_info = NAVAL_LAUNCH_BASES[NAVAL_BASE_CASPIAN_SEA]
+            sector_info = AVIATION_LAUNCH_SECTORS.get(SECTOR_CASPIAN_SEA)
+        else:
+            base_info = NAVAL_LAUNCH_BASES[NAVAL_BASE_BLACK_SEA]
+            sector_info = AVIATION_LAUNCH_SECTORS.get(SECTOR_BLACK_SEA)
+
+        return {
+            "is_aviation": False,
+            "platform_type": platform_type,
+            "carrier_type": carrier_type,
+            "carrier_origin_name": base_info["title"],
+            "carrier_origin_latitude": base_info["lat_lon"][0],
+            "carrier_origin_longitude": base_info["lat_lon"][1],
+            "launch_sector_name": sector_info["title"] if sector_info else base_info["title"],
+            "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else base_info["lat_lon"][0],
+            "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else base_info["lat_lon"][1],
+        }
+
+    # =========================================================================
+    # F. БАЛІСТИЧНІ ТА БЕРЕГОВІ РАКЕТНІ КОМПЛЕКСИ (Іскандер-М / KN-23 / Бастіон / С-300)
+    # =========================================================================
+    if threat_type in [THREAT_BALLISTIC, THREAT_ISKANDER, "iskander", "ballistic", "bastion", "onyx"]:
+        platform_type = "ballistic_launcher"
+        carrier_type = "otrk_launcher"
+        
+        ballistic_site_key = None
+        for site_key, site_info in BALLISTIC_LAUNCH_SITES.items():
+            if any(kw in text_lower for kw in site_info["keywords"]):
+                ballistic_site_key = site_key
+                break
+        
+        if not ballistic_site_key:
+            if target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
+                ballistic_site_key = BALLISTIC_SITE_TARKHANKUT
+                sector_key = SECTOR_CRIMEA_TARKHANKUT
+            elif target_region in ["Харківська область", "Сумська область", "Полтавська область"]:
+                ballistic_site_key = BALLISTIC_SITE_BELGOROD
+                sector_key = SECTOR_BELGOROD
+            elif target_region in ["Чернігівська область", "Київська область", "Житомирська область"]:
+                ballistic_site_key = BALLISTIC_SITE_BRYANSK if "брянськ" in text_lower else BALLISTIC_SITE_KURSK
+                sector_key = SECTOR_BRYANSK if "брянськ" in text_lower else SECTOR_KURSK
+            elif target_region in ["Донецька область", "Запорізька область", "Дніпропетровська область"]:
+                ballistic_site_key = BALLISTIC_SITE_ROSTOV
+                sector_key = SECTOR_ROSTOV_TAGANROG
+            elif target_region in ["Львівська область", "Івано-Франківська область", "Волинська область", "Рівненська область", "Тернопільська область", "Хмельницька область", "Чернівецька область", "Закарпатська область"]:
+                ballistic_site_key = BALLISTIC_SITE_KAPUSTIN_YAR
+                sector_key = SECTOR_VORONEZH
+            else:
+                ballistic_site_key = BALLISTIC_SITE_TARKHANKUT
+                sector_key = SECTOR_CRIMEA_TARKHANKUT
+
+        site_info = BALLISTIC_LAUNCH_SITES.get(ballistic_site_key)
+        sector_info = AVIATION_LAUNCH_SECTORS.get(sector_key)
+        return {
+            "is_aviation": False,
+            "platform_type": platform_type,
+            "carrier_type": carrier_type,
+            "carrier_origin_name": site_info["title"] if site_info else "Позиційний район Бєлгородська обл. РФ",
+            "carrier_origin_latitude": site_info["lat_lon"][0] if site_info else 50.60,
+            "carrier_origin_longitude": site_info["lat_lon"][1] if site_info else 36.58,
+            "launch_sector_name": sector_info["title"] if sector_info else (site_info["title"] if site_info else None),
+            "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else 50.60,
+            "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else 36.58,
+        }
+
+    # =========================================================================
+    # G. АВІАЦІЯ: ТАКТИЧНА ТА СТРАТЕГІЧНА (Су-34/35, МіГ-31К, Ту-95МС, Ту-22М3)
+    # =========================================================================
+    platform_type = "airbase"
     if threat_type == THREAT_KAB:
         carrier_type = "su34"
     elif threat_type in [THREAT_SU35, "su35"]:
@@ -895,12 +1568,10 @@ def resolve_aviation_strike_profile(
         carrier_type = "tu95"
     elif threat_type == THREAT_TU22M3:
         carrier_type = "tu22m3"
-    elif threat_type == THREAT_CRUISE_MISSILE and text and "калібр" in text.lower():
-        carrier_type = "naval_carrier"
     elif is_aviation:
         carrier_type = "tactical_aviation"
 
-    # 2. Sector heuristics if not explicitly mentioned in text
+    # Sector heuristics if not explicitly mentioned in text
     if not sector_key:
         if transit_from:
             if transit_from in ["Сумська область", "Чернігівська область"]:
@@ -910,44 +1581,23 @@ def resolve_aviation_strike_profile(
             elif transit_from in ["Запорізька область", "Дніпропетровська область"]:
                 sector_key = SECTOR_AZOV_SEA if threat_type != THREAT_KAB else SECTOR_TOT_ZAPORIZHZHIA
             elif transit_from in ["Херсонська область", "Миколаївська область", "Одеська область", "АР Крим"]:
-                sector_key = SECTOR_BLACK_SEA if threat_type in [THREAT_CRUISE_MISSILE, THREAT_SHAHED, THREAT_SU35] else SECTOR_TOT_KHERSON
+                sector_key = SECTOR_BLACK_SEA if threat_type in [THREAT_CRUISE_MISSILE, THREAT_SU35] else SECTOR_TOT_KHERSON
             elif transit_from in ["Донецька область", "Луганська область"]:
                 sector_key = SECTOR_TOT_DONETSK if threat_type in [THREAT_KAB, THREAT_ARTILLERY, THREAT_MLRS] else SECTOR_ROSTOV_TAGANROG
             else:
                 sector_key = SECTOR_KURSK
-        elif target_region:
-            if threat_type == THREAT_SHAHED:
-                if target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
-                    sector_key = SECTOR_BLACK_SEA
-                elif target_region in ["Сумська область", "Чернігівська область", "Київська область"]:
-                    sector_key = SECTOR_KURSK
-                elif target_region in ["Харківська область", "Полтавська область"]:
-                    sector_key = SECTOR_BELGOROD
-                elif target_region in ["Запорізька область", "Дніпропетровська область"]:
-                    sector_key = SECTOR_AZOV_SEA
-                else:
-                    sector_key = SECTOR_PRIMORSKO_AKHTARSK
-        elif threat_type == THREAT_BALLISTIC:
-            if target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
-                sector_key = SECTOR_CRIMEA_TARKHANKUT
-            elif target_region in ["Харківська область", "Сумська область", "Полтавська область"]:
-                sector_key = SECTOR_BELGOROD
-            elif target_region in ["Чернігівська область", "Київська область"]:
-                sector_key = SECTOR_BRYANSK
-            elif target_region in ["Донецька область", "Запорізька область", "Дніпропетровська область"]:
-                sector_key = SECTOR_ROSTOV_TAGANROG
-            else:
-                sector_key = SECTOR_CRIMEA_TARKHANKUT
         elif target_region in ["Харківська область", "Сумська область"]:
             sector_key = SECTOR_BELGOROD
-        elif target_region in ["Чернігівська область", "Київська область"]:
+        elif target_region in ["Чернігівська область", "Київська область", "Житомирська область"]:
             sector_key = SECTOR_KURSK if threat_type != THREAT_MIG31K else SECTOR_RYAZAN_TAMBOV
         elif target_region in ["Запорізька область", "Дніпропетровська область"]:
             sector_key = SECTOR_AZOV_SEA if threat_type == THREAT_KAB else SECTOR_TOT_ZAPORIZHZHIA
         elif target_region in ["Херсонська область", "Миколаївська область", "Одеська область"]:
             sector_key = SECTOR_BLACK_SEA if threat_type in [THREAT_CRUISE_MISSILE, THREAT_SU35] else SECTOR_TOT_KHERSON
-        elif target_region == "Донецька область":
+        elif target_region in ["Донецька область", "Луганська область"]:
             sector_key = SECTOR_TOT_DONETSK
+        elif target_region in ["Львівська область", "Волинська область", "Рівненська область", "Тернопільська область", "Івано-Франківська область", "Хмельницька область", "Чернівецька область", "Закарпатська область"]:
+            sector_key = SECTOR_CASPIAN_SEA if threat_type in [THREAT_TU95, THREAT_CRUISE_MISSILE] else SECTOR_RYAZAN_TAMBOV
 
     # Special handling for strategic aviation
     if threat_type == THREAT_MIG31K:
@@ -982,6 +1632,7 @@ def resolve_aviation_strike_profile(
 
     return {
         "is_aviation": is_aviation,
+        "platform_type": platform_type,
         "carrier_type": carrier_type,
         "carrier_origin_name": airbase_info["title"] if airbase_info else None,
         "carrier_origin_latitude": airbase_info["lat_lon"][0] if airbase_info else None,

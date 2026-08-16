@@ -30,6 +30,12 @@ from core.threat_types import (
     THREAT_UNKNOWN,
     RUSSIAN_AIRBASES,
     AVIATION_LAUNCH_SECTORS,
+    DRONE_LAUNCH_SITES,
+    NAVAL_LAUNCH_BASES,
+    BALLISTIC_LAUNCH_SITES,
+    ARTILLERY_MLRS_LAUNCH_SITES,
+    FPV_RECON_LAUNCH_SITES,
+    SPECIAL_THREAT_SITES,
 )
 from database.db_helpers import execute_query_as_dicts, execute_write
 
@@ -78,8 +84,26 @@ LAUNCH_HUBS = {
     "Астрахань РФ": (46.35, 48.05),
 }
 
-# Add all official airbases and launch sectors dynamically
+# Add all official airbases, drone pads, naval bases, ballistic sites, artillery positions, and sectors dynamically
 for _k, _info in RUSSIAN_AIRBASES.items():
+    LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
+    LAUNCH_HUBS[_k] = _info["lat_lon"]
+for _k, _info in DRONE_LAUNCH_SITES.items():
+    LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
+    LAUNCH_HUBS[_k] = _info["lat_lon"]
+for _k, _info in NAVAL_LAUNCH_BASES.items():
+    LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
+    LAUNCH_HUBS[_k] = _info["lat_lon"]
+for _k, _info in BALLISTIC_LAUNCH_SITES.items():
+    LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
+    LAUNCH_HUBS[_k] = _info["lat_lon"]
+for _k, _info in ARTILLERY_MLRS_LAUNCH_SITES.items():
+    LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
+    LAUNCH_HUBS[_k] = _info["lat_lon"]
+for _k, _info in FPV_RECON_LAUNCH_SITES.items():
+    LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
+    LAUNCH_HUBS[_k] = _info["lat_lon"]
+for _k, _info in SPECIAL_THREAT_SITES.items():
     LAUNCH_HUBS[_info["title"]] = _info["lat_lon"]
     LAUNCH_HUBS[_k] = _info["lat_lon"]
 for _k, _info in AVIATION_LAUNCH_SECTORS.items():
@@ -292,7 +316,7 @@ async def get_trajectory_heatmap(days: int = 30):
 
 @router.get("/api/admin/analytics/launch_origins")
 async def get_launch_origins(days: int = 30):
-    """Статистика запусків за пусковими хабами РФ."""
+    """Статистика запусків за пусковими хабами РФ з категоризацією платформ."""
     try:
         query = f"""
             SELECT COALESCE(td.launch_origin, th.region) as name,
@@ -308,15 +332,41 @@ async def get_launch_origins(days: int = 30):
         """
         rows = execute_query_as_dicts(query)
 
-        # Also include known launch hubs from gemini_rules
+        # Also include known launch hubs from gemini_rules (launch_site_pattern & route_pattern)
         rules_query = """
-            SELECT source_region as name, threat_type, evidence_count as total_launches
+            SELECT source_region as name, threat_type, evidence_count as total_launches, rule_type
             FROM gemini_rules
-            WHERE is_active = 1 AND rule_type = 'route_pattern'
+            WHERE is_active = 1 AND rule_type IN ('launch_site_pattern', 'route_pattern')
               AND source_region NOT IN (SELECT DISTINCT region FROM threat_history)
             ORDER BY evidence_count DESC
         """
         rule_origins = execute_query_as_dicts(rules_query)
+
+        def _detect_platform_category(origin_name: str, threat_types: dict) -> str:
+            n_lower = origin_name.lower()
+            if any(k in n_lower for k in ["чауд", "приморськ", "єйськ", "ейск", "халіно", "орел", "сеща", "міллеров"]) or "shahed" in threat_types:
+                return "drone_pad"
+            if any(k in n_lower for k in ["оріхів", "роботине", "гуляйполе", "кринки", "покровськ фпв", "торецьк фпв", "куп'янськ фпв", "орлан", "зала", "суперкам"]) or any(t in threat_types for t in ["fpv", "recon", "recon_uav"]):
+                return "fpv_recon_pad"
+            if any(k in n_lower for k in ["енергодар", "олешки", "горлівка", "кремінна", "шебекіно", "тьоткіно", "климово", "кінбурн", "вогневі позиції"]) or any(t in threat_types for t in ["artillery", "mlrs"]):
+                return "artillery_position"
+            if any(k in n_lower for k in ["циркон", "zircon", "3м22", "бастіон", "онікс"]):
+                return "coastal_hypersonic"
+            if any(k in n_lower for k in ["заес", "радіація", "ядерна", "хімічна"]):
+                return "special_hazard_zone"
+            if any(k in n_lower for k in ["міські бої", "вуличні бої"]):
+                return "combat_zone"
+            if any(k in n_lower for k in ["олень", "енгельс", "шайковк", "дягілєв", "сольці", "біла"]) or any(t in threat_types for t in ["tu95", "tu22m3", "tu160"]):
+                return "strategic_airbase"
+            if any(k in n_lower for k in ["саваслейк", "ахтубінськ", "мачулищ"]) or "mig31k" in threat_types:
+                return "interceptor_airbase"
+            if any(k in n_lower for k in ["балтімор", "балтимор", "морозовськ", "бутурлинівк", "бельбек", "саки", "кримськ", "таганрог", "липецьк"]) or any(t in threat_types for t in ["kab", "su35"]):
+                return "tactical_airbase"
+            if any(k in n_lower for k in ["чорн", "каспій", "новоросійськ", "севастополь"]) or "cruise_missile" in threat_types:
+                return "naval_base"
+            if any(k in n_lower for k in ["тарханкут", "джанкой", "бєлгород", "курськ", "брянськ", "капустін", "іскандер"]) or "ballistic" in threat_types:
+                return "ballistic_site"
+            return "general_hub"
 
         # Merge by origin name
         origins_map = {}
@@ -330,13 +380,17 @@ async def get_launch_origins(days: int = 30):
                     "lon": coords[1],
                     "total_launches": 0,
                     "by_type": {},
-                    "last_detected": r.get("last_detected")
+                    "last_detected": r.get("last_detected"),
+                    "platform_category": "general_hub"
                 }
             tt = r.get("threat_type", "unknown")
             origins_map[name]["by_type"][tt] = origins_map[name]["by_type"].get(tt, 0) + (r.get("total_launches") or 0)
             origins_map[name]["total_launches"] += (r.get("total_launches") or 0)
             if r.get("last_detected") and (not origins_map[name]["last_detected"] or r["last_detected"] > origins_map[name]["last_detected"]):
                 origins_map[name]["last_detected"] = r["last_detected"]
+
+        for name, data in origins_map.items():
+            data["platform_category"] = _detect_platform_category(name, data["by_type"])
 
         origins = sorted(origins_map.values(), key=lambda x: x["total_launches"], reverse=True)
         return {"origins": origins, "total": len(origins)}

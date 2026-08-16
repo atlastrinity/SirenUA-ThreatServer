@@ -43,15 +43,28 @@ async def get_predictions(region: str = None, days: int = 3, limit: int = 50):
 
 
 @router.get("/api/analytics/rules")
-async def get_rules(active_only: bool = False):
-    """Список ML-правил (правила класифікації Gemini)."""
-    filters = {"is_active": 1} if active_only else None
+async def get_rules(
+    active_only: bool = False,
+    rule_type: Optional[str] = None,
+    threat_type: Optional[str] = None,
+    limit: Optional[int] = 100
+):
+    """Список ML-правил (правила класифікації Gemini) з фільтрацією за типами."""
+    filters = {}
+    if active_only:
+        filters["is_active"] = 1
+    if rule_type:
+        filters["rule_type"] = rule_type
+    if threat_type:
+        filters["threat_type"] = threat_type
+
     order_by = "evidence_count DESC, accuracy_score DESC" if active_only else "is_active DESC, evidence_count DESC, accuracy_score DESC"
 
     rules = build_and_execute_query(
         base_query="SELECT * FROM gemini_rules",
-        filters=filters,
+        filters=filters if filters else None,
         order_by=order_by,
+        limit=limit,
         json_fields=["trigger_conditions", "override_conditions", "applicable_regions", "applicable_types"]
     )
     return {"total": len(rules), "rules": rules}

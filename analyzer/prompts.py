@@ -51,10 +51,22 @@ For informational messages, still return a JSON object but with:
 - You MUST reconstruct the ingress transit region or launch origin (e.g. `source_regions: ["Запорізька область"]` for Dnipropetrovska; `["Сумська область"]` for Poltavska/Kyivska; `["Одеська область"]` for Vinnytska).
 - This ensures full vector trajectory stitching from the actual launch/border origin.
 
-=== CRITICAL RULE #5: CONTROLLED UKRAINIAN REGIONS ARE NEVER LAUNCH ORIGINS ===
+=== CRITICAL RULE #5: LAUNCH SITES TAXONOMY & DISAMBIGUATION ===
 - Controlled Ukrainian oblasts (e.g. Chernihivska, Sumska, Kyivska, Zhytomyrska, Poltavska, etc.) CANNOT be set as `launch_origin` (launch base/airfield).
-- `launch_origin` MUST ONLY be specified as a real military launch airfield/base or external origin in RF/Belarus/Crimea/Seas (e.g., "Приморсько-Ахтарськ", "Єйськ", "Курськ", "Брянська область (РФ)", "Оленья", "Чауда (Крим)", "Чорне море", "Каспійське море").
-- If a drone enters across northern/eastern borders (e.g. via Chernihivska or Sumska oblast), those regions are TRANSIT CORRIDORS (`source_regions`), NOT launch origins.
+- `launch_origin` MUST ONLY be specified as a real military launch airfield, polygon pad, firing position, or naval base in RF/Belarus/Crimea/TOT strictly matching the weapon type:
+  1. **shahed / UAV (Drones / БпЛА Shahed-136/Гербера)**: MUST ONLY be land-based launch polygons: "Мис Чауда (АР Крим)", "Приморсько-Ахтарськ", "Єйськ", "Курськ (Халіно)", "Орел (Південний)", "Сеща (Брянська обл.)", "Міллерово", "Гвардійське / Джанкой".
+     * FORBIDDEN: Drones NEVER launch from the sea! "Чорне море" or "Азовське море" is an approach corridor (`source_regions`), NOT `launch_origin`!
+     * When message says "БпЛА з Чорного моря на Одесу", set `launch_origin: "Мис Чауда (АР Крим)"` and `source_regions: ["АР Крим"]`.
+  2. **cruise_missile (Kalibr / Kh-101 / Zircon / Kh-59 / Kh-69)**:
+     * For Kalibr from sea: `launch_origin: "Акваторія Чорного моря (Флот РФ)"` or `"Акваторія Каспійського моря"`.
+     * For strategic bombers (Kh-101): `launch_origin: "Аеродром Оленья"` or `"Аеродром Енгельс-2"`.
+  3. **mig31k (Kinzhal / Кинджал)**: `launch_origin: "Аеродром Саваслейка"`, `"Аеродром Моздок"`, `"Аеродром Ахтубінськ"`, or `"Аеродром Мачулищі"`.
+  4. **kab / su35_su57 (Tactical Aviation)**: `launch_origin: "Аеродром Балтимор (Воронеж)"`, `"Аеродром Морозовськ"`, `"Аеродром Халіно (Курськ)"`, `"Аеродром Бельбек (Крим)"`, `"Аеродром Саки"`, `"Аеродром Бутурлинівка"`, `"Аеродром Кримськ"`.
+  5. **ballistic / iskander (Iskander-M / KN-23 / Bastion / S-300)**: `launch_origin: "Позиційний район мис Тарханкут (АР Крим)"`, `"Позиційний район Бєлгородська обл. РФ"`, `"Позиційний район Курська обл. РФ"`, `"Позиційний район Брянська обл. РФ"`, `"Полігон Капустін Яр РФ"`, `"Позиційний район ТОТ Запорізької обл."`.
+  6. **artillery / mlrs (Artillery / РСЗВ Град, Ураган, Смерч, Торнадо-С)**: `launch_origin: "Вогневі позиції ТОТ Запорізької обл. (Енергодар / Пологи)"`, `"Вогневі позиції ТОТ Херсонської обл. (Олешки / Каховка)"`, `"Вогневі позиції ТОТ Донецької обл. (Горлівка / Донецьк)"`, `"Вогневі позиції Бєлгородської обл. РФ"`, `"Вогневі позиції Кінбурнська коса"`.
+  7. **fpv / recon / recon_uav (FPV-дрони / Орлан / Zala / Supercam)**: `launch_origin: "Передові позиції ЛБЗ (Запорізький напрямок)"`, `"Передові позиції лівий берег Дніпра"`, `"Передові позиції ЛБЗ (Донецький напрямок)"`, `"Передові позиції ЛБЗ (Куп'янський напрямок)"`, `"Прикордонні позиції РФ"`.
+  8. **zircon / urban_fights / nuclear / chemical (Спеціальні загрози)**: `launch_origin: "БРК Бастіон / Кораблі ЧФ (ТОТ Крим)"`, `"Зона ризику ЗАЕС (м. Енергодар)"`, `"Район активних міських боїв (Донеччина)"`.
+- If a drone or missile enters across northern/eastern borders (e.g. via Chernihivska or Sumska oblast), those regions are TRANSIT CORRIDORS (`source_regions`), NOT launch origins.
 
 === CRITICAL RULE #6: REGION-SPECIFIC DETAIL ISOLATION ===
 When an input message is a multi-region summary (e.g. listing drones or missiles across 3-6 different oblasts in a numbered list or bullet points), you MUST isolate and provide a concise, region-specific tactical description in `target_regions[i].detail` for each target region (e.g. for Zaporizhzhia: "Реактивний БпЛА 1 група", for Odesa: "БпЛА в напрямку Чорноморська").

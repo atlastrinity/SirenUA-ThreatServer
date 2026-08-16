@@ -76,8 +76,8 @@ class GeminiThreatAnalyzer:
             cursor.execute('''
                 SELECT rule_type, source_region, target_region, threat_type, rule_text, evidence_count, accuracy_score
                 FROM gemini_rules
-                WHERE is_active = 1 AND evidence_count >= 3 AND accuracy_score >= 0.60
-                ORDER BY (accuracy_score * evidence_count) DESC
+                WHERE is_active = 1 AND evidence_count >= 2 AND accuracy_score >= 0.60
+                ORDER BY (CASE WHEN rule_type IN ('launch_site_pattern', 'aviation_strike_pattern') THEN 2.5 ELSE 1.0 END * accuracy_score * evidence_count) DESC
             ''')
             all_rules = cursor.fetchall()
             conn.close()
@@ -103,6 +103,8 @@ class GeminiThreatAnalyzer:
             for i, rule in enumerate(selected_rules, 1):
                 rule_type_label = {
                     "route_pattern": "Маршрут",
+                    "launch_site_pattern": "Майданчик пуску",
+                    "aviation_strike_pattern": "Авіаційний удар",
                     "confidence_correction": "Корекція довіри",
                     "time_pattern": "Часовий патерн",
                     "false_positive": "Хибний позитив",

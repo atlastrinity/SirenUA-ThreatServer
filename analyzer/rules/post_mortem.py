@@ -35,7 +35,7 @@ POST_MORTEM_SYSTEM_PROMPT = """Ти — головний тактичний оф
   "anomalies_detected": ["Список виявлених відхилень або нової тактики"],
   "derived_rules": [
     {
-      "rule_type": "route_pattern | confidence_correction | time_pattern | eta_math",
+      "rule_type": "route_pattern | launch_site_pattern | confidence_correction | time_pattern | eta_math",
       "source_region": "Назва області або району пуску",
       "target_region": "Назва цільової області",
       "threat_type": "shahed | cruise_missile | ballistic | kab | mig31k",
