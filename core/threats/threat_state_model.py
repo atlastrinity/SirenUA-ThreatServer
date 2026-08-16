@@ -4,7 +4,6 @@ ThreatState regional threat container model.
 
 from typing import Optional
 from datetime import datetime, timezone
-import uuid
 import re
 
 from core.threats.single_threat import SingleThreat

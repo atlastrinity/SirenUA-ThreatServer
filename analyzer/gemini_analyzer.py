@@ -446,9 +446,7 @@ class GeminiThreatAnalyzer:
             if key == "linked_group_id" and val is not None:
                 from core.threats.threat_state_model import normalize_group_id
                 val = normalize_group_id(val)
-            
-            # Type coercion and validation
-            if key == "intercepted_count" and val is not None:
+            elif key == "intercepted_count" and val is not None:
                 try:
                     val = max(0, int(val))
                 except (ValueError, TypeError):
