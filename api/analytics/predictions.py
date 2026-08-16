@@ -3,8 +3,11 @@ Analytics Predictions & Rules API.
 Endpoints: ML predictions, Gemini rules management, region history.
 """
 
-from fastapi import APIRouter, HTTPException
+from typing import Optional, List, Dict, Any
 from datetime import timezone
+import sqlite3
+import asyncio
+from fastapi import APIRouter, HTTPException
 
 from database.db_helpers import get_db
 from database.query_builder import build_and_execute_query
@@ -87,10 +90,6 @@ async def rebuild_rules():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-from typing import Optional
-import sqlite3
-import asyncio
 
 @router.get("/api/history/{region}")
 async def get_region_history(
