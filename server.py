@@ -312,7 +312,7 @@ async def lifespan(app: FastAPI):
     if IS_LIVE_MODE:
         from monitor.telegram_monitor import TelegramThreatMonitor
         core.globals.telegram_monitor = TelegramThreatMonitor(threat_manager)
-        await core.globals.telegram_monitor.start()
+        asyncio.create_task(core.globals.telegram_monitor.start())
         logger.info("🟢 Сервер запущено в LIVE режимі (Telegram)")
     else:
         logger.info("🟡 Сервер запущено в MOCK режимі (тестування)")

@@ -77,6 +77,33 @@ class TelegramThreatMonitor:
         # State for web scraper fallback
         self.last_seen_posts = {channel: None for channel in TARGET_CHANNELS}
         self._scraper_last_error_time = {channel: 0.0 for channel in TARGET_CHANNELS}
+        
+        # Persistent message offset tracking per channel
+        self.last_processed_msg_ids = self._load_last_processed_ids()
+
+    def _load_last_processed_ids(self) -> dict:
+        filepath = "last_telegram_ids.json"
+        if os.path.exists("threat_server"):
+            filepath = "threat_server/last_telegram_ids.json"
+        if os.path.exists(filepath):
+            try:
+                import json
+                with open(filepath, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"⚠️ Помилка завантаження last_telegram_ids: {e}")
+        return {}
+
+    def _save_last_processed_ids(self):
+        filepath = "last_telegram_ids.json"
+        if os.path.exists("threat_server"):
+            filepath = "threat_server/last_telegram_ids.json"
+        try:
+            import json
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(self.last_processed_msg_ids, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"⚠️ Помилка збереження last_telegram_ids: {e}")
 
     async def _join_target_channels(self):
         if not self.client:
@@ -204,36 +231,67 @@ class TelegramThreatMonitor:
         asyncio.create_task(self._periodic_cleanup_loop())
 
     async def _sync_recent_channel_messages(self, lookback_minutes: int = 60):
-        """Сканує та обробляє недавні повідомлення з каналів під час запуску для миттєвого підхоплення актуальних загроз."""
+        """Сканує та обробляє тільки пропущені нові повідомлення з каналів під час запуску для миттєвого підхоплення актуальних загроз без дублювання."""
         if not self.client or not self.use_mtproto:
             return
-        logger.info(f"🔄 [Initial Sync] Пошук актуальних загроз за останні {lookback_minutes} хв...")
+        logger.info(f"🔄 [Initial Sync] Пошук пропущених повідомлень за останні {lookback_minutes} хв...")
         cutoff_time = datetime.now(timezone.utc).timestamp() - (lookback_minutes * 60)
         messages_to_process = []
         
         for channel in TARGET_CHANNELS:
+            last_id = int(self.last_processed_msg_ids.get(channel, 0))
             try:
-                async for message in self.client.iter_messages(channel, limit=4):
-                    if not message or not message.text:
-                        continue
-                    msg_ts = message.date.timestamp() if message.date else 0
-                    if msg_ts < cutoff_time:
-                        continue
-                    msg_date_str = message.date.astimezone(timezone.utc).isoformat() if message.date else None
-                    messages_to_process.append({
-                        "text": message.text,
-                        "channel": channel,
-                        "date": msg_date_str,
-                        "timestamp": msg_ts
-                    })
+                if last_id > 0:
+                    async for message in self.client.iter_messages(channel, min_id=last_id, limit=20):
+                        if not message or not message.text or message.id <= last_id:
+                            continue
+                        msg_ts = message.date.timestamp() if message.date else 0
+                        if msg_ts < cutoff_time:
+                            continue
+                        msg_date_str = message.date.astimezone(timezone.utc).isoformat() if message.date else None
+                        messages_to_process.append({
+                            "id": message.id,
+                            "text": message.text,
+                            "channel": channel,
+                            "date": msg_date_str,
+                            "timestamp": msg_ts
+                        })
+                else:
+                    latest_seen = 0
+                    async for message in self.client.iter_messages(channel, limit=5):
+                        if not message:
+                            continue
+                        if message.id > latest_seen:
+                            latest_seen = message.id
+                        if not message.text:
+                            continue
+                        msg_ts = message.date.timestamp() if message.date else 0
+                        if msg_ts < cutoff_time:
+                            continue
+                        msg_date_str = message.date.astimezone(timezone.utc).isoformat() if message.date else None
+                        messages_to_process.append({
+                            "id": message.id,
+                            "text": message.text,
+                            "channel": channel,
+                            "date": msg_date_str,
+                            "timestamp": msg_ts
+                        })
+                    if latest_seen > 0:
+                        self.last_processed_msg_ids[channel] = latest_seen
             except Exception as e:
                 logger.warning(f"⚠️ [Initial Sync] Помилка сканування @{channel}: {e}")
                 
+        self._save_last_processed_ids()
+        
         # Chronological ordering (oldest first)
         messages_to_process.sort(key=lambda x: x["timestamp"])
         for item in messages_to_process:
-            logger.info(f"⚡ [Initial Sync: {item['channel']}] Обробка недавнього повідомлення: {item['text'][:60]}...")
-            await self._process_message(item["text"], item["channel"], message_date=item["date"])
+            ch = item["channel"]
+            msg_id = item["id"]
+            logger.info(f"⚡ [Initial Sync: {ch} (ID: {msg_id})] Обробка недавнього повідомлення: {item['text'][:60]}...")
+            await self._process_message(item["text"], ch, message_date=item["date"])
+            self.last_processed_msg_ids[ch] = max(self.last_processed_msg_ids.get(ch, 0), msg_id)
+            self._save_last_processed_ids()
             await asyncio.sleep(0.3)
 
     def _setup_event_handlers(self):
@@ -264,6 +322,10 @@ class TelegramThreatMonitor:
                         self.channel_health[channel]["last_event_time"] = time.time()
                         self.channel_health[channel]["status"] = "ok"
                         self.channel_health[channel]["mode"] = "mtproto"
+                    
+                    if getattr(event.message, 'id', None):
+                        self.last_processed_msg_ids[channel] = max(self.last_processed_msg_ids.get(channel, 0), event.message.id)
+                        self._save_last_processed_ids()
                     
                     short_text = text.strip().replace('\n', ' ')[:80]
                     print(f"⚡ [MTProto: {channel}] Нове повідомлення: \"{short_text}...\"")
