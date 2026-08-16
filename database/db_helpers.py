@@ -275,7 +275,8 @@ def get_kyiv_tz_modifier() -> str:
 @contextmanager
 def get_db_cursor(db_path: str = DB_PATH) -> Generator[sqlite3.Cursor, None, None]:
     """Context manager for managing SQLite connection and cursor safely."""
-    conn = sqlite3.connect(db_path)
+    from database.connection import get_sqlite_connection
+    conn = get_sqlite_connection(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     try:
