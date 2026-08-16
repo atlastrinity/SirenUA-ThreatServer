@@ -109,6 +109,12 @@ async def get_sources_status():
                 "name": "SirenUA ThreatServer Backend",
                 "status": "ONLINE"
             },
+            "telegram": {
+                "name": "Telegram MTProto Userbot / Scraper",
+                "mode": "MTProto (Realtime)" if (telegram_monitor and getattr(telegram_monitor, "use_mtproto", False)) else "Web Scraper (Fallback)",
+                "status": "ONLINE" if (telegram_monitor and (getattr(telegram_monitor, "use_mtproto", False) or getattr(telegram_monitor, "is_running", False))) else "OFFLINE",
+                "channels": getattr(telegram_monitor, "channel_health", {}) if telegram_monitor else {}
+            },
             "gemini": {
                 "name": "Аналізатор Gemini AI",
                 "configured": bool(gemini_key),

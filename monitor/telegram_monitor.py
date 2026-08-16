@@ -60,6 +60,20 @@ class TelegramThreatMonitor:
             "threat_server/sirenua_userbot_session.session"
         ]
         
+        # State for channel health and error tracking
+        self._failed_channels = set()
+        self.channel_health = {
+            channel: {
+                "status": "ok",
+                "last_event_time": None,
+                "error_count": 0,
+                "mode": "mtproto"
+            }
+            for channel in TARGET_CHANNELS
+        }
+        self._watchdog_task = None
+        self._scraper_task = None
+        
         # State for web scraper fallback
         self.last_seen_posts = {channel: None for channel in TARGET_CHANNELS}
         self._scraper_last_error_time = {channel: 0.0 for channel in TARGET_CHANNELS}
@@ -72,8 +86,24 @@ class TelegramThreatMonitor:
                 from telethon.tl.functions.channels import JoinChannelRequest
                 await self.client(JoinChannelRequest(channel))
                 print(f"✅ Юзербот перевірив/підписався на канал: {channel}")
+                if channel in self.channel_health:
+                    self.channel_health[channel]["status"] = "ok"
+                    self.channel_health[channel]["mode"] = "mtproto"
+                self._failed_channels.discard(channel)
             except Exception as e:
-                print(f"⚠️ Помилка підписки на {channel}: {e}")
+                print(f"⚠️ Помилка підписки на @{channel}: {e}")
+                self._failed_channels.add(channel)
+                if channel in self.channel_health:
+                    self.channel_health[channel]["status"] = "error"
+                    self.channel_health[channel]["mode"] = "scraper_fallback"
+                    self.channel_health[channel]["error_count"] += 1
+                self.log_error(
+                    "telegram",
+                    f"Помилка підписки/доступу до каналу @{channel}: {e}",
+                    endpoint=f"channel_{channel}",
+                    context=f"channel={channel}",
+                    error_type="telegram_channel_error"
+                )
 
     async def start(self):
         self.is_running = True
@@ -85,7 +115,7 @@ class TelegramThreatMonitor:
         # Запускаємо фоновий таск самонавчання правил (кожні 6 годин)
         self._rules_learner_task = asyncio.create_task(self._rules_learner_loop())
         
-        # 1. Try to load from environment variable (StringSession) - best for Render production
+        # 1. Try to load from environment variable (StringSession) - best for Render production & local live mode
         session_string = os.environ.get("TELEGRAM_SESSION_STRING")
         if session_string:
             print("🔥 Знайдено TELEGRAM_SESSION_STRING в змінних оточення. Ініціалізуємо MTProto...")
@@ -95,18 +125,27 @@ class TelegramThreatMonitor:
                 await self.client.connect()
                 if await self.client.is_user_authorized():
                     self.use_mtproto = True
-                    print("✅ Юзербот авторизований через StringSession! Отримуємо повідомлення МИТТЄВО.")
+                    print("✅ Юзербот авторизований через StringSession! Отримуємо повідомлення МИТТЄВО (MTProto).")
                     await self._join_target_channels()
                     self._setup_event_handlers()
                     self.restore_scheduled_clears()
+                    self._watchdog_task = asyncio.create_task(self._mtproto_watchdog_loop())
+                    self._scraper_task = asyncio.create_task(self._scrape_loop())
                     asyncio.create_task(self._periodic_cleanup_loop())
                     return
                 else:
-                    print("⚠️ StringSession надано, але сесія не авторизована.")
+                    err_msg = "StringSession надано, але сесія не авторизована."
+                    print(f"⚠️ {err_msg}")
+                    self.log_error("telegram", err_msg, endpoint="mtproto_auth", error_type="auth")
             except Exception as e:
-                print(f"⚠️ Помилка ініціалізації StringSession: {e}")
+                err_msg = f"Помилка ініціалізації StringSession MTProto: {e}"
+                print(f"⚠️ {err_msg}")
+                self.log_error("telegram", err_msg, endpoint="mtproto_init", error_type="network_error")
                 if self.client:
-                    await self.client.disconnect()
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
 
         # 2. Try to load from local file session (fallback)
         session_found = None
@@ -118,26 +157,32 @@ class TelegramThreatMonitor:
         if session_found:
             print(f"🔥 Знайдено локальний файл сесії: {session_found}. Ініціалізуємо MTProto...")
             try:
-                self.client = TelegramClient(session_found, TELEGRAM_API_ID, TELEGRAM_API_HASH, connection_retries=1, timeout=4)
+                self.client = TelegramClient(session_found, TELEGRAM_API_ID, TELEGRAM_API_HASH, connection_retries=2, timeout=5)
                 await self.client.connect()
                 
                 if await self.client.is_user_authorized():
                     self.use_mtproto = True
-                    print("✅ Юзербот авторизований через локальний файл! Отримуємо повідомлення МИТТЄВО.")
+                    print("✅ Юзербот авторизований через локальний файл! Отримуємо повідомлення МИТТЄВО (MTProto).")
                     await self._join_target_channels()
                     self._setup_event_handlers()
                     self.restore_scheduled_clears()
+                    self._watchdog_task = asyncio.create_task(self._mtproto_watchdog_loop())
+                    self._scraper_task = asyncio.create_task(self._scrape_loop())
                     asyncio.create_task(self._periodic_cleanup_loop())
                     return
                 else:
-                    print("⚠️ Файл сесії знайдено, але користувач не авторизований.")
+                    err_msg = "Файл сесії знайдено, але користувач не авторизований."
+                    print(f"⚠️ {err_msg}")
+                    self.log_error("telegram", err_msg, endpoint="mtproto_auth", error_type="auth")
                     try:
                         await self.client.disconnect()
                     except Exception:
                         pass
                     self.client = None
             except Exception as e:
-                print(f"⚠️ Помилка ініціалізації MTProto: {e}")
+                err_msg = f"Помилка ініціалізації файлової сесії MTProto: {e}"
+                print(f"⚠️ {err_msg}")
+                self.log_error("telegram", err_msg, endpoint="mtproto_init", error_type="network_error")
                 if self.client:
                     try:
                         await self.client.disconnect()
@@ -147,7 +192,10 @@ class TelegramThreatMonitor:
                     
         print("🟡 Сесію юзербота не знайдено або не авторизовано. Запускаємо резервний Web Scraper...")
         self.use_mtproto = False
-        asyncio.create_task(self._scrape_loop())
+        for ch in TARGET_CHANNELS:
+            self.channel_health[ch]["mode"] = "scraper_fallback"
+            self.channel_health[ch]["status"] = "ok"
+        self._scraper_task = asyncio.create_task(self._scrape_loop())
         print(f"📥 Автоматичний веб-моніторинг (кожні 20 сек) активний для: {', '.join(TARGET_CHANNELS)}")
 
         # Restore scheduled timers and start periodic cleanup loop
@@ -162,26 +210,88 @@ class TelegramThreatMonitor:
         async def handler(event):
             if not self.is_running:
                 return
-            text = event.message.text
-            if text:
+            channel = "unknown"
+            try:
                 try:
                     channel = event.chat.username or str(event.chat_id)
                 except:
                     channel = "unknown"
                 
-                msg_date = None
-                if getattr(event.message, 'date', None):
-                    try:
-                        msg_date = event.message.date.astimezone(timezone.utc).isoformat()
-                    except Exception:
-                        msg_date = str(event.message.date)
-                
-                short_text = text.strip().replace('\n', ' ')[:80]
-                print(f"⚡ [MTProto: {channel}] Нове повідомлення: \"{short_text}...\"")
-                await self._process_message(text, channel, message_date=msg_date)
+                text = event.message.text
+                if text:
+                    msg_date = None
+                    if getattr(event.message, 'date', None):
+                        try:
+                            msg_date = event.message.date.astimezone(timezone.utc).isoformat()
+                        except Exception:
+                            msg_date = str(event.message.date)
+                    
+                    if channel in self.channel_health:
+                        self.channel_health[channel]["last_event_time"] = time.time()
+                        self.channel_health[channel]["status"] = "ok"
+                        self.channel_health[channel]["mode"] = "mtproto"
+                    
+                    short_text = text.strip().replace('\n', ' ')[:80]
+                    print(f"⚡ [MTProto: {channel}] Нове повідомлення: \"{short_text}...\"")
+                    await self._process_message(text, channel, message_date=msg_date)
+            except Exception as e:
+                err_msg = f"Помилка обробки події MTProto каналу @{channel}: {e}"
+                print(f"❌ [MTProto Event Error] {err_msg}")
+                if channel in self.channel_health:
+                    self.channel_health[channel]["error_count"] += 1
+                self.log_error(
+                    "telegram",
+                    err_msg,
+                    endpoint=f"channel_{channel}",
+                    context=f"channel={channel}",
+                    error_type="telegram_error"
+                )
+
+    async def _mtproto_watchdog_loop(self):
+        """Watchdog that continuously checks MTProto connection health and automatically recovers or switches fallback."""
+        while self.is_running:
+            await asyncio.sleep(15)
+            if self.use_mtproto and self.client:
+                try:
+                    if not self.client.is_connected():
+                        err_msg = "MTProto клієнт втратив з'єднання. Автоматичне перемикання на Web Scraper fallback."
+                        logger.warning(f"⚠️ [Watchdog] {err_msg}")
+                        self.log_error(
+                            "telegram",
+                            err_msg,
+                            endpoint="mtproto_watchdog",
+                            error_type="network_error"
+                        )
+                        self.use_mtproto = False
+                        for ch in TARGET_CHANNELS:
+                            self.channel_health[ch]["mode"] = "scraper_fallback"
+                        
+                        # Attempt reconnection in background
+                        try:
+                            await self.client.connect()
+                            if await self.client.is_user_authorized():
+                                print("🔄 MTProto успішно відновив з'єднання!")
+                                self.use_mtproto = True
+                                for ch in TARGET_CHANNELS:
+                                    if ch not in self._failed_channels:
+                                        self.channel_health[ch]["mode"] = "mtproto"
+                                        self.channel_health[ch]["status"] = "ok"
+                        except Exception as rec_err:
+                            logger.error(f"❌ [Watchdog Reconnect Error] {rec_err}")
+                except Exception as e:
+                    self.log_error(
+                        "telegram",
+                        f"Помилка воркера моніторингу MTProto: {e}",
+                        endpoint="mtproto_watchdog",
+                        error_type="systemic"
+                    )
 
     async def stop(self):
         self.is_running = False
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+        if self._scraper_task:
+            self._scraper_task.cancel()
         for task in self._clear_tasks.values():
             task.cancel()
         self._clear_tasks.clear()
@@ -200,11 +310,28 @@ class TelegramThreatMonitor:
         }
         timeout = aiohttp.ClientTimeout(total=15, connect=5)
         async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
-            while self.is_running and not self.use_mtproto:
-                for channel in TARGET_CHANNELS:
-                    await self._scrape_channel(session, channel)
-                    await asyncio.sleep(1.5)  # Throttle between channel fetches to prevent Telegram web rate limits
-                await asyncio.sleep(15)
+            while self.is_running:
+                try:
+                    if not self.use_mtproto:
+                        # Full Fallback: MTProto is down, scrape ALL channels
+                        for channel in TARGET_CHANNELS:
+                            await self._scrape_channel(session, channel)
+                            await asyncio.sleep(1.5)
+                        await asyncio.sleep(15)
+                    elif self._failed_channels:
+                        # Partial Fallback: Scrape only channels that failed in MTProto
+                        for channel in list(self._failed_channels):
+                            await self._scrape_channel(session, channel)
+                            await asyncio.sleep(1.5)
+                        await asyncio.sleep(15)
+                    else:
+                        # Standby mode: MTProto is 100% healthy for all channels
+                        await asyncio.sleep(20)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f"⚠️ [Scraper Loop Error] {e}")
+                    await asyncio.sleep(15)
 
     async def _scrape_channel(self, session, channel):
         url = f"https://t.me/s/{channel}"
@@ -223,7 +350,10 @@ class TelegramThreatMonitor:
                 
                 if is_first_run:
                     max_id = 0
+                    messages_to_catchup = []
+                    now_dt = datetime.now(timezone.utc)
                     for msg in messages:
+                        current_id = 0
                         post_id = msg.get('data-post')
                         if post_id:
                             try:
@@ -232,8 +362,33 @@ class TelegramThreatMonitor:
                                     max_id = current_id
                                     self.last_seen_posts[channel] = post_id
                             except:
-                                continue
-                    print(f"📡 [{channel}] Первинний запуск веб-скрейпера. Базовий ID: {max_id}")
+                                pass
+                                
+                        time_tag = msg.select_one('time[datetime]')
+                        msg_date = None
+                        is_recent = False
+                        if time_tag and time_tag.get('datetime'):
+                            msg_date = time_tag['datetime']
+                            try:
+                                dt = datetime.fromisoformat(msg_date.replace('Z', '+00:00'))
+                                if (now_dt - dt).total_seconds() <= 3600:  # past 60 min
+                                    is_recent = True
+                            except Exception:
+                                pass
+                        if is_recent:
+                            messages_to_catchup.append((msg, current_id, msg_date))
+                    
+                    print(f"📡 [{channel}] Первинний запуск веб-скрейпера. Базовий ID: {max_id}, підхоплено повідомлень (остання 1 год): {len(messages_to_catchup)}")
+                    
+                    for msg, current_id, msg_date in messages_to_catchup:
+                        text_div = msg.select_one('.tgme_widget_message_text')
+                        if text_div:
+                            for br in text_div.find_all("br"):
+                                br.replace_with("\n")
+                            text = text_div.get_text()
+                            short_text = text.strip().replace('\n', ' ')[:80]
+                            print(f"📖 [Web Catch-up: {channel}] Повідомлення (ID: {current_id}): \"{short_text}...\"")
+                            await self._process_message(text, channel, message_date=msg_date)
                     return
 
                 last_id = 0
@@ -269,7 +424,16 @@ class TelegramThreatMonitor:
                         await self._process_message(text, channel, message_date=msg_date)
         except Exception as e:
             err_str = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
-            # Network and timeout errors during periodic web scraping are normal transient events
+            now_ts = time.time()
+            if now_ts - self._scraper_last_error_time.get(channel, 0.0) >= 60.0:
+                self._scraper_last_error_time[channel] = now_ts
+                self.log_error(
+                    "telegram_scraper",
+                    f"Помилка веб-скрейпінгу каналу @{channel}: {err_str}",
+                    endpoint=f"scraper_{channel}",
+                    context=f"channel={channel}",
+                    error_type="network_error"
+                )
             logger.warning(f"⚠️ [Web Scraper] {channel}: {err_str}")
 
     def _find_path(self, start_region: str, end_region: str) -> list[str]:
