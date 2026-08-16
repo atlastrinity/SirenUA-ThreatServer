@@ -23,7 +23,10 @@ logging.basicConfig(
 logger = logging.getLogger("sirenua")
 
 # Live Mode vs Mock Mode
-IS_LIVE_MODE = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
+def is_live_mode() -> bool:
+    return "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
+
+IS_LIVE_MODE = is_live_mode()
 
 # Database Configuration
 DB_PATH = os.environ.get("DB_PATH")
