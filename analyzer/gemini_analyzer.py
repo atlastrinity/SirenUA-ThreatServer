@@ -124,8 +124,10 @@ class GeminiThreatAnalyzer:
         """Load confidence correction rules for the predictive engine.
         Returns dict: {region: {threat_type: correction_value}}"""
         corrections = {}
+        conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            from database.connection import get_sqlite_connection
+            conn = get_sqlite_connection(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
@@ -147,10 +149,14 @@ class GeminiThreatAnalyzer:
                     corrections[region][threat_type] = correction
                 except (json.JSONDecodeError, TypeError):
                     pass
-            
-            conn.close()
         except Exception:
             pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         return corrections
 
     def run_rules_learner(self) -> int:

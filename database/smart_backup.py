@@ -208,15 +208,17 @@ def smart_local_incremental_backup() -> dict:
     archive_path = get_archive_db_path()
     added_stats = {}
 
+    src_conn = None
+    dst_conn = None
     try:
+        from database.connection import get_sqlite_connection
         # 1. Initialize archive DB
-        archive_conn = sqlite3.connect(archive_path, timeout=30.0)
-        archive_conn.execute("PRAGMA journal_mode = WAL")
+        archive_conn = get_sqlite_connection(archive_path)
         init_archive_tables(archive_conn)
         archive_conn.close()
 
         # 2. Attach archive DB to live DB connection and copy new rows
-        src_conn = sqlite3.connect(DB_PATH, timeout=30.0)
+        src_conn = get_sqlite_connection(DB_PATH)
         src_conn.execute(f"ATTACH DATABASE '{archive_path}' AS archive_db")
 
         tables_to_sync = [
@@ -243,17 +245,19 @@ def smart_local_incremental_backup() -> dict:
 
         src_conn.commit()
         src_conn.close()
+        src_conn = None
 
-        # 3. Also update latest full snapshot file
+        # 3. Also update latest full snapshot file with non-blocking chunked backup
         base_dir = os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else "."
         latest_path = os.path.join(base_dir, "backups", "threat_analytics_backup_latest.db")
         
-        src_conn = sqlite3.connect(DB_PATH, timeout=30.0)
-        dst_conn = sqlite3.connect(latest_path)
-        with dst_conn:
-            src_conn.backup(dst_conn)
+        src_conn = get_sqlite_connection(DB_PATH)
+        dst_conn = get_sqlite_connection(latest_path)
+        src_conn.backup(dst_conn, pages=100, sleep=0.01)
         dst_conn.close()
+        dst_conn = None
         src_conn.close()
+        src_conn = None
 
         if total_appended > 0:
             logger.info(f"💾 [Smart Backup 5m] Успішно дозаписано {total_appended} нових подій у постійний архів ({archive_path}).")
@@ -261,6 +265,17 @@ def smart_local_incremental_backup() -> dict:
     except Exception as e:
         logger.error(f"❌ [Smart Backup Error] Помилка розумного бекапу: {e}")
         return {"status": "error", "error": str(e)}
+    finally:
+        if dst_conn:
+            try:
+                dst_conn.close()
+            except Exception:
+                pass
+        if src_conn:
+            try:
+                src_conn.close()
+            except Exception:
+                pass
 
 
 async def periodic_smart_backup_loop():

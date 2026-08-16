@@ -151,7 +151,8 @@ async def get_region_history(
     # 1. SQLite (основне джерело) — миттєва локальна вибірка без обмежень квот та мережевих затримок
     try:
         def _fetch_sqlite():
-            conn = sqlite3.connect(DB_PATH)
+            from database.connection import get_sqlite_connection
+            conn = get_sqlite_connection(DB_PATH)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("""
