@@ -950,6 +950,7 @@ class TelegramThreatMonitor:
                         "confidence": confidence,
                         "source_level": state.level,
                         "is_test": state.is_test,
+                        "telemetry": telemetry,
                     }
         
         # Apply predictions — limit to top 2 highest scoring regions max
@@ -973,10 +974,48 @@ class TelegramThreatMonitor:
             source_reg_genitive = get_genitive_region(pred['source_region'])
             threat_type_ukr = get_ukrainian_threat_type(pred['threat_type'])
             detail = f"Ціль з {source_reg_genitive} ({threat_type_ukr}) прямує в напрямку області."
+            
+            # Full telemetry block for predictive (yellow) regions
+            src_telemetry = pred.get("telemetry") or {}
+            telemetry_info = []
+            
+            # 1. Distance
+            dist = pred.get("distance_km") or src_telemetry.get("distance_to_target_km")
+            if dist:
+                telemetry_info.append(f"Відстань до цілі: ~{dist:.0f} км")
+                
+            # 2. Target Count
+            t_count = src_telemetry.get("target_count")
+            if t_count:
+                telemetry_info.append(f"Кількість цілей: {t_count}")
+                
+            # 3. Launch Origin / Direction
+            launch_orig = src_telemetry.get("launch_origin")
+            if launch_orig and str(launch_orig).lower() != "unknown":
+                telemetry_info.append(f"Напрямок запуску: {launch_orig}")
+                
+            # 4. Inferred Ukrainian Type
+            from core.threat_types import infer_threat_type_details
+            inferred_type = infer_threat_type_details(pred["threat_type"], telemetry=src_telemetry)
+            telemetry_info.append(f"Тип: {inferred_type}")
+            
+            # 5. Speed
+            spd = src_telemetry.get("speed_kmh")
+            if spd:
+                telemetry_info.append(f"Швидкість руху: ~{spd} км/год")
+                
+            # 6. Altitude
+            alt = src_telemetry.get("altitude_category")
+            if alt and str(alt).lower() != "unknown":
+                alt_mapping = {"low": "мала", "medium": "середня", "high": "велика"}
+                alt_ukr = alt_mapping.get(str(alt).lower(), str(alt))
+                telemetry_info.append(f"Висота польоту: {alt_ukr}")
+                
+            if telemetry_info:
+                detail += "\n" + "\n".join(telemetry_info)
+                
             if pred["eta_str"]:
-                detail += f"\nОчікуваний час: {pred['eta_str']}"
-            if pred["distance_km"]:
-                detail += f"\nВідстань: ~{pred['distance_km']:.0f} км"
+                detail += f"\n(Очікуваний час: {pred['eta_str']})"
             if pred["route_boost"] > 0:
                 detail += "\nІсторичний маршрут підтверджено"
             if pred["db_boost"] > 0:
@@ -998,13 +1037,21 @@ class TelegramThreatMonitor:
                         break
 
             if not existing_pred:
+                merged_telemetry = dict(src_telemetry)
+                merged_telemetry.update({
+                    "group_id": pred_gid,
+                    "transit_from": pred["source_region"],
+                    "distance_to_target_km": pred.get("distance_km"),
+                    "speed_kmh": spd or src_telemetry.get("speed_kmh"),
+                    "weapon_subtype": src_telemetry.get("weapon_subtype")
+                })
                 self.threat_manager.set_threat(
                     region, pred_level, pred["threat_type"], detail,
                     confidence=pred["confidence"],
                     eta=pred["eta_str"],
                     is_predictive=True,
                     is_test=pred.get("is_test", False),
-                    telemetry={"group_id": pred_gid, "transit_from": pred["source_region"]},  # Pass group_id and transit_from for precise origin tracking
+                    telemetry=merged_telemetry,
                     eta_seconds=pred.get("eta_seconds"),
                     transit_from=pred["source_region"]
                 )
@@ -1241,16 +1288,36 @@ class TelegramThreatMonitor:
                     if is_pred:
                         regex_confidence = max(0, regex_confidence - 20)
                     
+                    from core.threat_types import infer_threat_type_details, resolve_aviation_strike_profile
+                    inferred_title = infer_threat_type_details(threat_type, text=detail_text)
+                    av_profile = resolve_aviation_strike_profile(threat_type, detail_text, region)
+                    
                     detail = self._build_region_detail(detail_text, region, threat_type)
                     detail = clean_user_facing_threat_detail(detail)
+                    
+                    telemetry_info = [f"Тип: {inferred_title}"]
+                    if av_profile.get("carrier_origin_name"):
+                        telemetry_info.append(f"Напрямок запуску: {av_profile['carrier_origin_name']}")
+                    
+                    detail += "\n" + "\n".join(telemetry_info)
                     if is_pred:
-                        detail += f" ⚠️ Ціль може прямувати через область. Очікуваний час: {eta_str}" if eta_str else " ⚠️ Ціль може прямувати через область."
+                        detail += f"\n⚠️ Ціль може прямувати через область."
+                        if eta_str:
+                            detail += f" Очікуваний час: {eta_str}"
                     elif eta_str:
-                        detail += f" (Очікуваний час: {eta_str})"
+                        detail += f"\n(Очікуваний час: {eta_str})"
 
-                    self.threat_manager.set_threat(region, level, threat_type, detail,
-                                                  confidence=regex_confidence, eta=eta_str, is_predictive=is_pred,
-                                                  is_test=is_test, since=msg_date)
+                    self.threat_manager.set_threat(
+                        region, level, threat_type, detail,
+                        confidence=regex_confidence, eta=eta_str, is_predictive=is_pred,
+                        is_test=is_test, since=msg_date,
+                        telemetry={
+                            "weapon_subtype": inferred_title,
+                            "launch_origin": av_profile.get("carrier_origin_name"),
+                            "carrier_origin_name": av_profile.get("carrier_origin_name"),
+                            "launch_sector_name": av_profile.get("launch_sector_name"),
+                        }
+                    )
                     self._schedule_auto_clear(region, delay)
                     set_regions[region] = level
 

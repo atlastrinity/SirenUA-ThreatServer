@@ -7,25 +7,26 @@ import core.config
 from core.threats.threat_manager import MockThreatManager
 from database.threat_logger import log_threat_to_db, log_threat_to_firestore
 from database.clearing_logger import log_clearing_to_db
+from database.connection import get_sqlite_connection
 from monitor.telegram_monitor import TelegramThreatMonitor
 
 TEST_REGIONS = ('Сумська область', 'Харківська область')
 
 @pytest.fixture
 def clean_db():
-    conn = sqlite3.connect(core.config.DB_PATH)
+    conn = get_sqlite_connection(core.config.DB_PATH)
     c = conn.cursor()
-    c.execute(f"DELETE FROM paired_events WHERE region IN {TEST_REGIONS}")
-    c.execute(f"DELETE FROM threat_clearings WHERE region IN {TEST_REGIONS}")
-    c.execute(f"DELETE FROM threat_history WHERE region IN {TEST_REGIONS}")
+    c.execute("DELETE FROM paired_events WHERE region IN (?, ?)", TEST_REGIONS)
+    c.execute("DELETE FROM threat_clearings WHERE region IN (?, ?)", TEST_REGIONS)
+    c.execute("DELETE FROM threat_history WHERE region IN (?, ?)", TEST_REGIONS)
     conn.commit()
     conn.close()
     yield
-    conn = sqlite3.connect(core.config.DB_PATH)
+    conn = get_sqlite_connection(core.config.DB_PATH)
     c = conn.cursor()
-    c.execute(f"DELETE FROM paired_events WHERE region IN {TEST_REGIONS}")
-    c.execute(f"DELETE FROM threat_clearings WHERE region IN {TEST_REGIONS}")
-    c.execute(f"DELETE FROM threat_history WHERE region IN {TEST_REGIONS}")
+    c.execute("DELETE FROM paired_events WHERE region IN (?, ?)", TEST_REGIONS)
+    c.execute("DELETE FROM threat_clearings WHERE region IN (?, ?)", TEST_REGIONS)
+    c.execute("DELETE FROM threat_history WHERE region IN (?, ?)", TEST_REGIONS)
     conn.commit()
     conn.close()
 
@@ -46,7 +47,7 @@ def test_historical_threat_and_clearing_timestamps(clean_db):
     )
     assert event_id is not None
 
-    conn = sqlite3.connect(core.config.DB_PATH)
+    conn = get_sqlite_connection(core.config.DB_PATH)
     c = conn.cursor()
     c.execute("SELECT timestamp, threat_type, threat_level FROM threat_history WHERE id = ?", (event_id,))
     row = c.fetchone()
@@ -73,7 +74,7 @@ def test_historical_threat_and_clearing_timestamps(clean_db):
     )
     assert clearing_id is not None
 
-    conn = sqlite3.connect(core.config.DB_PATH)
+    conn = get_sqlite_connection(core.config.DB_PATH)
     c = conn.cursor()
     c.execute("SELECT timestamp, threat_duration_seconds, resolution_type FROM threat_clearings WHERE id = ?", (clearing_id,))
     tc_row = c.fetchone()
@@ -127,7 +128,7 @@ async def test_telegram_monitor_process_message_with_historical_date(clean_db):
     assert len(state_after.active_threats) == 0
 
     # Verify DB records
-    conn = sqlite3.connect(core.config.DB_PATH)
+    conn = get_sqlite_connection(core.config.DB_PATH)
     c = conn.cursor()
     c.execute("SELECT timestamp, threat_duration_seconds FROM threat_clearings WHERE region = 'Сумська область' ORDER BY id DESC LIMIT 1")
     row = c.fetchone()
@@ -182,7 +183,7 @@ async def test_gemini_analysis_with_historical_date(clean_db):
     state_after = manager.get_threat("Харківська область")
     assert len(state_after.active_threats) == 0
 
-    conn = sqlite3.connect(core.config.DB_PATH)
+    conn = get_sqlite_connection(core.config.DB_PATH)
     c = conn.cursor()
     c.execute("SELECT timestamp, threat_duration_seconds FROM threat_clearings WHERE region = 'Харківська область' ORDER BY id DESC LIMIT 1")
     row = c.fetchone()
