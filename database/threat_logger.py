@@ -66,6 +66,7 @@ def log_threat_to_db(
     event_timestamp: Optional[str] = None,
 ):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
+    conn = None
     try:
         conn = get_sqlite_connection(core.config.DB_PATH)
         cursor = conn.cursor()
@@ -81,12 +82,10 @@ def log_threat_to_db(
             last_id, last_level, last_ts = last_rec[0], last_rec[1], last_rec[2]
             # 1. For official_alarm: never write consecutive identical level (high->high or none->none)
             if threat_type == "official_alarm" and last_level == level:
-                conn.close()
                 return None
 
             # 2. Never write consecutive 'none' records for any threat type
             if level == "none" and last_level == "none":
-                conn.close()
                 return None
 
             # 3. For identical non-test threat levels within 15 seconds: ignore redundant log
@@ -96,7 +95,6 @@ def log_threat_to_db(
                     WHERE id = ? AND timestamp >= datetime('now', '-15 seconds')
                 """, (last_id,))
                 if cursor.fetchone():
-                    conn.close()
                     return None
 
         norm_ts = _normalize_timestamp_for_db(event_timestamp)
@@ -181,12 +179,17 @@ def log_threat_to_db(
                 ))
 
         conn.commit()
-        conn.close()
         return event_id
     except Exception as e:
         print(f"⚠️ Помилка запису в БД аналітики: {e}")
         log_error_to_db("server", str(e), endpoint="log_threat_to_db", context=f"region={region}, level={level}")
         return None
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def log_threat_to_firestore(
@@ -268,6 +271,7 @@ def flush_history_batch():
 
 def validate_prediction_on_alarm(region: str):
     """Marks predictive paired_events as 'confirmed' when official alarm activates."""
+    conn = None
     try:
         conn = get_sqlite_connection(core.config.DB_PATH)
         cursor = conn.cursor()
@@ -281,9 +285,14 @@ def validate_prediction_on_alarm(region: str):
         ''', (region,))
         updated = cursor.rowcount
         conn.commit()
-        conn.close()
         if updated > 0:
             print(f"✅ [Validation] Офіційна тривога підтвердила {updated} предикцій Gemini для {region}")
     except Exception as e:
         print(f"⚠️ [Validation] Помилка валідації предикції: {e}")
         log_error_to_db("server", str(e), endpoint="validate_prediction_on_alarm", context=f"region={region}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass

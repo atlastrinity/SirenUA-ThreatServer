@@ -31,6 +31,7 @@ def _log_error(source: str, message: str, endpoint: str = "", context: str = "",
 
 def delete_test_history_from_sqlite():
     """Видаляє тестові загрози та кліринги з SQLite."""
+    conn = None
     try:
         conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
@@ -38,27 +39,39 @@ def delete_test_history_from_sqlite():
         cursor.execute("DELETE FROM threat_clearings WHERE is_test = 1")
         cursor.execute("DELETE FROM paired_events WHERE is_test = 1 OR threat_event_id IN (SELECT id FROM threat_history WHERE is_test = 1)")
         conn.commit()
-        conn.close()
     except Exception as e:
         logger.error(f"Помилка очищення тестової історії з SQLite: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def execute_write(query: str, params: tuple = ()) -> bool:
     """Виконує запис у базу даних SQLite з обробкою винятків та відкотом (rollback)."""
+    conn = None
     try:
         conn = get_sqlite_connection(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(query, params)
         conn.commit()
-        conn.close()
         return True
     except Exception as e:
-        logger.error(f"Помилка виконання SQL запису: {e}")
+        print(f"⚠️ [SQL Write Error] {e}")
         return False
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds: int = 20) -> bool:
     """Перевіряє, чи не було аналогічної загрози записано в БД від 2 до 20 секунд тому."""
+    conn = None
     try:
         from datetime import datetime, timezone
         conn = get_sqlite_connection(DB_PATH)
@@ -70,7 +83,6 @@ def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds
             ORDER BY id DESC LIMIT 3
         """, (region,))
         rows = cursor.fetchall()
-        conn.close()
         if rows:
             current_time = datetime.now(timezone.utc)
             for row in rows:
@@ -85,8 +97,14 @@ def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds
                         return True
         return False
     except Exception as e:
-        logger.error(f"Помилка перевірки дублікату загрози: {e}")
+        print(f"⚠️ [Duplicate Check Error] {e}")
         return False
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def execute_query_as_dicts(query: str, params: tuple = (), json_fields: list = None) -> List[Dict[str, Any]]:
