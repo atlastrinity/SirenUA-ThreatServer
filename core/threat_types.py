@@ -1005,7 +1005,10 @@ def infer_threat_type_details(
     telemetry = telemetry or {}
     weapon_subtype = telemetry.get("weapon_subtype")
     if weapon_subtype and str(weapon_subtype).lower() not in ["unknown", "none", ""]:
-        return str(weapon_subtype)
+        subtype_str = str(weapon_subtype).strip()
+        if subtype_str.upper() in ["УАБ", "UAB"]:
+            return "КАБ (Керована авіабомба)"
+        return subtype_str
 
     # 1. Direct match with registered threat types
     if threat_type and threat_type.lower() != THREAT_UNKNOWN and threat_type.lower() in THREAT_TITLES:
