@@ -992,6 +992,145 @@ def resolve_aviation_strike_profile(
     }
 
 
+WEAPON_SUBTYPE_TRANSLATIONS: Dict[str, str] = {
+    # Tactical Aviation & Carriers
+    "su_34/su_35_tactical_aviation": "Су-34/Су-35 (Тактична авіація)",
+    "su_34/su_35": "Су-34/Су-35 (Тактична авіація)",
+    "tactical_aviation": "Тактична авіація РФ",
+    "su34": "Су-34 (Фронтовий бомбардувальник)",
+    "su35": "Су-35 (Багатоцільовий винищувач)",
+    "su57": "Су-57 (Винищувач 5-го покоління)",
+    "su30": "Су-30 (Винищувач)",
+    "mig31k": "МіГ-31К (Носій Кинджалу)",
+    "tu95": "Ту-95МС (Стратегічний ракетоносець)",
+    "tu95ms": "Ту-95МС (Стратегічний ракетоносець)",
+    "tu22m3": "Ту-22М3 (Дальній бомбардувальник)",
+    "tu160": "Ту-160 (Стратегічний ракетоносець)",
+    
+    # Drones & UAVs
+    "reactive_uav": "Реактивний ударний БпЛА",
+    "reactive_drone": "Реактивний ударний дрон",
+    "jet_shahed": "Реактивний БпЛА Shahed-238",
+    "jet_drone": "Реактивний ударний дрон",
+    "shahed": "Ударний БпЛА Shahed-136",
+    "shahed_136": "Ударний БпЛА Shahed-136",
+    "shahed_131": "Ударний БпЛА Shahed-131",
+    "geran": "Ударний БпЛА Shahed-136 (Герань-2)",
+    "geran_2": "Ударний БпЛА Shahed-136 (Герань-2)",
+    "recon_drone": "Розвідувальний БпЛА",
+    "recon_uav": "Розвідувальний БпЛА (Орлан / ZALA / Supercam)",
+    "reconnaissance_uav": "Розвідувальний БпЛА",
+    "orlan": "Розвідувальний БпЛА Орлан-10",
+    "orlan_10": "Розвідувальний БпЛА Орлан-10",
+    "zala": "Розвідувальний БпЛА ZALA",
+    "supercam": "Розвідувальний БпЛА Supercam",
+    "fpv_drone": "FPV-дрон камікадзе",
+    "fpv": "FPV-дрон",
+    "lancet": "Ударний БпЛА Ланцет",
+    
+    # Bombs & Guided Munitions
+    "guided_bomb": "Керована авіабомба (КАБ)",
+    "glide_bomb": "Плануюча авіабомба з УМПК",
+    "kab": "КАБ (Керована авіабомба)",
+    "uab": "КАБ (Керована авіабомба)",
+    "fab": "ФАБ з УМПК (Авіабомба)",
+    "umpk": "ФАБ з модулем УМПК",
+    "umpb": "УМПБ Д-30СН (Плануючий боєприпас)",
+    "odab": "ОДАБ (Термобарична авіабомба)",
+    "rbk": "РБК (Касетна авіабомба)",
+    "grom_e1": "Гром-Е1 (Гібридна ракета-бомба)",
+    
+    # Missiles & Ballistics
+    "cruise_missile": "Крилата ракета",
+    "ballistic_missile": "Балістична ракета",
+    "ballistic": "Балістична ракета",
+    "kinzhal": "Аеробалістична ракета Х-47М2 Кинджал",
+    "kh47m2": "Аеробалістична ракета Х-47М2 Кинджал",
+    "kh101": "Крилата ракета Х-101",
+    "kh_101": "Крилата ракета Х-101",
+    "kh555": "Крилата ракета Х-555",
+    "kh_555": "Крилата ракета Х-555",
+    "kh59": "Керована авіаційна ракета Х-59/Х-69",
+    "kh_59": "Керована авіаційна ракета Х-59/Х-69",
+    "kh69": "Керована авіаційна ракета Х-69",
+    "kh_69": "Керована авіаційна ракета Х-69",
+    "kh22": "Надзвукова крилата ракета Х-22",
+    "kh_22": "Надзвукова крилата ракета Х-22",
+    "kh32": "Надзвукова крилата ракета Х-32",
+    "kh_32": "Надзвукова крилата ракета Х-32",
+    "kh31p": "Протирадіолокаційна ракета Х-31П",
+    "kh_31p": "Протирадіолокаційна ракета Х-31П",
+    "kh35": "Протикорабельна/тактична ракета Х-35",
+    "kh_35": "Протикорабельна/тактична ракета Х-35",
+    "kalibr": "Крилата ракета Калібр",
+    "iskander_m": "Балістична ракета 9М723 Іскандер-М",
+    "iskander_k": "Крилата ракета 9М728 Іскандер-К",
+    "iskander": "Ракетний комплекс Іскандер",
+    "kn23": "Балістична ракета KN-23",
+    "zircon": "Гіперзвукова ракета 3M22 Циркон",
+    "onyx": "Надзвукова протикорабельна ракета Онікс",
+    "oniks": "Надзвукова протикорабельна ракета Онікс",
+    "s300": "ЗРК С-300 (удар по наземних цілях)",
+    "s400": "ЗРК С-400 (удар по наземних цілях)",
+    "mlrs": "РСЗВ (Торнадо-С / Град / Ураган)",
+    "tornado_s": "РСЗВ Торнадо-С (високоточна)",
+    "artillery": "Ствольна артилерія",
+}
+
+
+def translate_weapon_subtype_to_ukrainian(subtype: Optional[str]) -> str:
+    """Translates any English/foreign weapon subtype string to proper Ukrainian terminology."""
+    if not subtype:
+        return ""
+    s = str(subtype).strip()
+    s_norm = s.lower().replace("-", "_").replace(" ", "_")
+    
+    # 1. Exact normalized match
+    if s_norm in WEAPON_SUBTYPE_TRANSLATIONS:
+        return WEAPON_SUBTYPE_TRANSLATIONS[s_norm]
+    if s.lower() in WEAPON_SUBTYPE_TRANSLATIONS:
+        return WEAPON_SUBTYPE_TRANSLATIONS[s.lower()]
+        
+    # 2. Pattern and substring match
+    st_upper = s.upper().replace("-", "_")
+    if "УАБ" in st_upper or "UAB" in st_upper:
+        return "КАБ (Керована авіабомба)"
+    elif "ФАБ" in st_upper or "FAB" in st_upper:
+        if "УМПК" not in st_upper:
+            return f"{s} з УМПК (Авіабомба)"
+        return f"{s} (Авіабомба)"
+    elif "УМПБ" in st_upper:
+        return "УМПБ Д-30СН (Плануючий боєприпас)"
+    elif "ОДАБ" in st_upper or "ODAB" in st_upper:
+        return f"{s} (Термобарична авіабомба)"
+    elif "РБК" in st_upper or "RBK" in st_upper:
+        return f"{s} (Касетна авіабомба)"
+    elif "ГРОМ" in st_upper or "ГРІМ" in st_upper or "GROM" in st_upper:
+        return "Гром-Е1 (Гібридна ракета-бомба)"
+    elif "SU_34" in st_upper or "СУ_34" in st_upper or "SU34" in st_upper:
+        return "Су-34 (Фронтовий бомбардувальник)"
+    elif "SU_35" in st_upper or "СУ_35" in st_upper or "SU35" in st_upper:
+        return "Су-35 (Тактична авіація)"
+    elif "TACTICAL" in st_upper:
+        return "Тактична авіація РФ"
+    elif "REACTIVE" in st_upper or "JET" in st_upper:
+        return "Реактивний ударний БпЛА"
+    elif "SHAHED" in st_upper:
+        return "БПЛА Shahed-136"
+    elif "KALIBR" in st_upper:
+        return "Крилата ракета Калібр"
+    elif "KH_101" in st_upper or "X_101" in st_upper or "X101" in st_upper or "KH101" in st_upper:
+        return "Крилата ракета Х-101"
+    elif "ISKANDER" in st_upper or "ИСКАНДЕР" in st_upper:
+        return "Іскандер-М (Балістика)"
+    elif "KINZHAL" in st_upper or "КИНЖАЛ" in st_upper or "КІНДЖАЛ" in st_upper:
+        return "Аеробалістична ракета Х-47М2 Кинджал"
+    elif "ZIRCON" in st_upper or "ЦИРКОН" in st_upper:
+        return "Гіперзвукова ракета 3M22 Циркон"
+        
+    return s
+
+
 def infer_threat_type_details(
     threat_type: Optional[str] = None,
     telemetry: Optional[Dict[str, Any]] = None,
@@ -1006,23 +1145,7 @@ def infer_threat_type_details(
     telemetry = telemetry or {}
     weapon_subtype = telemetry.get("weapon_subtype")
     if weapon_subtype and str(weapon_subtype).lower() not in ["unknown", "none", ""]:
-        subtype_str = str(weapon_subtype).strip()
-        st_upper = subtype_str.upper()
-        if st_upper in ["УАБ", "UAB"]:
-            return "КАБ (Керована авіабомба)"
-        elif "ФАБ" in st_upper or "FAB" in st_upper:
-            if "УМПК" not in st_upper:
-                return f"{subtype_str} з УМПК (Авіабомба)"
-            return f"{subtype_str} (Авіабомба)"
-        elif "УМПБ" in st_upper:
-            return "УМПБ Д-30СН (Плануючий боєприпас)"
-        elif "ОДАБ" in st_upper or "ODAB" in st_upper:
-            return f"{subtype_str} (Термобарична авіабомба)"
-        elif "РБК" in st_upper or "RBK" in st_upper:
-            return f"{subtype_str} (Касетна авіабомба)"
-        elif "ГРОМ" in st_upper or "ГРІМ" in st_upper:
-            return "Гром-Е1 (Гібридна ракета-бомба)"
-        return subtype_str
+        return translate_weapon_subtype_to_ukrainian(weapon_subtype)
 
     # 1. Direct match with registered threat types
     if threat_type and threat_type.lower() != THREAT_UNKNOWN and threat_type.lower() in THREAT_TITLES:
