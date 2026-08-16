@@ -357,6 +357,9 @@ class GeminiThreatAnalyzer:
                     val = 1
             elif key in ("air_defense_active", "multiple_waves"):
                 val = bool(val)
+            elif key == "group_id" and val is not None:
+                from core.threats.threat_state_model import normalize_group_id
+                val = normalize_group_id(val)
             elif key == "message_context_tags":
                 if not isinstance(val, list):
                     val = []
@@ -438,6 +441,11 @@ class GeminiThreatAnalyzer:
         
         for key, default in defaults.items():
             val = clearing_telemetry.get(key, default)
+            
+            # Type coercion and validation
+            if key == "linked_group_id" and val is not None:
+                from core.threats.threat_state_model import normalize_group_id
+                val = normalize_group_id(val)
             
             # Type coercion and validation
             if key == "intercepted_count" and val is not None:

@@ -22,6 +22,37 @@ def _parse_iso_time(iso_str: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def normalize_group_id(group_id: Optional[str]) -> Optional[str]:
+    """
+    Normalizes a tactical threat group_id string to a canonical form, preventing
+    spurious duplicate cards caused by minor formatting differences across channels or LLM runs
+    (e.g., '_wave2' vs '_w2', '_group1' vs '_g1', '_wave_1' vs '_w1', trailing timestamps).
+    """
+    if not group_id:
+        return None
+    gid = str(group_id).strip().lower()
+    
+    # 1. Normalize wave representations: _wave2, _wave_2, _wave-2 -> _w2
+    gid = re.sub(r'[_.-]?wave[_.-]?(\d+)', r'_w\1', gid)
+    gid = re.sub(r'[_.-]?хвиля[_.-]?(\d+)', r'_w\1', gid)
+    
+    # 2. Normalize group representations: _group1, _group_1, _group-1 -> _g1
+    gid = re.sub(r'[_.-]?group[_.-]?(\d+)', r'_g\1', gid)
+    gid = re.sub(r'[_.-]?група[_.-]?(\d+)', r'_g\1', gid)
+    
+    # 3. Normalize single wave/group without number
+    gid = re.sub(r'[_.-]?wave$', r'_w', gid)
+    gid = re.sub(r'[_.-]?group$', r'_g', gid)
+    
+    # 4. Remove transient time/date suffixes (e.g., _aug16, _1608, _1040, _1051, _20260816)
+    gid = re.sub(r'_\d{4,8}$', '', gid)
+    gid = re.sub(r'_(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\d{1,2}$', '', gid)
+    
+    # 5. Collapse duplicate underscores/dashes
+    gid = re.sub(r'[_.-]+', '_', gid).strip('_')
+    return gid
+
+
 def _extract_group_signature(detail: Optional[str], telemetry: Optional[dict]) -> tuple[Optional[str], set[str], Optional[int]]:
     """
     Extracts group/wave signature: (group_marker, target_cities_set, wave_number).
@@ -80,7 +111,7 @@ def _extract_group_signature(detail: Optional[str], telemetry: Optional[dict]) -
 class ThreatState:
     """Стан загроз для однієї області (підтримка множинних загроз)."""
 
-    DEDUP_WINDOW_SECONDS = 300
+    DEDUP_WINDOW_SECONDS = 1800
 
     def __init__(self, region_name: str = ""):
         self.region_name = region_name
@@ -163,8 +194,9 @@ class ThreatState:
         self.is_test = False
 
     def clear_by_group_id(self, group_id: str) -> Optional[SingleThreat]:
+        norm_gid = normalize_group_id(group_id)
         for i, t in enumerate(self.active_threats):
-            if t.group_id == group_id:
+            if t.group_id == group_id or (norm_gid and normalize_group_id(t.group_id) == norm_gid):
                 return self.active_threats.pop(i)
         return None
 
@@ -278,56 +310,108 @@ class ThreatState:
     ) -> bool:
         """
         Determines whether incoming threat data is an update/duplicate of an existing threat
-        vs a separate tactical group/wave.
+        vs a separate tactical group/wave across all threat types (Shaheds, Missiles, Ballistics, KABs, Aviation).
         """
-        if not incoming_threat_type or existing.threat_type != incoming_threat_type:
+        if not incoming_threat_type or not existing.threat_type:
             return False
 
-        # 1. Exact or conflicting group IDs
-        if incoming_group_id and existing.group_id:
-            if incoming_group_id == existing.group_id:
-                return True
-            # Both have distinct explicit IDs (e.g. "shahed_1" vs "shahed_2")
+        # Threat types must match or be in the same tactical family
+        t_exist = existing.threat_type.lower()
+        t_inc = incoming_threat_type.lower()
+        same_family = (
+            t_exist == t_inc or
+            (t_exist in ["ballistic", "iskander_m", "kn23", "s300_s400"] and t_inc in ["ballistic", "iskander_m", "kn23", "s300_s400"]) or
+            (t_exist in ["cruise_missile", "kalibr", "kh101", "tu95_ms", "tu160"] and t_inc in ["cruise_missile", "kalibr", "kh101", "tu95_ms", "tu160"]) or
+            (t_exist in ["mig31k", "kinzhal"] and t_inc in ["mig31k", "kinzhal"]) or
+            (t_exist in ["shahed", "drone", "recon_uav", "shahed_jet"] and t_inc in ["shahed", "drone", "recon_uav", "shahed_jet"]) or
+            (t_exist in ["kab", "guided_bomb", "tactical_aviation", "su34", "su35"] and t_inc in ["kab", "guided_bomb", "tactical_aviation", "su34", "su35"])
+        )
+        if not same_family:
             return False
+
+        # 1. Normalized group IDs comparison (e.g. '_wave2' vs '_w2')
+        norm_incoming_gid = normalize_group_id(incoming_group_id)
+        norm_existing_gid = normalize_group_id(existing.group_id)
+
+        if norm_incoming_gid and norm_existing_gid:
+            if norm_incoming_gid == norm_existing_gid:
+                return True
+            # Conflicting wave/group numbers (e.g. "shahed_1" vs "shahed_2", "missile_w1" vs "missile_w2")
+            m_inc = re.search(r'[_.-](?:w|g|wave|group)?(\d+)$', norm_incoming_gid)
+            m_ext = re.search(r'[_.-](?:w|g|wave|group)?(\d+)$', norm_existing_gid)
+            if m_inc and m_ext and m_inc.group(1) != m_ext.group(1):
+                return False
 
         # 2. Extract signatures
         existing_grp, existing_targets, existing_wave = _extract_group_signature(existing.detail, existing.telemetry)
         incoming_grp, incoming_targets, incoming_wave = _extract_group_signature(incoming_detail, incoming_telemetry)
 
-        # Different wave numbers
+        # Explicitly different wave numbers (e.g. Wave 1 vs Wave 2)
         if existing_wave is not None and incoming_wave is not None and existing_wave != incoming_wave:
             return False
 
-        # Different group numbering (e.g. "group_1" vs "group_2")
-        if existing_grp and incoming_grp and existing_grp != incoming_grp:
+        # Explicitly different numbered groups (e.g. group_1 vs group_2)
+        if existing_grp and incoming_grp and existing_grp.startswith("group_") and incoming_grp.startswith("group_") and existing_grp != incoming_grp:
             return False
 
-        # Explicit marker of an additional/new group in incoming text
-        if incoming_grp == "new_group":
-            return False
+        # 3. Telemetry deep comparison across all threat types
+        t_exist_tel = existing.telemetry or {}
+        t_inc_tel = incoming_telemetry or {}
 
-        # 3. Disjoint tactical targets / cities within the region
+        origin_exist = str(t_exist_tel.get("launch_origin") or "").strip().lower()
+        origin_inc = str(t_inc_tel.get("launch_origin") or "").strip().lower()
+        
+        vec_exist = str(t_exist_tel.get("attack_vector") or "").strip().lower()
+        vec_inc = str(t_inc_tel.get("attack_vector") or "").strip().lower()
+
+        count_exist = t_exist_tel.get("target_count")
+        count_inc = t_inc_tel.get("target_count")
+
+        # Check if origins conflict (e.g. "Курськ" vs "Приморсько-Ахтарськ" or "Брянськ" vs "Чорне море")
+        if origin_exist and origin_inc and origin_exist != "unknown" and origin_inc != "unknown":
+            if origin_exist != origin_inc:
+                return False
+
+        # Check if vectors conflict (e.g. "sea_to_coast" vs "northeast_to_southwest")
+        if vec_exist and vec_inc and vec_exist != "unknown" and vec_inc != "unknown":
+            if vec_exist != vec_inc:
+                return False
+
+        # 4. Tactical target cities within the region
         if existing_targets and incoming_targets:
             if existing_targets.isdisjoint(incoming_targets):
                 return False
 
-        # 4. Attack vector conflict check
-        if existing.telemetry and incoming_telemetry:
-            v_exist = existing.telemetry.get("attack_vector")
-            v_inc = incoming_telemetry.get("attack_vector")
-            if v_exist and v_inc and v_exist != "unknown" and v_inc != "unknown":
-                if v_exist != v_inc:
-                    return False
+        # 5. Telemetry signature match: update existing threat even if different channel used "Нова група"
+        has_origin_match = bool(origin_exist and origin_inc and origin_exist == origin_inc)
+        has_vector_match = bool(vec_exist and vec_inc and vec_exist == vec_inc)
+        has_targets_match = bool(existing_targets and incoming_targets and not existing_targets.isdisjoint(incoming_targets))
+        has_count_match = bool(count_exist is not None and count_inc is not None and count_exist == count_inc)
+        has_wave_match = bool(existing_wave is not None and incoming_wave is not None and existing_wave == incoming_wave)
 
-        # 5. Time window check for deduplication
+        if (has_origin_match and has_vector_match and has_targets_match) or \
+           (has_origin_match and has_count_match and has_targets_match) or \
+           (has_wave_match and has_origin_match) or \
+           (has_count_match and has_targets_match and has_vector_match):
+            return True
+
+        # If incoming has explicit marker of an additional/new group without matching telemetry
+        if incoming_grp == "new_group":
+            return False
+
+        # 6. Time window check for generic/unspecified updates
         ref_time = _parse_iso_time(existing.last_updated_at or existing.since)
         if ref_time:
             now = datetime.now(timezone.utc)
             elapsed = (now - ref_time).total_seconds()
-            if elapsed > self.DEDUP_WINDOW_SECONDS:
-                return False
+            
+            # Dynamic dedup window based on threat type speed/flight time
+            max_window = 1800 if t_exist in ["shahed", "drone", "recon_uav"] else 900
+            if elapsed <= max_window:
+                if not (existing_targets and incoming_targets and existing_targets.isdisjoint(incoming_targets)):
+                    return True
 
-        return True
+        return False
 
     def set_threat(self, level: str, threat_type: Optional[str] = None,
                    detail: Optional[str] = None, confidence: Optional[int] = None,
@@ -355,10 +439,11 @@ class ThreatState:
 
         matched_existing = None
 
-        # 1. Exact match by group_id
+        # 1. Exact match by normalized group_id
         if group_id:
+            norm_gid = normalize_group_id(group_id)
             for existing in self.active_threats:
-                if existing.group_id == group_id:
+                if existing.group_id == group_id or (norm_gid and normalize_group_id(existing.group_id) == norm_gid):
                     matched_existing = existing
                     break
 

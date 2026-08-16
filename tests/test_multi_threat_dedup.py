@@ -204,3 +204,106 @@ class TestMultiThreatTrackingAndDedup:
         assert d["active_threats"][0]["origin_latitude"] == 45.2
         assert d["active_threats"][1]["group_id"] == "shahed_2"
         assert d["active_threats"][1]["origin_latitude"] == 45.0
+
+    def test_wave_group_id_normalization_dedup(self):
+        """Перевірка: '_wave2' та '_w2' нормалізуються і дедуплікуються в одну загрозу."""
+        state = ThreatState(region_name="Одеська область")
+
+        # Канал 1: повідомлення о 10:40 з ID ..._wave2
+        state.set_threat(
+            level="high",
+            threat_type="shahed",
+            detail="Нова група з 6 БпЛА у напрямку Чорноморська/Одеси",
+            confidence=90,
+            eta="~30-50 хв",
+            group_id="shahed_odesa_sea_wave2",
+            telemetry={
+                "group_id": "shahed_odesa_sea_wave2",
+                "target_count": 6,
+                "launch_origin": "Чорне море",
+                "attack_vector": "sea_to_coast",
+                "final_target_cities": ["Одеса", "Чорноморськ"],
+                "wave_number": 2
+            }
+        )
+        assert len(state.active_threats) == 1
+
+        # Канал 2: повідомлення о 10:51 з ID ..._w2 про ту саму групу
+        state.set_threat(
+            level="high",
+            threat_type="shahed",
+            detail="Нова група з 6 БпЛА у напрямку Чорноморська/Одеси",
+            confidence=95,
+            eta="~30-40 хв",
+            group_id="shahed_odesa_sea_w2",
+            telemetry={
+                "group_id": "shahed_odesa_sea_w2",
+                "target_count": 6,
+                "launch_origin": "Чорне море",
+                "attack_vector": "sea_to_coast",
+                "final_target_cities": ["Одеса", "Чорноморськ"],
+                "wave_number": 2
+            }
+        )
+
+        # Має бути рівно 1 загроза з оновленим confidence=95
+        assert len(state.active_threats) == 1
+        assert state.active_threats[0].confidence == 95
+        assert state.active_threats[0].eta == "~30-40 хв"
+
+    def test_all_threat_types_telemetry_signature_dedup(self):
+        """Перевірка дедуплікації для крилатих ракет, балістики, КАБів та авіації."""
+        # 1. Крилаті ракети (Калібр / Х-101)
+        state_missile = ThreatState(region_name="Київська область")
+        state_missile.set_threat(
+            level="critical",
+            threat_type="cruise_missile",
+            detail="Крилаті ракети з Каспію курсом на Васильків/Київ",
+            group_id="missile_caspian_wave1",
+            telemetry={"launch_origin": "Каспійське море", "attack_vector": "east_to_west", "final_target_cities": ["Київ", "Васильків"], "target_count": 4}
+        )
+        state_missile.set_threat(
+            level="critical",
+            threat_type="kh101",
+            detail="Х-101 з Каспію в напрямку Києва/Василькова",
+            group_id="missile_caspian_w1",
+            telemetry={"launch_origin": "Каспійське море", "attack_vector": "east_to_west", "final_target_cities": ["Київ", "Васильків"], "target_count": 4}
+        )
+        assert len(state_missile.active_threats) == 1
+
+        # 2. Балістика (Іскандер-М)
+        state_bal = ThreatState(region_name="Харківська область")
+        state_bal.set_threat(
+            level="critical",
+            threat_type="ballistic",
+            detail="Загроза балістики з Бєлгородської області",
+            group_id="bal_belgorod_1",
+            telemetry={"launch_origin": "Бєлгородська область", "attack_vector": "north_to_south", "final_target_cities": ["Харків"]}
+        )
+        state_bal.set_threat(
+            level="critical",
+            threat_type="iskander_m",
+            detail="Пуск Іскандер-М з Бєлгорода на Харків",
+            group_id="bal_belgorod_launch1",
+            telemetry={"launch_origin": "Бєлгородська область", "attack_vector": "north_to_south", "final_target_cities": ["Харків"]}
+        )
+        assert len(state_bal.active_threats) == 1
+
+        # 3. МіГ-31К (Кинджал)
+        state_mig = ThreatState(region_name="м. Київ")
+        state_mig.set_threat(
+            level="critical",
+            threat_type="mig31k",
+            detail="Зліт МіГ-31К з аеродрому Саваслейка",
+            group_id="mig31k_savasleyka_w1",
+            telemetry={"launch_origin": "Саваслейка", "weapon_subtype": "Х-47М2 Кинджал"}
+        )
+        state_mig.set_threat(
+            level="critical",
+            threat_type="kinzhal",
+            detail="Швидкісна ціль (Кинджал) на Київ",
+            group_id="mig31k_savasleyka_wave1",
+            telemetry={"launch_origin": "Саваслейка", "weapon_subtype": "Х-47М2 Кинджал"}
+        )
+        assert len(state_mig.active_threats) == 1
+
