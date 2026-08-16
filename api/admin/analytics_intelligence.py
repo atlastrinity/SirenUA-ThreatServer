@@ -87,6 +87,124 @@ for _k, _info in AVIATION_LAUNCH_SECTORS.items():
     LAUNCH_HUBS[_k] = _info["lat_lon"]
 
 
+def resolve_entity_coordinates(name: str) -> tuple[float, float]:
+    """
+    Універсальний резолвер географічних координат для Palantir Intelligence.
+    Зіставляє авіабази РФ, сектори пусків, області України та OSINT-псевдоніми,
+    повністю усуваючи нульові координати (0.0, 0.0).
+    """
+    if not name or not isinstance(name, str):
+        return (50.45, 30.52)
+
+    cleaned = name.strip()
+
+    # 1. Прямий збіг у LAUNCH_HUBS
+    if cleaned in LAUNCH_HUBS:
+        return LAUNCH_HUBS[cleaned]
+
+    # 2. Прямий збіг у REGION_CENTROIDS
+    if cleaned in REGION_CENTROIDS:
+        return REGION_CENTROIDS[cleaned]
+
+    # 3. Нормалізація українських областей
+    try:
+        from core.regions import normalize_region_name
+        normalized = normalize_region_name(cleaned)
+        if normalized in REGION_CENTROIDS:
+            return REGION_CENTROIDS[normalized]
+    except Exception:
+        pass
+
+    name_lower = cleaned.lower()
+
+    # 4. Пошук по авіабазах РФ (keywords / title / id)
+    for airbase_id, info in RUSSIAN_AIRBASES.items():
+        if airbase_id in name_lower or any(kw in name_lower for kw in info.get("keywords", [])) or info.get("title", "").lower() in name_lower:
+            return info["lat_lon"]
+
+    # 5. Пошук по секторах пусків авіації (keywords / title / id)
+    for sector_id, info in AVIATION_LAUNCH_SECTORS.items():
+        if sector_id in name_lower or any(kw in name_lower for kw in info.get("keywords", [])) or info.get("title", "").lower() in name_lower:
+            return info["lat_lon"]
+
+    # 6. Детальний словник OSINT-локацій та напрямків пусків
+    OSINT_GEO_ALIASES = {
+        "саваслейк": (55.45, 42.31),
+        "приморськ": (46.04, 38.01),
+        "єйськ": (46.68, 38.25),
+        "ейск": (46.68, 38.25),
+        "курськ": (51.75, 36.29),
+        "курск": (51.75, 36.29),
+        "халіно": (51.75, 36.30),
+        "бєлгород": (50.60, 36.58),
+        "белгород": (50.60, 36.58),
+        "грайворон": (50.48, 35.67),
+        "шебекіно": (50.41, 36.89),
+        "брянськ": (53.25, 34.37),
+        "брянск": (53.25, 34.37),
+        "орел": (52.97, 36.06),
+        "орлов": (52.97, 36.06),
+        "воронеж": (51.62, 39.15),
+        "балтімор": (51.62, 39.15),
+        "балтимор": (51.62, 39.15),
+        "бутурлинівк": (50.84, 40.60),
+        "ростов": (47.24, 39.71),
+        "міллерово": (48.95, 40.30),
+        "морозовськ": (48.31, 41.79),
+        "таганрог": (47.20, 38.84),
+        "кущевськ": (46.54, 39.55),
+        "чауд": (45.00, 35.83),
+        "тарханкут": (45.35, 32.50),
+        "джанкой": (45.71, 34.39),
+        "бельбек": (44.69, 33.57),
+        "севастополь": (44.61, 33.52),
+        "саки": (45.09, 33.59),
+        "новофедорівк": (45.09, 33.59),
+        "гвардійськ": (45.11, 33.97),
+        "крим": (45.30, 34.10),
+        "чорн": (43.50, 32.50),
+        "азов": (46.20, 36.50),
+        "каспій": (42.00, 51.00),
+        "каспий": (42.00, 51.00),
+        "енгельс": (51.48, 46.21),
+        "саратов": (51.53, 46.03),
+        "олень": (68.15, 33.46),
+        "мурманськ": (68.95, 33.08),
+        "шайковк": (54.22, 34.36),
+        "калуг": (54.51, 36.26),
+        "дягілєв": (54.64, 39.57),
+        "рязань": (54.63, 39.74),
+        "тамбов": (52.73, 41.45),
+        "липецьк": (52.64, 39.45),
+        "сольці": (58.14, 30.33),
+        "новгород": (58.52, 31.27),
+        "моздок": (43.78, 44.60),
+        "осетія": (43.02, 44.68),
+        "ахтубінськ": (48.31, 46.12),
+        "астрахань": (46.35, 48.05),
+        "мачулищ": (53.77, 27.55),
+        "білорусь": (53.77, 27.55),
+        "рб": (53.77, 27.55),
+        "тот запоріж": (47.20, 35.80),
+        "тот херсон": (46.60, 33.50),
+        "тот донецьк": (47.80, 37.50),
+        "тот луганськ": (48.60, 38.80),
+    }
+
+    for alias_stem, coords in OSINT_GEO_ALIASES.items():
+        if alias_stem in name_lower:
+            return coords
+
+    # 7. Підрядковий пошук по українських областях
+    for r_name, r_coords in REGION_CENTROIDS.items():
+        r_stem = r_name.replace(" область", "").replace(" обл.", "").strip().lower()
+        if r_stem and r_stem in name_lower:
+            return r_coords
+
+    # 8. Безпечний географічний центр за замовчуванням замість (0, 0)
+    return (49.00, 31.00)
+
+
 
 @router.get("/api/admin/analytics/trajectory_heatmap")
 async def get_trajectory_heatmap(days: int = 30):
@@ -124,8 +242,8 @@ async def get_trajectory_heatmap(days: int = 30):
         corridors = []
 
         def _build_corridor_item(src, tgt, count, threat_type, avg_conf, data_source, speed=None):
-            src_coords = LAUNCH_HUBS.get(src) or REGION_CENTROIDS.get(src)
-            tgt_coords = REGION_CENTROIDS.get(tgt)
+            src_coords = resolve_entity_coordinates(src)
+            tgt_coords = resolve_entity_coordinates(tgt)
             if src_coords and tgt_coords:
                 item = {
                     "source": src,
@@ -205,7 +323,7 @@ async def get_launch_origins(days: int = 30):
         for r in rows + rule_origins:
             name = r["name"]
             if name not in origins_map:
-                coords = LAUNCH_HUBS.get(name) or REGION_CENTROIDS.get(name, (0, 0))
+                coords = resolve_entity_coordinates(name)
                 origins_map[name] = {
                     "name": name,
                     "lat": coords[0],
@@ -305,7 +423,7 @@ async def get_region_risk_matrix(days: int = 30):
         for r in rows:
             name = r["region"]
             if name not in region_map:
-                coords = REGION_CENTROIDS.get(name, (0, 0))
+                coords = resolve_entity_coordinates(name)
                 region_map[name] = {
                     "name": name,
                     "lat": coords[0],
@@ -356,21 +474,21 @@ async def get_flight_corridors(days: int = 30):
 
         corridors = []
         for r in rules:
-            src_coords = LAUNCH_HUBS.get(r["source_region"]) or REGION_CENTROIDS.get(r["source_region"])
-            tgt_coords = REGION_CENTROIDS.get(r["target_region"])
+            src_coords = resolve_entity_coordinates(r["source_region"])
+            tgt_coords = resolve_entity_coordinates(r["target_region"])
             corridors.append({
                 "source": r["source_region"],
                 "target": r["target_region"],
-                "source_lat": src_coords[0] if src_coords else 50.0,
-                "source_lon": src_coords[1] if src_coords else 36.0,
-                "target_lat": tgt_coords[0] if tgt_coords else 49.0,
-                "target_lon": tgt_coords[1] if tgt_coords else 32.0,
+                "source_lat": src_coords[0],
+                "source_lon": src_coords[1],
+                "target_lat": tgt_coords[0],
+                "target_lon": tgt_coords[1],
                 "route_description": r["rule_text"],
                 "threat_type": r["threat_type"],
                 "count": r["evidence_count"] or 1,
                 "accuracy": round(r["accuracy_score"] * 100) if r["accuracy_score"] else 0,
-                "source_coords": list(src_coords) if src_coords else None,
-                "target_coords": list(tgt_coords) if tgt_coords else None,
+                "source_coords": list(src_coords),
+                "target_coords": list(tgt_coords),
             })
 
         # Also fallback to threat_history for observed corridors if rules count is low
@@ -385,21 +503,21 @@ async def get_flight_corridors(days: int = 30):
             """
             obs = execute_query_as_dicts(obs_query)
             for o in obs:
-                src_coords = LAUNCH_HUBS.get(o["source_region"]) or REGION_CENTROIDS.get(o["source_region"])
-                tgt_coords = REGION_CENTROIDS.get(o["target_region"])
+                src_coords = resolve_entity_coordinates(o["source_region"])
+                tgt_coords = resolve_entity_coordinates(o["target_region"])
                 corridors.append({
                     "source": o["source_region"],
                     "target": o["target_region"],
-                    "source_lat": src_coords[0] if src_coords else 50.0,
-                    "source_lon": src_coords[1] if src_coords else 36.0,
-                    "target_lat": tgt_coords[0] if tgt_coords else 49.0,
-                    "target_lon": tgt_coords[1] if tgt_coords else 32.0,
-                    "route_description": f"Спостережуваний транзит {o['source_region']} → {o['target_region']}",
+                    "source_lat": src_coords[0],
+                    "source_lon": src_coords[1],
+                    "target_lat": tgt_coords[0],
+                    "target_lon": tgt_coords[1],
+                    "route_description": f"Спостережуваний вектор {o['source_region']} → {o['target_region']}",
                     "threat_type": o["threat_type"],
                     "count": o["count"],
                     "accuracy": 85,
-                    "source_coords": list(src_coords) if src_coords else None,
-                    "target_coords": list(tgt_coords) if tgt_coords else None,
+                    "source_coords": list(src_coords),
+                    "target_coords": list(tgt_coords),
                 })
 
         # Historical SHAHED routes
