@@ -12,7 +12,7 @@ import time
 import logging
 import os
 from dataclasses import dataclass, asdict
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 
 import aiohttp
 
@@ -21,21 +21,18 @@ try:
     HAS_FIREBASE = True
 except ImportError:
     HAS_FIREBASE = False
+
+from database.region_detector import (
+    detect_region_by_coordinates,
+    resolve_region_code,
+    get_region_name,
+    REGION_CENTROIDS,
+)
 
 logger = logging.getLogger("shelter_manager")
 
 GOV_DATASET_URLS = os.environ.get("GOV_DATASET_URLS", "").split(",")
 GOV_DATASET_URLS = [url.strip() for url in GOV_DATASET_URLS if url.strip()]
-
-import aiohttp
-
-try:
-    from firebase_admin import firestore
-    HAS_FIREBASE = True
-except ImportError:
-    HAS_FIREBASE = False
-
-logger = logging.getLogger("shelter_manager")
 
 # ──────────────────────────────────────────────────────────────
 # Data model
@@ -48,10 +45,13 @@ class Shelter:
     address: Optional[str]
     lat: float
     lon: float
-    type: str           # bomb_shelter | bunker | metro | underground
+    type: str           # bomb_shelter | bunker | metro | underground | underground_parking | mall_parking | radiation_shelter | school_shelter | hospital_shelter | admin_shelter
     capacity: Optional[int]
     accessible: bool
-    source: str         # osm | kyiv_open_data
+    source: str         # osm | gov | kyiv_open_data
+    is_primary: bool = True
+    is_night_accessible: bool = True
+    is_vehicle_accessible: bool = False
 
     def to_dict(self, distance_m: float = 0) -> dict:
         d = asdict(self)
@@ -129,11 +129,58 @@ class _GridIndex:
 
 
 # ──────────────────────────────────────────────────────────────
-# Pre-seeded official civil defense shelters loader
+# ──────────────────────────────────────────────────────────────
+# Pre-seeded official civil defense shelters loader (All 25+ Regions)
 # ──────────────────────────────────────────────────────────────
 
 def _fetch_seed_shelters() -> List[Shelter]:
-    """Load local pre-seeded verified shelters from database/data/shelters_seed.json."""
+    """Load local pre-seeded verified shelters from database/data/regions/ directory or master seed file."""
+    # 1. Спробувати завантажити всі файли з папки regions/
+    regions_dir_candidates = [
+        os.path.join(os.path.dirname(__file__), "data", "regions"),
+        os.path.join(os.path.dirname(__file__), "..", "data", "regions"),
+        os.path.join(os.getcwd(), "SirenUA-ThreatServer", "database", "data", "regions"),
+        os.path.join(os.getcwd(), "database", "data", "regions"),
+    ]
+    for rdir in regions_dir_candidates:
+        if os.path.exists(rdir) and os.path.isdir(rdir):
+            files = [os.path.join(rdir, f) for f in os.listdir(rdir) if f.endswith(".json")]
+            if files:
+                shelters = []
+                import json
+                for fpath in files:
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            items = json.load(f)
+                        for it in items:
+                            stype = it.get("type", "bomb_shelter")
+                            sname = it.get("name", "")
+                            is_primary = it.get("is_primary", stype in ("bomb_shelter", "bunker", "metro", "radiation_shelter", "civil_defense"))
+                            is_vehicle = it.get("is_vehicle_accessible", stype in ("mall_parking", "underground_parking", "open_parking") or "паркінг" in sname.lower() or "авто" in sname.lower())
+                            is_night = it.get("is_night_accessible", is_primary or is_vehicle or stype in ("hospital_shelter", "underground"))
+                            shelters.append(
+                                Shelter(
+                                    id=it["id"],
+                                    name=it.get("name"),
+                                    address=it.get("address"),
+                                    lat=float(it["lat"]),
+                                    lon=float(it["lon"]),
+                                    type=stype,
+                                    capacity=it.get("capacity"),
+                                    accessible=bool(it.get("accessible", False)),
+                                    source=it.get("source", "gov"),
+                                    is_primary=is_primary,
+                                    is_night_accessible=is_night,
+                                    is_vehicle_accessible=is_vehicle,
+                                )
+                            )
+                    except Exception as e:
+                        logger.warning(f"⚠️ Помилка читання регіонального файлу {fpath}: {e}")
+                if shelters:
+                    logger.info(f"✅ Завантажено {len(shelters)} укриттів з {len(files)} регіональних файлів у {os.path.basename(rdir)}")
+                    return shelters
+
+    # 2. Фолбек на єдиний зведений файл shelters_seed.json
     possible_paths = [
         os.path.join(os.path.dirname(__file__), "data", "shelters_seed.json"),
         os.path.join(os.path.dirname(__file__), "..", "data", "shelters_seed.json"),
@@ -148,6 +195,11 @@ def _fetch_seed_shelters() -> List[Shelter]:
                     items = json.load(f)
                 shelters = []
                 for it in items:
+                    stype = it.get("type", "bomb_shelter")
+                    sname = it.get("name", "")
+                    is_primary = it.get("is_primary", stype in ("bomb_shelter", "bunker", "metro", "radiation_shelter", "civil_defense"))
+                    is_vehicle = it.get("is_vehicle_accessible", stype in ("mall_parking", "underground_parking", "open_parking") or "паркінг" in sname.lower() or "авто" in sname.lower())
+                    is_night = it.get("is_night_accessible", is_primary or is_vehicle or stype in ("hospital_shelter", "underground"))
                     shelters.append(
                         Shelter(
                             id=it["id"],
@@ -155,10 +207,13 @@ def _fetch_seed_shelters() -> List[Shelter]:
                             address=it.get("address"),
                             lat=float(it["lat"]),
                             lon=float(it["lon"]),
-                            type=it.get("type", "bomb_shelter"),
+                            type=stype,
                             capacity=it.get("capacity"),
                             accessible=bool(it.get("accessible", False)),
                             source=it.get("source", "gov"),
+                            is_primary=is_primary,
+                            is_night_accessible=is_night,
+                            is_vehicle_accessible=is_vehicle,
                         )
                     )
                 logger.info(f"✅ Завантажено {len(shelters)} базових перевірених укриттів з {os.path.basename(path)}")
@@ -189,7 +244,9 @@ area["name:en"="Ukraine"]["type"="boundary"]->.searchArea;
   nwr["military"="bunker"](area.searchArea);
   nwr["building"="bunker"](area.searchArea);
   nwr["parking"="underground"](area.searchArea);
+  nwr["parking"="multi-storey"](area.searchArea);
   nwr["amenity"="parking"]["parking"="underground"](area.searchArea);
+  nwr["amenity"="parking"]["parking"="multi-storey"](area.searchArea);
   nwr["railway"="station"]["station"="subway"](area.searchArea);
   nwr["railway"="subway_entrance"](area.searchArea);
   nwr["emergency"="shelter"](area.searchArea);
@@ -202,7 +259,7 @@ area["name:en"="Ukraine"]["type"="boundary"]->.searchArea;
   nwr["amenity"="clinic"](area.searchArea);
   nwr["building"="school"](area.searchArea);
   nwr["building"="hospital"](area.searchArea);
-  nwr["name"~"укриття|сховище|бомбосховище|ПРУ|ліцей|гімназія|школа|дитсадок|лікарня|поліклініка|паркінг|старостат",i](area.searchArea);
+  nwr["name"~"укриття|сховище|бомбосховище|ПРУ|ліцей|гімназія|школа|дитсадок|лікарня|поліклініка|паркінг|ТРЦ|ТЦ|старостат",i](area.searchArea);
 );
 out center;
 """
@@ -254,11 +311,13 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
     # Name
     name = tags.get("name") or tags.get("name:uk") or tags.get("name:en")
     
-    # Check blacklisted keywords in name (skip if it's explicitly an underground parking or subway)
-    is_underground_parking = tags.get("parking") == "underground" or (tags.get("amenity") == "parking" and tags.get("parking") == "underground") or (name and "паркінг" in name.lower())
+    # Check blacklisted keywords in name (skip if it's explicitly an underground/mall parking or subway)
+    is_parking_tag = tags.get("parking") in ("underground", "multi-storey", "covered") or (tags.get("amenity") == "parking" and tags.get("parking") in ("underground", "multi-storey", "covered"))
+    is_parking_name = bool(name and any(k in name.lower() for k in ("паркінг", "парковка", "автостоянка", "parking")))
+    is_mall_name = bool(name and any(k in name.lower() for k in ("трц", "тц", "mall", "плаза", "plaza", "центр", "епіцентр")))
     is_subway = tags.get("station") == "subway" or tags.get("railway") in ("subway_entrance", "station") or tags.get("subway") == "yes" or (name and "метро" in name.lower())
 
-    if name and not (is_underground_parking or is_subway):
+    if name and not (is_parking_tag or is_parking_name or is_subway):
         name_lower = name.lower()
         if any(kw in name_lower for kw in EXCLUDED_NAME_KEYWORDS):
             return None
@@ -273,11 +332,13 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
         addr_parts.append(house)
     address = ", ".join(addr_parts) if addr_parts else None
 
-    # Type classification: air raid protection, underground civil defence, schools, hospitals
+    # Type classification: air raid protection, underground civil defence, schools, hospitals, mall parkings
     shelter_type = "bomb_shelter"
     if tags.get("station") == "subway" or tags.get("railway") in ("subway_entrance", "station") or tags.get("subway") == "yes" or (name and "метро" in name.lower()):
         shelter_type = "metro"
-    elif tags.get("parking") == "underground" or (tags.get("amenity") == "parking" and tags.get("parking") == "underground") or (name and ("підземний паркінг" in name.lower() or "паркінг" in name.lower())):
+    elif (is_parking_tag and is_mall_name) or (is_mall_name and is_parking_name):
+        shelter_type = "mall_parking"
+    elif is_parking_tag or (name and ("підземний паркінг" in name.lower() or "паркінг" in name.lower() or "парковка" in name.lower())):
         shelter_type = "underground_parking"
     elif tags.get("military") == "bunker" or tags.get("building") == "bunker" or tags.get("bunker_type") == "bomb_shelter" or (name and "бункер" in name.lower()):
         shelter_type = "bunker"
@@ -298,6 +359,8 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
     if not name:
         if shelter_type == "metro":
             name = "Станція метро (Укриття)"
+        elif shelter_type == "mall_parking":
+            name = "Паркінг ТРЦ (Укриття для авто)"
         elif shelter_type == "underground_parking":
             name = "Підземний паркінг"
         elif shelter_type == "bunker":
@@ -322,6 +385,11 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
     # Accessibility
     accessible = tags.get("wheelchair") in ("yes", "limited")
 
+    # Primary vs Secondary tier
+    is_primary = shelter_type in ("bomb_shelter", "bunker", "metro", "radiation_shelter", "civil_defense")
+    is_vehicle = shelter_type in ("mall_parking", "underground_parking", "open_parking")
+    is_night = is_primary or is_vehicle or shelter_type in ("hospital_shelter", "underground")
+
     return Shelter(
         id=shelter_id,
         name=name,
@@ -332,6 +400,9 @@ def _parse_osm_element(elem: dict) -> Optional[Shelter]:
         capacity=capacity,
         accessible=accessible,
         source="osm",
+        is_primary=is_primary,
+        is_night_accessible=is_night,
+        is_vehicle_accessible=is_vehicle,
     )
 
 
@@ -396,7 +467,9 @@ async def _fetch_targeted_osm_shelters(lat: float, lon: float, radius_m: float =
       nwr["military"="bunker"](around:{r}, {lat}, {lon});
       nwr["building"="bunker"](around:{r}, {lat}, {lon});
       nwr["parking"="underground"](around:{r}, {lat}, {lon});
+      nwr["parking"="multi-storey"](around:{r}, {lat}, {lon});
       nwr["amenity"="parking"]["parking"="underground"](around:{r}, {lat}, {lon});
+      nwr["amenity"="parking"]["parking"="multi-storey"](around:{r}, {lat}, {lon});
       nwr["amenity"="school"](around:{r}, {lat}, {lon});
       nwr["amenity"="kindergarten"](around:{r}, {lat}, {lon});
       nwr["amenity"="hospital"](around:{r}, {lat}, {lon});
@@ -404,7 +477,7 @@ async def _fetch_targeted_osm_shelters(lat: float, lon: float, radius_m: float =
       nwr["building"="school"](around:{r}, {lat}, {lon});
       nwr["building"="hospital"](around:{r}, {lat}, {lon});
       nwr["building"="public"](around:{r}, {lat}, {lon});
-      nwr["name"~"укриття|сховище|бомбосховище|ПРУ|ліцей|гімназія|школа|дитсадок|лікарня|поліклініка|паркінг|старостат",i](around:{r}, {lat}, {lon});
+      nwr["name"~"укриття|сховище|бомбосховище|ПРУ|ліцей|гімназія|школа|дитсадок|лікарня|поліклініка|паркінг|ТРЦ|ТЦ|старостат",i](around:{r}, {lat}, {lon});
     );
     out center;
     """
@@ -498,6 +571,7 @@ class ShelterManager:
     def __init__(self):
         self._index = _GridIndex()
         self._shelters: List[Shelter] = []
+        self._regional_shelters: Dict[str, List[Shelter]] = {}
         self._loaded = False
         self._refresh_task: Optional[asyncio.Task] = None
         self._last_load_time: Optional[float] = None
@@ -508,6 +582,8 @@ class ShelterManager:
             for s in seed:
                 self._index.insert(s)
                 self._shelters.append(s)
+                reg = detect_region_by_coordinates(s.lat, s.lon)
+                self._regional_shelters.setdefault(reg, []).append(s)
             self._loaded = True
             self._last_load_time = time.time()
 
@@ -519,6 +595,23 @@ class ShelterManager:
     def total_count(self) -> int:
         return len(self._shelters)
 
+    def detect_region(self, lat: float, lon: float) -> Tuple[str, str]:
+        """Повертає (region_code, region_name) для заданих координат."""
+        code = detect_region_by_coordinates(lat, lon)
+        name = get_region_name(code)
+        return code, name
+
+    def get_shelters_by_region(self, region_query: str) -> List[dict]:
+        """Отримує всі укриття для конкретного регіону (за кодом або назвою області)."""
+        reg_code = resolve_region_code(region_query) or region_query.strip().lower()
+        shelters = self._regional_shelters.get(reg_code, [])
+        # Сортуємо: 1-й порядок (Primary) першими, потім ТРЦ/паркінги, потім інші
+        sorted_shelters = sorted(
+            shelters,
+            key=lambda s: (0 if s.is_primary else (1 if s.is_vehicle_accessible else 2))
+        )
+        return [s.to_dict() for s in sorted_shelters]
+
     async def load(self):
         """Initial and periodic load of shelters from seed data, Firestore and OSM."""
         seed_shelters = _fetch_seed_shelters()
@@ -527,11 +620,14 @@ class ShelterManager:
         
         idx = _GridIndex()
         final_shelters = []
+        reg_shelters: Dict[str, List[Shelter]] = {}
         
         # 1. Додаємо базові та офіційні укриття
         for s in seed_shelters + gov_shelters:
             idx.insert(s)
             final_shelters.append(s)
+            reg = detect_region_by_coordinates(s.lat, s.lon)
+            reg_shelters.setdefault(reg, []).append(s)
             
         # 2. Додаємо OSM укриття, уникаючи дублікатів (радіус 20 метрів)
         skipped = 0
@@ -544,6 +640,8 @@ class ShelterManager:
             
             idx.insert(s)
             final_shelters.append(s)
+            reg = detect_region_by_coordinates(s.lat, s.lon)
+            reg_shelters.setdefault(reg, []).append(s)
 
         if skipped > 0:
             logger.info(f"🔄 Відкинуто {skipped} дублікатів з OSM (перекрито офіційними)")
@@ -551,29 +649,36 @@ class ShelterManager:
         if final_shelters:
             self._index = idx
             self._shelters = final_shelters
+            self._regional_shelters = reg_shelters
             self._loaded = True
             self._last_load_time = time.time()
-            logger.info(f"🌍 Всього доступно укриттів: {len(self._shelters)}")
+            logger.info(f"🌍 Всього доступно укриттів: {len(self._shelters)} у {len(reg_shelters)} регіонах")
             logger.info(f"🗺️ Індекс побудовано: {len(idx)} укриттів")
         else:
             logger.warning("⚠️ Не вдалося завантажити укриття. Буде повторна спроба через 5 хв.")
 
     def find_nearby(self, lat: float, lon: float, radius_m: float = 1500,
-                    limit: int = 50) -> List[dict]:
+                    limit: int = 50, region_filter: Optional[str] = None) -> List[dict]:
         """Find shelters within radius_m of (lat, lon)."""
         if not self._loaded and not self._shelters:
             return []
 
         results = self._index.find_nearby(lat, lon, radius_m, limit=limit)
+        
+        # Опціональна фільтрація за регіоном
+        if region_filter:
+            target_reg = resolve_region_code(region_filter) or region_filter.strip().lower()
+            results = [s for s in results if detect_region_by_coordinates(s.lat, s.lon) == target_reg]
+
         return [
             s.to_dict(distance_m=_haversine(lat, lon, s.lat, s.lon))
             for s in results
         ]
 
     async def find_nearby_async(self, lat: float, lon: float, radius_m: float = 1500,
-                                limit: int = 50) -> List[dict]:
+                                limit: int = 50, region_filter: Optional[str] = None) -> List[dict]:
         """Find shelters, querying targeted live OSM if in-memory spatial index has 0 local results."""
-        results = self.find_nearby(lat, lon, radius_m, limit=limit)
+        results = self.find_nearby(lat, lon, radius_m, limit=limit, region_filter=region_filter)
         if results:
             return results
 
@@ -585,8 +690,17 @@ class ShelterManager:
                 if not existing:
                     self._index.insert(s)
                     self._shelters.append(s)
-            results = self.find_nearby(lat, lon, radius_m, limit=limit)
+                    reg = detect_region_by_coordinates(s.lat, s.lon)
+                    self._regional_shelters.setdefault(reg, []).append(s)
+            results = self.find_nearby(lat, lon, radius_m, limit=limit, region_filter=region_filter)
         return results
+
+    async def find_nearby_with_region_async(self, lat: float, lon: float, radius_m: float = 1500,
+                                           limit: int = 50, region_filter: Optional[str] = None) -> Tuple[List[dict], str, str]:
+        """Шукає укриття та повертає (shelters, detected_region_code, detected_region_name)."""
+        reg_code, reg_name = self.detect_region(lat, lon)
+        shelters = await self.find_nearby_async(lat, lon, radius_m, limit=limit, region_filter=region_filter)
+        return shelters, reg_code, reg_name
 
     async def start_refresh_loop(self):
         """Start background refresh task."""
