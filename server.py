@@ -46,17 +46,18 @@ aerial_alerts_task = None
 
 async def poll_aerial_alerts():
     """
-    Фонова задача для опитування офіційного API тривог із 3-рівневим каскадом (Fallback):
-    - Tier 1 (Основне першоджерело): api.ukrainealarm.com (підтримка AIR, ARTILLERY, URBAN_FIGHTS, CHEMICAL, NUCLEAR)
-    - Tier 2 (Резерв 1): ubilling.net.ua/aerialalerts/ (публічне швидке дзеркало)
+    Фонова задача для опитування офіційного API тривог із каскадним резервуванням (Fallback):
+    - Tier 1 (Основне першоджерело): ubilling.net.ua/aerialalerts/ (2-3 повторні спроби при збоях)
+    - Tier 2 (Резерв 1): api.ukrainealarm.com (якщо налаштовано токен)
     - Tier 3 (Резерв 2): api.alerts.in.ua (якщо налаштовано ALERTS_TOKEN)
     """
     ukraine_alarm_token = os.environ.get("UKRAINE_ALARM_API_KEY") or os.environ.get("UKRAINE_ALARM_TOKEN")
     alerts_in_ua_token = os.environ.get("ALERTS_TOKEN")
 
     logger.info(f"Запуск фонового каскадного опитування офіційних тривог. "
-                f"UkraineAlarm: {'налаштовано' if ukraine_alarm_token else 'очікує ключ'}, "
-                f"Alerts.in.ua: {'налаштовано' if alerts_in_ua_token else 'без токена'}.")
+                f"Пріоритет 1 (Основне): UBilling (дзеркало), "
+                f"Пріоритет 2 (Резерв 1): UkraineAlarm ({'налаштовано' if ukraine_alarm_token else 'очікує ключ'}), "
+                f"Пріоритет 3 (Резерв 2): Alerts.in.ua ({'налаштовано' if alerts_in_ua_token else 'без токена'}).")
 
     while True:
         from core.regions import ALL_REGIONS, normalize_region_name
@@ -67,9 +68,49 @@ async def poll_aerial_alerts():
 
         async with aiohttp.ClientSession() as session:
             # -------------------------------------------------------------
-            # Tier 1: UkraineAlarm API (api.ukrainealarm.com)
+            # Tier 1 (Основне першоджерело): UBilling Дзеркало (ubilling.net.ua)
+            # 3 спроби із короткою паузою перед перемиканням на резервні джерела
             # -------------------------------------------------------------
-            if ukraine_alarm_token and not success:
+            for attempt in range(1, 4):
+                if success:
+                    break
+                try:
+                    url = "https://ubilling.net.ua/aerialalerts/"
+                    headers = {
+                        "User-Agent": "SirenUA-ThreatServer/1.0",
+                        "Accept": "application/json"
+                    }
+                    async with session.get(url, headers=headers, timeout=5.0) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if isinstance(data, dict):
+                                states = data.get("states", {})
+                                if isinstance(states, dict) and states:
+                                    for r_raw, state_data in states.items():
+                                        canon_r = normalize_region_name(r_raw)
+                                        if isinstance(state_data, dict):
+                                            is_act = state_data.get("alertnow", False)
+                                            official_dict[canon_r] = is_act
+                                            alert_types_dict[canon_r] = "air" if is_act else None
+                                    for region_name in ALL_REGIONS.keys():
+                                        if region_name not in official_dict:
+                                            official_dict[region_name] = False
+                                            alert_types_dict[region_name] = None
+                                    success = True
+                                    active_source = "ubilling.net.ua"
+                                    break
+                        else:
+                            logger.warning(f"Tier 1 (UBilling) спроба {attempt}/3 HTTP {resp.status}")
+                except Exception as e:
+                    logger.warning(f"Tier 1 (UBilling) спроба {attempt}/3 недоступний: {e}")
+
+                if not success and attempt < 3:
+                    await asyncio.sleep(0.8)
+
+            # -------------------------------------------------------------
+            # Tier 2 (Резерв 1): UkraineAlarm API (api.ukrainealarm.com)
+            # -------------------------------------------------------------
+            if not success and ukraine_alarm_token:
                 try:
                     url = "https://api.ukrainealarm.com/api/v3/alerts"
                     headers = {
@@ -107,42 +148,12 @@ async def poll_aerial_alerts():
                                 success = True
                                 active_source = "ukrainealarm.com"
                         else:
-                            logger.warning(f"Tier 1 (UkraineAlarm) HTTP статус {resp.status}, перемикання на резерв...")
+                            logger.warning(f"Tier 2 (UkraineAlarm) HTTP статус {resp.status}, перемикання на резерв...")
                 except Exception as e:
-                    logger.warning(f"Tier 1 (UkraineAlarm) недоступний: {e}, перемикання на резерв...")
+                    logger.warning(f"Tier 2 (UkraineAlarm) недоступний: {e}, перемикання на резерв...")
 
             # -------------------------------------------------------------
-            # Tier 2: UBilling Дзеркало (ubilling.net.ua)
-            # -------------------------------------------------------------
-            if not success:
-                try:
-                    url = "https://ubilling.net.ua/aerialalerts/"
-                    headers = {"User-Agent": "SirenUA-ThreatServer/1.0"}
-                    async with session.get(url, headers=headers, timeout=6.0) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if isinstance(data, dict):
-                                states = data.get("states", {})
-                                if isinstance(states, dict):
-                                    for r_raw, state_data in states.items():
-                                        canon_r = normalize_region_name(r_raw)
-                                        if isinstance(state_data, dict):
-                                            is_act = state_data.get("alertnow", False)
-                                            official_dict[canon_r] = is_act
-                                            alert_types_dict[canon_r] = "air" if is_act else None
-                                    for region_name in ALL_REGIONS.keys():
-                                        if region_name not in official_dict:
-                                            official_dict[region_name] = False
-                                            alert_types_dict[region_name] = None
-                                    success = True
-                                    active_source = "ubilling.net.ua"
-                        else:
-                            logger.warning(f"Tier 2 (UBilling) HTTP статус {resp.status}, перемикання на резерв...")
-                except Exception as e:
-                    logger.warning(f"Tier 2 (UBilling) недоступний: {e}")
-
-            # -------------------------------------------------------------
-            # Tier 3: Alerts.in.ua (api.alerts.in.ua)
+            # Tier 3 (Резерв 2): Alerts.in.ua (api.alerts.in.ua)
             # -------------------------------------------------------------
             if not success and alerts_in_ua_token:
                 try:
@@ -176,8 +187,13 @@ async def poll_aerial_alerts():
                     logger.warning(f"Tier 3 (Alerts.in.ua) помилка: {e}")
 
         # -----------------------------------------------------------------
-        # Оновлення ThreatManager та життєвого циклу загроз
+        # Оновлення статусу джерел та ThreatManager
         # -----------------------------------------------------------------
+        if not hasattr(core.globals, "sources_status"):
+            core.globals.sources_status = {}
+        core.globals.sources_status["active_source"] = active_source
+        core.globals.sources_status["last_polled_at"] = time.time()
+
         if success:
             for region_name, is_act in official_dict.items():
                 a_type = alert_types_dict.get(region_name)
@@ -189,11 +205,12 @@ async def poll_aerial_alerts():
                 prune_expired_missile_threats(threat_manager, official_dict)
             except Exception as prune_err:
                 logger.error(f"Помилка під час prune_expired_missile_threats: {prune_err}")
+            
+            await asyncio.sleep(15.0)
         else:
-            logger.error("⚠️ Всі 3 джерела офіційних тривог недоступні (UkraineAlarm -> UBilling -> Alerts.in.ua)!")
-
-        sleep_interval = 15.0 if (ukraine_alarm_token or alerts_in_ua_token) else 20.0
-        await asyncio.sleep(sleep_interval)
+            logger.warning("⚠️ Всі 3 джерела офіційних тривог (UBilling -> UkraineAlarm -> Alerts.in.ua) тимчасово недоступні. Зберігаємо попередній стан.")
+            # При недоступності повторюємо швидше (5с) для оперативного відновлення
+            await asyncio.sleep(5.0)
 
 async def periodic_sqlite_backup():
     """Фонова задача регулярного стиснутого бекапу SQLite в Firestore кожні 15 хвилин."""
