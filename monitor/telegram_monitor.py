@@ -129,6 +129,7 @@ class TelegramThreatMonitor:
                     await self._join_target_channels()
                     self._setup_event_handlers()
                     self.restore_scheduled_clears()
+                    asyncio.create_task(self._sync_recent_channel_messages(lookback_minutes=60))
                     self._watchdog_task = asyncio.create_task(self._mtproto_watchdog_loop())
                     self._scraper_task = asyncio.create_task(self._scrape_loop())
                     asyncio.create_task(self._periodic_cleanup_loop())
@@ -201,6 +202,39 @@ class TelegramThreatMonitor:
         # Restore scheduled timers and start periodic cleanup loop
         self.restore_scheduled_clears()
         asyncio.create_task(self._periodic_cleanup_loop())
+
+    async def _sync_recent_channel_messages(self, lookback_minutes: int = 60):
+        """Сканує та обробляє недавні повідомлення з каналів під час запуску для миттєвого підхоплення актуальних загроз."""
+        if not self.client or not self.use_mtproto:
+            return
+        logger.info(f"🔄 [Initial Sync] Пошук актуальних загроз за останні {lookback_minutes} хв...")
+        cutoff_time = datetime.now(timezone.utc).timestamp() - (lookback_minutes * 60)
+        messages_to_process = []
+        
+        for channel in TARGET_CHANNELS:
+            try:
+                async for message in self.client.iter_messages(channel, limit=4):
+                    if not message or not message.text:
+                        continue
+                    msg_ts = message.date.timestamp() if message.date else 0
+                    if msg_ts < cutoff_time:
+                        continue
+                    msg_date_str = message.date.astimezone(timezone.utc).isoformat() if message.date else None
+                    messages_to_process.append({
+                        "text": message.text,
+                        "channel": channel,
+                        "date": msg_date_str,
+                        "timestamp": msg_ts
+                    })
+            except Exception as e:
+                logger.warning(f"⚠️ [Initial Sync] Помилка сканування @{channel}: {e}")
+                
+        # Chronological ordering (oldest first)
+        messages_to_process.sort(key=lambda x: x["timestamp"])
+        for item in messages_to_process:
+            logger.info(f"⚡ [Initial Sync: {item['channel']}] Обробка недавнього повідомлення: {item['text'][:60]}...")
+            await self._process_message(item["text"], item["channel"], message_date=item["date"])
+            await asyncio.sleep(0.3)
 
     def _setup_event_handlers(self):
         if not self.client:
