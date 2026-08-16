@@ -322,7 +322,8 @@ THREAT_KEYWORDS: Dict[str, List[str]] = {
         "су-34", "су34", "су-35", "су35", "су-30", "су30", "су-57", "су57", "сушка", "сушки", "тактична авіація", "тактической авиации"
     ],
     THREAT_KAB: [
-        "каб", "каби", "кабів", "авіабомб", "авиабомб", "умпк", "керован", "управляемые", "фаб", "уаб", "бомбардуван"
+        "каб", "каби", "кабів", "авіабомб", "авиабомб", "умпк", "умпб", "керован", "управляемые",
+        "фаб", "уаб", "одаб", "рбк", "грім-е1", "гром-е1", "бомбардуван", "плануюч", "планирующ"
     ],
     THREAT_OFFICIAL_ALARM: [
         "повітряна тривога", "воздушная тревога", "тривога в області", "сирена"
@@ -1006,8 +1007,21 @@ def infer_threat_type_details(
     weapon_subtype = telemetry.get("weapon_subtype")
     if weapon_subtype and str(weapon_subtype).lower() not in ["unknown", "none", ""]:
         subtype_str = str(weapon_subtype).strip()
-        if subtype_str.upper() in ["УАБ", "UAB"]:
+        st_upper = subtype_str.upper()
+        if st_upper in ["УАБ", "UAB"]:
             return "КАБ (Керована авіабомба)"
+        elif "ФАБ" in st_upper or "FAB" in st_upper:
+            if "УМПК" not in st_upper:
+                return f"{subtype_str} з УМПК (Авіабомба)"
+            return f"{subtype_str} (Авіабомба)"
+        elif "УМПБ" in st_upper:
+            return "УМПБ Д-30СН (Плануючий боєприпас)"
+        elif "ОДАБ" in st_upper or "ODAB" in st_upper:
+            return f"{subtype_str} (Термобарична авіабомба)"
+        elif "РБК" in st_upper or "RBK" in st_upper:
+            return f"{subtype_str} (Касетна авіабомба)"
+        elif "ГРОМ" in st_upper or "ГРІМ" in st_upper:
+            return "Гром-Е1 (Гібридна ракета-бомба)"
         return subtype_str
 
     # 1. Direct match with registered threat types
