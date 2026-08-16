@@ -275,6 +275,10 @@ async def test_shelters_api_endpoint():
         source="osm",
     )
 
+    saved_index = shelter_manager._index
+    saved_shelters = shelter_manager._shelters
+    saved_regional = shelter_manager._regional_shelters
+
     idx = _GridIndex()
     idx.insert(s1)
     idx.insert(s2)
@@ -282,15 +286,20 @@ async def test_shelters_api_endpoint():
     shelter_manager._shelters = [s1, s2]
     shelter_manager._loaded = True
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
-        res = await ac.get("/api/shelters?lat=50.4501&lon=30.5234&radius=2000")
-        assert res.status_code == 200
-        data = res.json()
-        assert data["count"] >= 1
-        assert data["shelters"][0]["name"] == "Бомбосховище Центр"
-        assert "distance_m" in data["shelters"][0]
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            res = await ac.get("/api/shelters?lat=50.4501&lon=30.5234&radius=2000")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["count"] >= 1
+            assert data["shelters"][0]["name"] == "Бомбосховище Центр"
+            assert "distance_m" in data["shelters"][0]
+    finally:
+        shelter_manager._index = saved_index
+        shelter_manager._shelters = saved_shelters
+        shelter_manager._regional_shelters = saved_regional
 
 
 def test_seed_shelters_auto_loaded():
@@ -510,3 +519,58 @@ async def test_shelters_by_region_api_endpoint():
         assert data["primary_count"] >= 3
         assert data["secondary_count"] >= 4
         assert len(data["shelters"]) == data["count"]
+
+
+@pytest.mark.anyio
+async def test_shelters_search_api_endpoint():
+    """Verify /api/shelters/search endpoint with query, region filter, and primary filter."""
+    from httpx import AsyncClient, ASGITransport
+    from server import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        # 1. Search by city name across all regions
+        res1 = await ac.get("/api/shelters/search?q=Броди")
+        assert res1.status_code == 200
+        data1 = res1.json()
+        assert data1["count"] >= 1
+        assert any("Броди" in s.get("address", "") or "Брод" in s.get("name", "") for s in data1["shelters"])
+
+        # 2. Search with region filter
+        res2 = await ac.get("/api/shelters/search?q=лікарн&region=volyn")
+        assert res2.status_code == 200
+        data2 = res2.json()
+        assert data2["count"] >= 3
+        assert all("vol" in s["id"] or "Волин" in s.get("address", "") or "Луцьк" in s.get("address", "") or "Ковель" in s.get("address", "") or "смт" in s.get("address", "") for s in data2["shelters"])
+
+        # 3. Search only primary official shelters
+        res3 = await ac.get("/api/shelters/search?region=kyiv_city&only_primary=true")
+        assert res3.status_code == 200
+        data3 = res3.json()
+        assert data3["count"] >= 10
+        assert all(s["is_primary"] is True for s in data3["shelters"])
+
+
+@pytest.mark.anyio
+async def test_shelters_regions_summary_api_endpoint():
+    """Verify /api/shelters/regions endpoint returns all 26 regions with statistics."""
+    from httpx import AsyncClient, ASGITransport
+    from server import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        res = await ac.get("/api/shelters/regions")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["total_regions"] == 26
+        assert data["total_shelters"] >= 1200
+        assert data["total_primary"] >= 800
+        assert len(data["regions"]) == 26
+
+        volyn_stat = next(r for r in data["regions"] if r["region_code"] == "volyn")
+        assert volyn_stat["total_count"] >= 40
+        assert volyn_stat["primary_count"] >= 25
+        assert volyn_stat["region_name"] == "Волинська область"
+

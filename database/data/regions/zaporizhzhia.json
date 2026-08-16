@@ -28,6 +28,20 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_zp_huliaipole_hosp",
+    "name": "Бомбосховище Гуляйпільської міської лікарні (Махновський край)",
+    "address": "вул. Соборна, 92, м. Гуляйполе",
+    "lat": 47.6667,
+    "lon": 36.2667,
+    "type": "hospital_shelter",
+    "capacity": 850,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_zap_oda_znu_campus",
     "name": "Бомбосховище Запорізького національного університету (ЗНУ)",
     "address": "вул. Жуковського, 66, м. Запоріжжя",
@@ -35,6 +49,20 @@
     "lon": 35.1806,
     "type": "school_shelter",
     "capacity": 1500,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
+    "id": "gov_zp_zaporizhia_ztr",
+    "name": "Бомбосховище Запорізького трансформаторного заводу (ЗТР)",
+    "address": "вул. Дніпровське шосе, 3, м. Запоріжжя",
+    "lat": 47.872,
+    "lon": 35.068,
+    "type": "bomb_shelter",
+    "capacity": 3500,
     "accessible": true,
     "source": "gov",
     "is_primary": true,
@@ -252,6 +280,20 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_zp_kamyanka_dniprovska_hosp",
+    "name": "ПРУ Кам'янсько-Дніпровської багатопрофільної лікарні (Каховське водосховище)",
+    "address": "вул. Каховська, 98, м. Кам'янка-Дніпровська",
+    "lat": 47.4833,
+    "lon": 34.4,
+    "type": "hospital_shelter",
+    "capacity": 800,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_zp_orikhiv_hosp",
     "name": "ПРУ Оріхівської багатопрофільної лікарні",
     "address": "вул. Покровська, 1, м. Оріхів",
@@ -336,6 +378,20 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_zp_zaporizhia_motor_sich",
+    "name": "Спеціалізовані бункери АТ «Мотор Січ» (Шевченківський)",
+    "address": "просп. Моторобудівників, 15, м. Запоріжжя",
+    "lat": 47.838,
+    "lon": 35.195,
+    "type": "bomb_shelter",
+    "capacity": 5000,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_zp_berdyansk_port",
     "name": "Спеціалізовані бункери Бердянського морського порту (Азовське море)",
     "address": "вул. Горького, 13, м. Бердянськ",
@@ -343,6 +399,20 @@
     "lon": 36.7833,
     "type": "bomb_shelter",
     "capacity": 2500,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
+    "id": "gov_zp_vasylivka_castle",
+    "name": "Сховище Замку Попова / Василівська центральна лікарні",
+    "address": "вул. Лікарняна, 5, м. Василівка",
+    "lat": 47.4333,
+    "lon": 35.2833,
+    "type": "hospital_shelter",
+    "capacity": 950,
     "accessible": true,
     "source": "gov",
     "is_primary": true,

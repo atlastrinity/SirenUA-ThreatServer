@@ -42,6 +42,34 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_ks_hola_prystan_hosp",
+    "name": "Бомбосховище Голопристанської центральної районної лікарні (Конка)",
+    "address": "вул. 1 Травня, 48, м. Гола Пристань",
+    "lat": 46.5167,
+    "lon": 32.5167,
+    "type": "hospital_shelter",
+    "capacity": 850,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
+    "id": "gov_ks_kalanchak_hosp",
+    "name": "Бомбосховище Каланчацької центральної лікарні",
+    "address": "вул. Будівельників, 12, смт Каланчак",
+    "lat": 46.25,
+    "lon": 33.2833,
+    "type": "hospital_shelter",
+    "capacity": 700,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_ks_skadovsk_port",
     "name": "Бомбосховище Скадовського морського порту (Джарилгацька затока)",
     "address": "вул. Пролетарська, 2, м. Скадовськ",
@@ -63,6 +91,20 @@
     "lon": 32.6306,
     "type": "school_shelter",
     "capacity": 1400,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
+    "id": "gov_ks_kherson_combine",
+    "name": "Бомбосховище Херсонського комбайнового заводу",
+    "address": "вул. Тираспольська, 1, м. Херсон",
+    "lat": 46.645,
+    "lon": 32.618,
+    "type": "bomb_shelter",
+    "capacity": 3000,
     "accessible": true,
     "source": "gov",
     "is_primary": true,
@@ -126,6 +168,20 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_ks_vysokopillia_hosp",
+    "name": "ПРУ Високопільської селищної лікарні",
+    "address": "вул. Визволителів, 84, смт Високопілля",
+    "lat": 47.4833,
+    "lon": 33.5333,
+    "type": "hospital_shelter",
+    "capacity": 650,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_ks_henichesk_hosp",
     "name": "ПРУ Генічеської центральної лікарні (Арабатська Стрілка)",
     "address": "вул. Дружби Народів, 64, м. Генічеськ",
@@ -168,6 +224,20 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_ks_oleshky_hosp",
+    "name": "ПРУ Олешківської багатопрофільної лікарні (Олешківські піски)",
+    "address": "вул. Гвардійська, 15, м. Олешки",
+    "lat": 46.6167,
+    "lon": 32.7167,
+    "type": "hospital_shelter",
+    "capacity": 900,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_kherson_oda_child_hospital",
     "name": "ПРУ Херсонської дитячої обласної клінічної лікарні",
     "address": "вул. Українська, 81, м. Херсон",
@@ -203,6 +273,20 @@
     "lon": 32.5944,
     "type": "radiation_shelter",
     "capacity": 2500,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
+    "id": "gov_ks_kherson_shipyard",
+    "name": "Спеціалізовані бункери Херсонського суднобудівного заводу (ХСЗ)",
+    "address": "Карантинний острів, 1, м. Херсон",
+    "lat": 46.62,
+    "lon": 32.595,
+    "type": "bomb_shelter",
+    "capacity": 3500,
     "accessible": true,
     "source": "gov",
     "is_primary": true,

@@ -154,6 +154,20 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_lv_stryi_carpathian",
+    "name": "Бомбосховище Стрийського вагоноремонтного заводу",
+    "address": "вул. Зубенка, 2, м. Стрий",
+    "lat": 49.262,
+    "lon": 23.865,
+    "type": "bomb_shelter",
+    "capacity": 2200,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_lv_truskavets_hosp",
     "name": "Бомбосховище Трускавецької міської лікарні",
     "address": "вул. Данилишина, 62, м. Трускавець",
@@ -259,6 +273,20 @@
     "lon": 24.018,
     "type": "bunker",
     "capacity": 2000,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
+    "id": "gov_lv_lviv_laaz",
+    "name": "Капітальні бункери Львівського автобусного заводу (ЛАЗ)",
+    "address": "вул. Стрийська, 45, м. Львів",
+    "lat": 49.805,
+    "lon": 24.02,
+    "type": "bomb_shelter",
+    "capacity": 3500,
     "accessible": true,
     "source": "gov",
     "is_primary": true,
@@ -574,6 +602,20 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_lv_lviv_kineskop",
+    "name": "Підземне сховище колишнього заводу «Кінескоп»",
+    "address": "вул. Героїв УПА, 73, м. Львів",
+    "lat": 49.829,
+    "lon": 23.998,
+    "type": "bomb_shelter",
+    "capacity": 2000,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_lv_novoyavorivsk_palace",
     "name": "Підземне укриття Палацу культури «Кристал»",
     "address": "вул. Шевченка, 1, м. Новояворівськ",
@@ -588,11 +630,39 @@
     "is_vehicle_accessible": false
   },
   {
+    "id": "gov_lv_drohobych_refinery",
+    "name": "Спеціалізоване ПРУ Дрогобицького нафтопереробного заводу (НПК «Галичина»)",
+    "address": "вул. Бориславська, 1, м. Дрогобич",
+    "lat": 49.348,
+    "lon": 23.498,
+    "type": "radiation_shelter",
+    "capacity": 2800,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
     "id": "gov_lviv_oda_electron_plant",
     "name": "Спеціалізоване протирадіаційне сховище Концерну-Електрон",
     "address": "вул. Стороженка, 32, м. Львів",
     "lat": 49.8333,
     "lon": 23.9972,
+    "type": "radiation_shelter",
+    "capacity": 2500,
+    "accessible": true,
+    "source": "gov",
+    "is_primary": true,
+    "is_night_accessible": true,
+    "is_vehicle_accessible": false
+  },
+  {
+    "id": "gov_lv_chervonohrad_mine1",
+    "name": "Спеціалізоване протирадіаційне сховище Шахти «Великомостівська»",
+    "address": "вул. Львівська, 1, м. Шептицький",
+    "lat": 50.365,
+    "lon": 24.215,
     "type": "radiation_shelter",
     "capacity": 2500,
     "accessible": true,

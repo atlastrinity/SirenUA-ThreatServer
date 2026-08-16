@@ -52,6 +52,7 @@ class Shelter:
     is_primary: bool = True
     is_night_accessible: bool = True
     is_vehicle_accessible: bool = False
+    region: Optional[str] = None
 
     def to_dict(self, distance_m: float = 0) -> dict:
         d = asdict(self)
@@ -149,6 +150,7 @@ def _fetch_seed_shelters() -> List[Shelter]:
                 shelters = []
                 import json
                 for fpath in files:
+                    reg_code = os.path.basename(fpath).replace(".json", "")
                     try:
                         with open(fpath, "r", encoding="utf-8") as f:
                             items = json.load(f)
@@ -172,6 +174,7 @@ def _fetch_seed_shelters() -> List[Shelter]:
                                     is_primary=is_primary,
                                     is_night_accessible=is_night,
                                     is_vehicle_accessible=is_vehicle,
+                                    region=reg_code,
                                 )
                             )
                     except Exception as e:
@@ -582,7 +585,7 @@ class ShelterManager:
             for s in seed:
                 self._index.insert(s)
                 self._shelters.append(s)
-                reg = detect_region_by_coordinates(s.lat, s.lon)
+                reg = s.region or detect_region_by_coordinates(s.lat, s.lon)
                 self._regional_shelters.setdefault(reg, []).append(s)
             self._loaded = True
             self._last_load_time = time.time()
@@ -612,6 +615,67 @@ class ShelterManager:
         )
         return [s.to_dict() for s in sorted_shelters]
 
+    def search_shelters(
+        self,
+        query: str = "",
+        region: Optional[str] = None,
+        only_primary: bool = False,
+        limit: int = 50
+    ) -> List[dict]:
+        """
+        Повнотекстовий та регіональний пошук укриттів за назвою міста, адресою чи типом.
+        """
+        q = query.strip().lower()
+        target_reg = resolve_region_code(region) if region else None
+
+        candidates = self._shelters
+        if target_reg:
+            candidates = self._regional_shelters.get(target_reg, [])
+
+        results = []
+        for s in candidates:
+            if only_primary and not s.is_primary:
+                continue
+
+            if q:
+                name_match = (s.name or "").lower()
+                addr_match = (s.address or "").lower()
+                type_match = s.type.lower()
+
+                if q not in name_match and q not in addr_match and q not in type_match:
+                    continue
+
+            results.append(s)
+
+        # Сортування: Tier 1 Primary першими, потім паркінги ТРЦ
+        results.sort(
+            key=lambda s: (
+                0 if s.is_primary else (1 if s.is_vehicle_accessible else 2),
+                s.name or ""
+            )
+        )
+
+        return [s.to_dict() for s in results[:limit]]
+
+    def get_all_regions_summary(self) -> List[dict]:
+        """Повертає зведену статистику укриттів по всіх 26 регіонах України."""
+        summaries = []
+        for code, info in sorted(REGION_CENTROIDS.items(), key=lambda x: x[1][2]):
+            centroid_lat, centroid_lon, reg_name = info
+            shelters = self._regional_shelters.get(code, [])
+            tier1 = sum(1 for s in shelters if s.is_primary)
+            tier2 = sum(1 for s in shelters if not s.is_primary)
+            summaries.append({
+                "region_code": code,
+                "region_name": reg_name,
+                "centroid_lat": centroid_lat,
+                "centroid_lon": centroid_lon,
+                "total_count": len(shelters),
+                "primary_count": tier1,
+                "secondary_count": tier2
+            })
+        return summaries
+
     async def load(self):
         """Initial and periodic load of shelters from seed data, Firestore and OSM."""
         seed_shelters = _fetch_seed_shelters()
@@ -626,7 +690,7 @@ class ShelterManager:
         for s in seed_shelters + gov_shelters:
             idx.insert(s)
             final_shelters.append(s)
-            reg = detect_region_by_coordinates(s.lat, s.lon)
+            reg = s.region or detect_region_by_coordinates(s.lat, s.lon)
             reg_shelters.setdefault(reg, []).append(s)
             
         # 2. Додаємо OSM укриття, уникаючи дублікатів (радіус 20 метрів)
@@ -640,7 +704,7 @@ class ShelterManager:
             
             idx.insert(s)
             final_shelters.append(s)
-            reg = detect_region_by_coordinates(s.lat, s.lon)
+            reg = s.region or detect_region_by_coordinates(s.lat, s.lon)
             reg_shelters.setdefault(reg, []).append(s)
 
         if skipped > 0:

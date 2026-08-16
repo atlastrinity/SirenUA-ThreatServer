@@ -61,6 +61,52 @@ async def get_shelters_by_region(region: str = Query(..., description="Код а
     }
 
 
+@router.get("/api/shelters/search")
+async def search_shelters(
+    q: str = Query("", description="Текстовий запит (назва міста, вулиця або заклад)"),
+    region: Optional[str] = Query(None, description="Опціональний фільтр за областю"),
+    only_primary: bool = Query(False, description="Шукати лише офіційні капітальні бомбосховища 1-го порядку"),
+    limit: int = Query(50, ge=1, le=200, description="Ліміт результатів")
+):
+    """Пошук укриттів за назвою міста, адресою чи типом з підтримкою регіональних фільтрів."""
+    results = shelter_manager.search_shelters(
+        query=q,
+        region=region,
+        only_primary=only_primary,
+        limit=limit
+    )
+
+    primary_count = sum(1 for s in results if s.get("is_primary"))
+    secondary_count = sum(1 for s in results if not s.get("is_primary"))
+
+    return {
+        "query": q,
+        "region": region,
+        "only_primary": only_primary,
+        "count": len(results),
+        "primary_count": primary_count,
+        "secondary_count": secondary_count,
+        "shelters": results,
+    }
+
+
+@router.get("/api/shelters/regions")
+async def get_shelter_regions():
+    """Отримання зведеної статистики та координат центроїдів усіх 26 регіонів України."""
+    regions_summary = shelter_manager.get_all_regions_summary()
+    total_shelters = sum(r["total_count"] for r in regions_summary)
+    total_primary = sum(r["primary_count"] for r in regions_summary)
+    total_secondary = sum(r["secondary_count"] for r in regions_summary)
+
+    return {
+        "total_regions": len(regions_summary),
+        "total_shelters": total_shelters,
+        "total_primary": total_primary,
+        "total_secondary": total_secondary,
+        "regions": regions_summary,
+    }
+
+
 
 @router.post("/api/shelters/upload_json")
 async def upload_shelters_json(req: ShelterUploadRequest):
