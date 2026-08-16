@@ -13,7 +13,7 @@ from typing import Optional, List, Dict
 
 from core.config import DB_PATH, IS_LIVE_MODE
 from core.threat_types import THREAT_OFFICIAL_ALARM
-from database.db_helpers import get_db, is_duplicate_event
+from database.db_helpers import get_db, is_duplicate_event, get_sqlite_connection
 
 # Global references
 main_loop = None
@@ -25,7 +25,7 @@ last_logged_states: Dict[str, dict] = {}
 _history_batch_buffer: List[dict] = []
 
 def init_analytics_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_sqlite_connection()
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS threat_history (
@@ -314,7 +314,7 @@ def log_error_to_db(source: str, message: str, endpoint: str = None, context: st
             error_type = "general"
             
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection()
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO error_log (source, error_type, message, endpoint, context) VALUES (?, ?, ?, ?, ?)",
@@ -331,7 +331,7 @@ def log_rule_audit_to_db(action: str, rule_type: str = None, rule_text: str = No
                           threat_type: str = None, reason: str = None):
     """Log a Gemini rule addition/removal/deactivation to the audit table."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection()
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO gemini_rules_audit (action, rule_type, rule_text, source_region, target_region, threat_type, reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -364,7 +364,7 @@ def _normalize_timestamp_for_db(ts) -> Optional[str]:
 def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = None, confidence: int = None, telemetry: dict = None, is_test: bool = False, rules_applied: list = None, is_predictive: bool = False, event_timestamp: Optional[str] = None):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection()
         cursor = conn.cursor()
         # Strict deduplication check against the latest record for (region, threat_type)
         cursor.execute("""
@@ -525,7 +525,7 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
     detected_type = threat_type or _detect_threat_type_from_text(message_text)
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -799,7 +799,7 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
 def validate_prediction_on_alarm(region: str):
     """Marks predictive paired_events as 'confirmed' when official alarm activates."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_sqlite_connection()
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE paired_events 
@@ -888,7 +888,7 @@ async def sync_threat_state_to_db(region: str, state, telemetry: dict = None, ru
     prev_state_dict = last_logged_states.get(region)
     if not prev_state_dict:
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_sqlite_connection()
             c = conn.cursor()
             c.execute("""
                 SELECT threat_level FROM threat_history 

@@ -9,7 +9,7 @@ from analyzer.prompts import SYSTEM_PROMPT
 from analyzer.sanitizer import parse_gemini_json
 
 class GeminiThreatAnalyzer:
-    def __init__(self, error_callback=None, rule_audit_callback=None, db_path: str = "threat_analytics.db", api_keys: Optional[List[str]] = None, api_key: Optional[str] = None):
+    def __init__(self, error_callback=None, rule_audit_callback=None, db_path: Optional[str] = None, api_keys: Optional[List[str]] = None, api_key: Optional[str] = None):
         # Configure Gemini
         if api_keys:
             self.api_keys = api_keys
@@ -37,7 +37,8 @@ class GeminiThreatAnalyzer:
             self.last_error = "API key missing"
             print("⚠️ GEMINI_API_KEYS is not set. GeminiAnalyzer will run in mock mode.")
 
-        self.db_path = db_path
+        from database.connection import get_sqlite_connection
+        self.db_path = db_path or os.environ.get("DB_PATH", "threat_analytics.db")
         self._error_callback = error_callback
         self._rule_audit_callback = rule_audit_callback
         self.system_prompt = SYSTEM_PROMPT
@@ -48,7 +49,8 @@ class GeminiThreatAnalyzer:
         Uses Dynamic Rules RAG to select the most relevant rules based on mentioned regions/threat types,
         limiting to top 8 high-accuracy rules to maintain sub-second latency and high focus."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            from database.connection import get_sqlite_connection
+            conn = get_sqlite_connection(self.db_path)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 

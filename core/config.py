@@ -26,9 +26,9 @@ logger = logging.getLogger("sirenua")
 IS_LIVE_MODE = "--live" in sys.argv or os.environ.get("LIVE_MODE", "false").lower() == "true"
 
 # Database Configuration
-DB_PATH = "threat_analytics.db"
-if os.path.exists("threat_server"):
-    DB_PATH = "threat_server/threat_analytics.db"
+DB_PATH = os.environ.get("DB_PATH")
+if not DB_PATH:
+    DB_PATH = "threat_server/threat_analytics.db" if os.path.exists("threat_server") else "threat_analytics.db"
 
 # API Credentials (for Telegram Telethon API client)
 TELEGRAM_API_ID = int(os.environ.get("TELEGRAM_API_ID", 20294647))

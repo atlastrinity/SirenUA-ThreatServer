@@ -5,16 +5,27 @@ Analyzes historical paired events and derives active rules for route patterns, c
 
 import json
 import sqlite3
-from typing import Optional, Callable
+import os
+from typing import Optional, Callable, List, Dict, Any
 from database.db_helpers import get_sqlite_connection
 from analyzer.rules.decay import apply_rule_decay
+
+
+def _fetch_dict_rows(cursor) -> List[Any]:
+    rows = cursor.fetchall()
+    if not rows:
+        return []
+    if isinstance(rows[0], (sqlite3.Row, dict)):
+        return rows
+    col_names = [col[0] for col in cursor.description]
+    return [dict(zip(col_names, r)) for r in rows]
 
 
 class GeminiRulesLearner:
     """Autonomous learner engine that creates and updates Gemini rules in SQLite."""
 
-    def __init__(self, db_path: str = "threat_analytics.db", rule_audit_callback: Optional[Callable] = None):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None, rule_audit_callback: Optional[Callable] = None):
+        self.db_path = db_path or os.environ.get("DB_PATH", "threat_analytics.db")
         self._rule_audit_callback = rule_audit_callback
 
     def _learn_route_patterns(self, cursor) -> int:
@@ -43,7 +54,7 @@ class GeminiRulesLearner:
             HAVING occurrence_count >= 5 OR (occurrence_count >= 3 AND accuracy >= 0.70)
         ''')
 
-        for row in cursor.fetchall():
+        for row in _fetch_dict_rows(cursor):
             rule_text = (f"Загрози типу {row['threat_type']} з {row['source_region']} "
                          f"мають {row['accuracy']*100:.0f}% шанс досягти {row['target_region']} "
                          f"(підтверджено {row['occurrence_count']} раз)")
@@ -94,7 +105,7 @@ class GeminiRulesLearner:
             HAVING total >= 7
         ''')
 
-        for row in cursor.fetchall():
+        for row in _fetch_dict_rows(cursor):
             total = row["total"]
             overest = row["overestimated"]
             conf = row["confirmed"]
@@ -164,7 +175,7 @@ class GeminiRulesLearner:
             kiev_tz = zoneinfo.ZoneInfo("Europe/Kiev")
 
         raw_patterns = {}
-        for row in cursor.fetchall():
+        for row in _fetch_dict_rows(cursor):
             created_at_str = row["created_at"]
             if not created_at_str:
                 continue
@@ -242,7 +253,7 @@ class GeminiRulesLearner:
                 HAVING occurrence_count >= 3 AND accuracy >= 0.55
             ''')
 
-            for row in cursor.fetchall():
+            for row in _fetch_dict_rows(cursor):
                 avg_min = max(1, int(round(row["avg_eta_minutes"])))
                 min_min = max(1, int(round(row["min_eta_minutes"])))
                 max_min = max(min_min, int(round(row["max_eta_minutes"])))

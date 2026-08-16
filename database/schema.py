@@ -9,17 +9,20 @@ from core.config import DB_PATH
 from database.db_helpers import get_sqlite_connection
 
 
-def init_analytics_db_tables_only():
+import os
+
+def init_analytics_db_tables_only(db_path: str = None):
     """Create all analytics tables and indexes WITHOUT seeding any data."""
     from database.db_helpers import local_sqlite_restore
+    target_db = db_path or os.environ.get("DB_PATH", DB_PATH)
     try:
-        conn = get_sqlite_connection(DB_PATH)
+        conn = get_sqlite_connection(target_db)
         cursor = conn.cursor()
         cursor.execute("SELECT 1 FROM sqlite_master LIMIT 1")
     except (sqlite3.DatabaseError, sqlite3.OperationalError) as err:
         print(f"⚠️ [DB Integrity Warning] База даних пошкоджена або нечитабельна ({err}). Запускаємо відновлення з бекапу...")
-        local_sqlite_restore(DB_PATH)
-        conn = get_sqlite_connection(DB_PATH)
+        local_sqlite_restore(target_db)
+        conn = get_sqlite_connection(target_db)
         cursor = conn.cursor()
 
     # --- threat_history ---
@@ -323,9 +326,10 @@ def _seed_mock_data(cursor: sqlite3.Cursor):
     pass
 
 
-def seed_if_empty():
+def seed_if_empty(db_path: str = None):
     """Public entry point: seeds baseline data only if all key tables are empty."""
-    conn = get_sqlite_connection(DB_PATH)
+    target_db = db_path or os.environ.get("DB_PATH", DB_PATH)
+    conn = get_sqlite_connection(target_db)
     cursor = conn.cursor()
     _seed_mock_data(cursor)
     conn.commit()
@@ -333,8 +337,8 @@ def seed_if_empty():
     print("🌱 Seed завершено (дані додано лише до порожніх таблиць).")
 
 
-def init_analytics_db():
+def init_analytics_db(db_path: str = None):
     """Backward-compatible wrapper: creates tables AND seeds data."""
-    init_analytics_db_tables_only()
-    seed_if_empty()
+    init_analytics_db_tables_only(db_path)
+    seed_if_empty(db_path)
 

@@ -1,7 +1,5 @@
-"""
-SQLite Connection & Data Execution Helpers.
-"""
-
+import os
+import core.config
 import sqlite3
 from typing import List, Dict, Any
 from core.config import DB_PATH, logger
@@ -10,7 +8,7 @@ from core.config import DB_PATH, logger
 def get_sqlite_connection(db_path: str = None) -> sqlite3.Connection:
     """Отримує SQLite з'єднання з PRAGMA wal та busy_timeout."""
     if db_path is None:
-        db_path = DB_PATH
+        db_path = os.environ.get("DB_PATH") or core.config.DB_PATH or "threat_analytics.db"
     conn = sqlite3.connect(db_path, timeout=30.0)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 30000")

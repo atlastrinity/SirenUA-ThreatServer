@@ -17,10 +17,8 @@ import google.generativeai as genai
 
 import tempfile
 
-import core.config
-import database.analytics_db
-ORIGINAL_DB_PATH = core.config.DB_PATH
-TEMP_TEST_DB = os.path.join(tempfile.gettempdir(), "test_reeval_analytics.db")
+from database.connection import get_sqlite_connection
+
 
 class MockReevaluationThreatManager(MockThreatManager):
     def __init__(self):
@@ -54,19 +52,8 @@ async def main():
     print("🧪 Запуск тестування авто-переоцінки загроз")
     print("==================================================\n")
 
-    core.config.DB_PATH = TEMP_TEST_DB
-    database.analytics_db.DB_PATH = TEMP_TEST_DB
     try:
-        if os.path.exists(TEMP_TEST_DB):
-            try:
-                os.remove(TEMP_TEST_DB)
-            except OSError:
-                pass
-
-        # Ініціалізуємо тестову БД
-        init_analytics_db()
-
-        conn = sqlite3.connect(TEMP_TEST_DB)
+        conn = get_sqlite_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM paired_events")
         cursor.execute("DELETE FROM threat_history")
@@ -155,7 +142,7 @@ async def main():
         print(f"📊 Поточний рівень загрози для {region}: {state.level} (має бути none)")
 
         # Друкуємо вміст таблиць для відлагодження
-        conn = sqlite3.connect(TEMP_TEST_DB)
+        conn = get_sqlite_connection()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -175,8 +162,6 @@ async def main():
             print(dict(r))
     finally:
         conn.close() if 'conn' in locals() and conn else None
-        core.config.DB_PATH = ORIGINAL_DB_PATH
-        database.analytics_db.DB_PATH = ORIGINAL_DB_PATH
 
 async def async_test_predictive_threat_timer_preservation():
     """Verify that predictive threats retain their full ETA timer when restore_scheduled_clears() runs."""

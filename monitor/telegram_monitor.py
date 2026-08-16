@@ -1080,8 +1080,9 @@ class TelegramThreatMonitor:
     def _get_latest_telemetry(self, region: str) -> dict:
         """Get the latest telemetry data for a region from the DB."""
         try:
+            from database.connection import get_sqlite_connection
             import sqlite3
-            conn = sqlite3.connect("threat_analytics.db")
+            conn = get_sqlite_connection()
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
@@ -1108,9 +1109,9 @@ class TelegramThreatMonitor:
     def _get_learned_eta_math(self, source: str, target: str, threat_type: str) -> Optional[int]:
         """Fetch empirical flight duration in seconds from learned gemini_rules (eta_math)."""
         try:
-            import sqlite3
+            from database.connection import get_sqlite_connection
             import json
-            conn = sqlite3.connect("threat_analytics.db")
+            conn = get_sqlite_connection()
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT rule_json, accuracy_score FROM gemini_rules
@@ -1133,8 +1134,8 @@ class TelegramThreatMonitor:
     def _get_historical_route_score(self, source: str, target: str) -> float:
         """Check DB for historical threat progression from source → target region, combining gemini_rules and threat_clearings."""
         try:
-            import sqlite3
-            conn = sqlite3.connect("threat_analytics.db")
+            from database.connection import get_sqlite_connection
+            conn = get_sqlite_connection()
             cursor = conn.cursor()
 
             # 1. Primary check: learned empirical route_pattern rules

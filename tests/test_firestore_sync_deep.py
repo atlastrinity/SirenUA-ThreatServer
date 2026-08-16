@@ -18,7 +18,7 @@ from database.firestore_sync import (
     delete_test_history_from_firestore,
 )
 from database.threat_logger import log_threat_to_db, log_threat_to_firestore, flush_history_batch
-from database.connection import get_sqlite_connection, DB_PATH
+from database.connection import get_sqlite_connection
 from core.threat_state import MockThreatManager
 
 
@@ -95,7 +95,7 @@ def test_history_event_sync():
     assert sqlite_id is not None
 
     # Перевірка в SQLite
-    conn = get_sqlite_connection(DB_PATH)
+    conn = get_sqlite_connection()
     c = conn.cursor()
     c.execute("SELECT id, region, threat_level, detail FROM threat_history WHERE id = ?", (sqlite_id,))
     row = c.fetchone()
