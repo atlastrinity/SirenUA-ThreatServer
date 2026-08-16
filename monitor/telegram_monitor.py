@@ -917,10 +917,10 @@ class TelegramThreatMonitor:
                         dist_mod = -8
                 
                 # Route history modifier (known route = higher confidence)
-                route_mod = int(route_boost * 12)  # 0-9
+                route_mod = int(route_boost * 16)
                 
                 # DB pattern modifier
-                db_mod = int(db_boost * 8)  # 0-1
+                db_mod = int(db_boost * 20)
                 
                 # Time-of-day modifier
                 time_mod = self._get_time_of_day_modifier(threat_type)
@@ -934,13 +934,13 @@ class TelegramThreatMonitor:
                 except Exception:
                     pass
                 
-                # Final confidence with all modifiers
+                # Final confidence with all modifiers (allows confirmed routes to reach up to 95%)
                 raw_confidence = base_conf + dist_mod + route_mod + db_mod + time_mod + rules_correction
-                confidence = max(25, min(80, raw_confidence))
+                confidence = max(30, min(95, raw_confidence))
                 
                 # Ensure uniqueness: add small pseudo-random offset based on region name hash
                 region_hash_offset = (hash(adj_region) % 5) - 2  # -2 to +2
-                confidence = max(25, min(80, confidence + region_hash_offset))
+                confidence = max(30, min(95, confidence + region_hash_offset))
                 
                 # Generate ETA string via centralized format_eta_seconds_to_str
                 from core.threat_types import format_eta_seconds_to_str
@@ -964,9 +964,9 @@ class TelegramThreatMonitor:
                         "telemetry": telemetry,
                     }
         
-        # Apply predictions — limit to top 2 highest scoring regions max
+        # Apply predictions — limit to top 3 highest scoring regions max
         predictions_applied = 0
-        sorted_predictions = sorted(predictions.items(), key=lambda x: x[1]["score"], reverse=True)[:2]
+        sorted_predictions = sorted(predictions.items(), key=lambda x: x[1]["score"], reverse=True)[:3]
         for region, pred in sorted_predictions:
             # Determine threat level for predictive zone
             pred_level = "low"

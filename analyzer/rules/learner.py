@@ -40,7 +40,7 @@ class GeminiRulesLearner:
                 AND pe1.was_predictive = 0
                 AND pe1.created_at >= datetime('now', '-30 days')
             GROUP BY pe1.region, pe2.region, pe1.threat_type
-            HAVING occurrence_count >= 5
+            HAVING occurrence_count >= 5 OR (occurrence_count >= 3 AND accuracy >= 0.70)
         ''')
 
         for row in cursor.fetchall():
