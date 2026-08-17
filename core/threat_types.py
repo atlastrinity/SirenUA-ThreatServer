@@ -935,13 +935,13 @@ AVIATION_LAUNCH_SECTORS: Dict[str, Dict[str, Any]] = {
         "title": "Акваторія Азовського моря (Приазовський морський коридор)",
         "lat_lon": (46.20, 36.50),
         "target_regions": ["Запорізька область", "Дніпропетровська область", "Донецька область", "Херсонська область", "Миколаївська область", "Одеська область", "Кіровоградська область", "Полтавська область", "Черкаська область", "Харківська область"],
-        "keywords": ["азов", "азовськ", "азовське море", "приазов", "приморсько", "ахтарськ", "єйськ", "ейск"],
+        "keywords": ["азов", "азовськ", "азовське море", "приазов", "приазовський", "приазов'я"],
     },
     SECTOR_BLACK_SEA: {
         "title": "Акваторія Чорного моря (Південний морський коридор)",
         "lat_lon": (44.50, 32.00),
         "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область", "Кіровоградська область", "Вінницька область", "Черкаська область"],
-        "keywords": ["чорне море", "чорного моря", "севастополь", "тарханкут", "з моря", "морського базування", "чорноморськ", "чауда"],
+        "keywords": ["чорне море", "чорного моря", "севастополь", "тарханкут", "з моря", "морського базування", "чорноморськ", "південний морський"],
     },
     SECTOR_TOT_ZAPORIZHZHIA: {
         "title": "Прифронтовий рубіж ТОТ Запорізької обл. (ЛБЗ)",
@@ -981,33 +981,15 @@ AVIATION_LAUNCH_SECTORS: Dict[str, Dict[str, Any]] = {
     },
     SECTOR_CHAUDA: {
         "title": "Кримський перешийок / ТОТ АР Крим (Південний коридор)",
-        "lat_lon": (45.00, 35.83),
+        "lat_lon": (45.90, 34.50),
         "target_regions": ["Херсонська область", "Запорізька область", "Дніпропетровська область", "Одеська область", "Миколаївська область"],
         "keywords": ["перешийок", "кримський перешийок", "чонгар", "армянськ", "джанкой"],
-    },
-    SECTOR_PRIMORSKO_AKHTARSK: {
-        "title": "Акваторія Азовського моря (Приазовський коридор)",
-        "lat_lon": (46.04, 38.17),
-        "target_regions": ["Запорізька область", "Дніпропетровська область", "Донецька область", "Харківська область", "Полтавська область"],
-        "keywords": ["приморсько-ахтарськ", "приморско-ахтарск", "приморськ-ахтарськ", "ахтарськ", "краснодарськ"],
-    },
-    SECTOR_YEYSK: {
-        "title": "Акваторія Азовського моря (Приазовсько-Донбаський коридор)",
-        "lat_lon": (46.68, 38.28),
-        "target_regions": ["Донецька область", "Запорізька область", "Дніпропетровська область"],
-        "keywords": ["єйськ", "ейськ", "ейск"],
-    },
-    SECTOR_OREL: {
-        "title": "Курсько-Брянський прикордонний рубіж (вхід з РФ)",
-        "lat_lon": (52.96, 36.06),
-        "target_regions": ["Сумська область", "Чернігівська область", "Полтавська область", "Київська область", "Харківська область"],
-        "keywords": ["орел", "орловськ", "орла"],
     },
     SECTOR_CRIMEA_TARKHANKUT: {
         "title": "Акваторія Чорного моря (Західно-Кримський морський коридор)",
         "lat_lon": (45.34, 32.50),
         "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область", "Запорізька область"],
-        "keywords": ["тарханкут", "джанкой", "гвардійське", "іскандер-м крим"],
+        "keywords": ["тарханкут", "севастополь", "гвардійське", "іскандер-м крим"],
     },
     SECTOR_VORONEZH: {
         "title": "Воронезький прикордонний рубіж (Воронезька обл. РФ)",
@@ -1019,7 +1001,7 @@ AVIATION_LAUNCH_SECTORS: Dict[str, Dict[str, Any]] = {
         "title": "Ростовський прикордонний рубіж / Азовське море (РФ)",
         "lat_lon": (47.23, 38.89),
         "target_regions": ["Донецька область", "Запорізька область", "Дніпропетровська область", "Харківська область"],
-        "keywords": ["таганрог", "ростов", "ростовськ", "міллерово"],
+        "keywords": ["таганрог", "ростов", "ростовськ"],
     },
     SECTOR_BELARUS_GOMEL: {
         "title": "Білоруський північний коридор (Гомельська обл. РБ $\\rightarrow$ Київщина/Чернігівщина)",
@@ -1319,21 +1301,24 @@ def resolve_aviation_strike_profile(
         if drone_site_found:
             airbase_key = drone_site_found
             if not sector_key:
-                if airbase_key == DRONE_SITE_CHAUDA:
-                    # Water route into Odesa/Mykolaiv/Kherson -> Black Sea; inland via isthmus -> Crimea Isthmus
-                    sector_key = SECTOR_BLACK_SEA if target_region in ["Одеська область", "Миколаївська область", "Вінницька область", "Хмельницька область", "Чернівецька область"] else SECTOR_CHAUDA
+                if target_region in ["Одеська область", "Миколаївська область", "Вінницька область", "Хмельницька область", "Чернівецька область", "Херсонська область"] or "чорн" in text_lower or "мор" in text_lower or "південь" in text_lower:
+                    sector_key = SECTOR_BLACK_SEA
+                elif airbase_key == DRONE_SITE_CHAUDA:
+                    sector_key = SECTOR_BLACK_SEA if target_region in ["Одеська область", "Миколаївська область", "Вінницька область", "Хмельницька область", "Чернівецька область", "Херсонська область"] else SECTOR_CHAUDA
                 elif airbase_key in [DRONE_SITE_PRIMORSKO_AKHTARSK, DRONE_SITE_YEYSK]:
-                    # Drones crossing into Ukrainian mainland from eastern Azov launchpads cross the Azov Sea
-                    sector_key = SECTOR_AZOV_SEA
+                    if target_region in ["Одеська область", "Миколаївська область", "Херсонська область", "Вінницька область"]:
+                        sector_key = SECTOR_BLACK_SEA
+                    else:
+                        sector_key = SECTOR_AZOV_SEA
                 elif airbase_key in [DRONE_SITE_KURSK, DRONE_SITE_OREL]:
                     sector_key = SECTOR_KURSK
                 elif airbase_key == DRONE_SITE_SESHCHA:
                     sector_key = SECTOR_BRYANSK
                 elif airbase_key == DRONE_SITE_MILLEROVO:
-                    sector_key = SECTOR_BELGOROD
+                    sector_key = SECTOR_BELGOROD if target_region in ["Харківська область", "Сумська область", "Полтавська область"] else SECTOR_ROSTOV_TAGANROG
         else:
             # 2. Regional heuristics for all 26 Ukrainian regions
-            if "чорн" in text_lower or "мор" in text_lower or target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
+            if "чорн" in text_lower or "мор" in text_lower or target_region in ["Одеська область", "Миколаївська область", "Херсонська область", "Вінницька область", "Чернівецька область"]:
                 airbase_key = DRONE_SITE_CHAUDA
                 sector_key = SECTOR_BLACK_SEA
             elif target_region in ["Запорізька область", "Дніпропетровська область", "Донецька область"]:
@@ -1347,8 +1332,8 @@ def resolve_aviation_strike_profile(
                 sector_key = SECTOR_BELGOROD if "міллеров" in text_lower else SECTOR_AZOV_SEA
             elif target_region in ["Вінницька область", "Хмельницька область", "Черкаська область", "Кіровоградська область"]:
                 airbase_key = DRONE_SITE_CHAUDA if "південь" in text_lower else DRONE_SITE_PRIMORSKO_AKHTARSK
-                sector_key = SECTOR_BLACK_SEA if "південь" in text_lower else SECTOR_AZOV_SEA
-            elif target_region in ["Львівська область", "Тернопільська область", "Івано-Франківська область", "Рівненська область", "Волинська область", "Чернівецька область", "Закарпатська область"]:
+                sector_key = SECTOR_BLACK_SEA if "південь" in text_lower or target_region in ["Вінницька область", "Кіровоградська область"] else SECTOR_AZOV_SEA
+            elif target_region in ["Львівська область", "Тернопільська область", "Івано-Франківська область", "Рівненська область", "Волинська область", "Закарпатська область"]:
                 airbase_key = DRONE_SITE_KURSK if "північ" in text_lower else DRONE_SITE_CHAUDA
                 sector_key = SECTOR_KURSK if "північ" in text_lower else SECTOR_BLACK_SEA
             else:
