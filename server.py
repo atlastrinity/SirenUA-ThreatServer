@@ -29,6 +29,7 @@ from database.analytics_db import (
     last_logged_states,
     on_threat_changed,
     safe_run_task,
+    reconcile_active_threats_with_db,
 )
 
 # API Routers
@@ -275,28 +276,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Помилка автоматичного відновлення SQLite: {e}")
 
-    # Завантаження збереженого стану загроз
+    # Завантаження збереженого стану загроз та звірка з базою SQLite
     try:
         await asyncio.to_thread(threat_manager.load_from_db)
-        for r, s in threat_manager.threats.items():
-            last_logged_states[r] = {
-                "active_threats": {
-                    t.threat_id: {
-                        "level": t.level,
-                        "threat_type": t.threat_type,
-                        "detail": t.detail,
-                        "confidence": t.confidence,
-                        "is_predictive": getattr(t, "is_predictive", False),
-                        "is_test": t.is_test
-                    }
-                    for t in s.active_threats
-                    if t.threat_type and t.threat_type != "official_alarm"
-                },
-                "is_active": s.is_active,
-                "level": s.level
-            }
+        await asyncio.to_thread(reconcile_active_threats_with_db, threat_manager)
     except Exception as e:
-        logger.error(f"Помилка асинхронного завантаження стану загроз: {e}")
+        logger.error(f"Помилка асинхронного завантаження та звірки стану загроз: {e}")
 
     # Завантаження бази укриттів
     async def load_shelters_background():
