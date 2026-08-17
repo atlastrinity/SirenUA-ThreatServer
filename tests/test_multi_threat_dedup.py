@@ -307,3 +307,86 @@ class TestMultiThreatTrackingAndDedup:
         )
         assert len(state_mig.active_threats) == 1
 
+    def test_tu22m3_cross_channel_origin_variation_dedup(self):
+        """
+        Перевірка: повідомлення eRadarrua ('tu22m3_south_sea_1', 'Акваторія Чорного моря')
+        та kpszsu ('tu22m3_black_sea_1', 'Акваторія Чорного моря (Флот РФ)') для Одеської,
+        Миколаївської та Херсонської областей успішно дедуплікуються в 1 загрозу.
+        """
+        for region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
+            state = ThreatState(region_name=region)
+
+            # Канал 1: eRadarrua
+            state.set_threat(
+                level="high",
+                threat_type="tu22m3",
+                detail="Загроза пусків Х-22 на південному напрямку",
+                confidence=65,
+                eta="~3-10 хв",
+                group_id="tu22m3_south_sea_1",
+                telemetry={
+                    "group_id": "tu22m3_south_sea_1",
+                    "attack_vector": "sea_to_coast",
+                    "target_count": 1,
+                    "speed_kmh": 4200,
+                    "launch_origin": "Акваторія Чорного моря",
+                    "weapon_subtype": "Х-22",
+                    "final_target_cities": ["Одеса", "Миколаїв"]
+                }
+            )
+            assert len(state.active_threats) == 1
+
+            # Канал 2: kpszsu (через кілька секунд)
+            state.set_threat(
+                level="high",
+                threat_type="tu22m3",
+                detail="Ту-22м3 в акваторії Чорного моря. Загроза пусків ракет Х-22!",
+                confidence=72,
+                eta="~3-10 хв",
+                group_id="tu22m3_black_sea_1",
+                telemetry={
+                    "group_id": "tu22m3_black_sea_1",
+                    "attack_vector": "sea_to_coast",
+                    "target_count": 1,
+                    "speed_kmh": 4200,
+                    "launch_origin": "Акваторія Чорного моря (Флот РФ)",
+                    "weapon_subtype": "Х-22/Х-32",
+                    "final_target_cities": ["Одеса", "Миколаїв", "Херсон"]
+                }
+            )
+
+            # Переконуємося, що не створено 2-й картки
+            assert len(state.active_threats) == 1
+            assert state.active_threats[0].confidence == 72
+            assert state.level == "high"
+
+    def test_shahed_origin_parenthesis_variation_dedup(self):
+        """Перевірка дедуплікації при варіаціях назви точки пуску (з дужками РФ та без)."""
+        state = ThreatState(region_name="Миколаївська область")
+        state.set_threat(
+            level="high",
+            threat_type="shahed",
+            detail="Шахеди курсом на Миколаїв",
+            group_id="shahed_akhtarsk_1",
+            telemetry={
+                "launch_origin": "Приморсько-Ахтарськ (Краснодарський край РФ)",
+                "attack_vector": "northeast_to_southwest",
+                "final_target_cities": ["Миколаїв"],
+                "target_count": 2
+            }
+        )
+        state.set_threat(
+            level="high",
+            threat_type="shahed",
+            detail="2 БпЛА на Миколаїв",
+            group_id="shahed_primorsko_akhtarsk_w1",
+            telemetry={
+                "launch_origin": "Приморсько-Ахтарськ",
+                "attack_vector": "northeast_to_southwest",
+                "final_target_cities": ["Миколаїв"],
+                "target_count": 2
+            }
+        )
+        assert len(state.active_threats) == 1
+
+

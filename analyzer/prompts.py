@@ -72,6 +72,32 @@ For informational messages, still return a JSON object but with:
 When an input message is a multi-region summary (e.g. listing drones or missiles across 3-6 different oblasts in a numbered list or bullet points), you MUST isolate and provide a concise, region-specific tactical description in `target_regions[i].detail` for each target region (e.g. for Zaporizhzhia: "Реактивний БпЛА 1 група", for Odesa: "БпЛА в напрямку Чорноморська").
 NEVER copy or include text about other oblasts into a region's detail!
 
+=== CRITICAL RULE #7: UNIFIED GROUP_ID & LAUNCH_ORIGIN CANONICALIZATION (DEDUPLICATION CONTROL) ===
+To prevent duplicate threat markers when multiple Telegram channels (e.g. kpszsu, eRadarrua, vanek_nikolaev, monitorwarr) report the same event with slightly different wording:
+1. **Canonical `group_id` Format**: ALWAYS format as `{threat_type}_{canonical_sector}_{wave_or_group}`.
+   - For Black Sea / South direction: ALWAYS use `black_sea` (e.g. `tu22m3_black_sea_1`, `shahed_black_sea_w1`, `kalibr_black_sea_1`). NEVER create divergent keys like `south_sea`, `sea_south`, or `south`!
+   - For Caspian Sea: `caspian_sea` (e.g. `tu95_caspian_sea_w1`, `kalibr_caspian_sea_1`).
+   - For Chauda (Crimea): `chauda` (e.g. `shahed_chauda_w1`).
+   - For Primorsko-Akhtarsk: `primorsko_akhtarsk` (e.g. `shahed_primorsko_akhtarsk_w1`).
+   - For Yeysk: `yeysk` (e.g. `shahed_yeysk_w1`).
+   - For Kursk / Belgorod / Bryansk / Orel: `kursk`, `belgorod`, `bryansk`, `orel`.
+   - For Airbases: `savasleyka` (MiG-31K), `olenya`, `engels`, `shaykovka`, `mozdok`.
+2. **Canonical `launch_origin` Strings**: Use clean standardized strings without random noisy parenthetical suffixes:
+   - "Акваторія Чорного моря"
+   - "Акваторія Каспійського моря"
+   - "Мис Чауда (АР Крим)"
+   - "Приморсько-Ахтарськ"
+   - "Єйськ"
+   - "Аеродром Саваслейка"
+   - "Аеродром Оленья"
+   - "Аеродром Енгельс-2"
+   - "Аеродром Шайковка"
+   - "Аеродром Моздок"
+   - "Позиційний район Бєлгородська обл. РФ"
+   - "Позиційний район Курська обл. РФ"
+3. **Cross-Channel Strategic Threat Deduplication**:
+   - For Strategic Aviation (Tu-22M3, MiG-31K, Tu-95MS) and general missile launches: if multiple channels report a takeoff or launch in the same basin/sector (e.g. Tu-22M3 in Black Sea) and there is NO explicit mention of a 2nd separate aircraft or 2nd separate wave, they are the SAME single event. YOU MUST assign the identical canonical `group_id` (e.g. `tu22m3_black_sea_1`) and `launch_origin` ("Акваторія Чорного моря").
+
 === ANALYSIS METHODOLOGY FOR TARGET REGIONS ===
 Apply four types of analysis to determine target_regions and is_predictive flags:
 

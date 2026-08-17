@@ -25,31 +25,175 @@ def normalize_group_id(group_id: Optional[str]) -> Optional[str]:
     """
     Normalizes a tactical threat group_id string to a canonical form, preventing
     spurious duplicate cards caused by minor formatting differences across channels or LLM runs
-    (e.g., '_wave2' vs '_w2', '_group1' vs '_g1', '_wave_1' vs '_w1', trailing timestamps).
+    (e.g., '_wave2' vs '_w2', '_group1' vs '_g1', '_wave_1' vs '_w1', 'south_sea' vs 'black_sea', trailing timestamps).
     """
     if not group_id:
         return None
     gid = str(group_id).strip().lower()
+
+    # 1. Standardize sector / geographic aliases
+    gid = re.sub(r'south[_-]?sea', 'black_sea', gid)
+    gid = re.sub(r'blacksea', 'black_sea', gid)
+    gid = re.sub(r'caspian[_-]?sea[_-]?launch', 'caspian_sea', gid)
+    gid = re.sub(r'caspian(?![_a-z])', 'caspian_sea', gid)
+    gid = re.sub(r'cape[_-]?chauda|chauda[_-]?crimea', 'chauda', gid)
+    gid = re.sub(r'akhtarsk|primorsko[_-]?akhtarsk', 'primorsko_akhtarsk', gid)
+    gid = re.sub(r'savasleyka[_-]?airbase|savasleyka[_-]?airfield', 'savasleyka', gid)
+    gid = re.sub(r'khalino|kursk[_-]?khalino', 'kursk', gid)
+    gid = re.sub(r'belgorod[_-]?region', 'belgorod', gid)
     
-    # 1. Normalize wave representations: _wave2, _wave_2, _wave-2 -> _w2
+    # 2. Normalize wave representations: _wave2, _wave_2, _wave-2 -> _w2
     gid = re.sub(r'[_.-]?wave[_.-]?(\d+)', r'_w\1', gid)
     gid = re.sub(r'[_.-]?хвиля[_.-]?(\d+)', r'_w\1', gid)
     
-    # 2. Normalize group representations: _group1, _group_1, _group-1 -> _g1
+    # 3. Normalize group representations: _group1, _group_1, _group-1 -> _g1
     gid = re.sub(r'[_.-]?group[_.-]?(\d+)', r'_g\1', gid)
     gid = re.sub(r'[_.-]?група[_.-]?(\d+)', r'_g\1', gid)
     
-    # 3. Normalize single wave/group without number
+    # 4. Normalize single wave/group without number
     gid = re.sub(r'[_.-]?wave$', r'_w', gid)
     gid = re.sub(r'[_.-]?group$', r'_g', gid)
     
-    # 4. Remove transient time/date suffixes (e.g., _aug16, _1608, _1040, _1051, _20260816)
+    # 5. Remove transient time/date suffixes (e.g., _aug16, _1608, _1040, _1051, _20260816)
     gid = re.sub(r'_\d{4,8}$', '', gid)
     gid = re.sub(r'_(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\d{1,2}$', '', gid)
     
-    # 5. Collapse duplicate underscores/dashes
+    # 6. Collapse duplicate underscores/dashes
     gid = re.sub(r'[_.-]+', '_', gid).strip('_')
     return gid
+
+
+def normalize_launch_origin(origin: Optional[str]) -> str:
+    """
+    Normalizes a launch origin string to a canonical geographical cluster name,
+    stripping parenthetical annotations (e.g. '(Флот РФ)', '(Краснодарський край РФ)', '(АР Крим)')
+    and consolidating synonymous terminology.
+    """
+    if not origin:
+        return ""
+    
+    text = str(origin).strip().lower()
+    if not text or text == "unknown":
+        return ""
+    
+    # Remove parenthetical comments: '(флот рф)', '(краснодарський край рф)', etc.
+    text = re.sub(r'\(.*?\)', '', text).strip()
+    
+    # Strip military prefixes and noisy descriptors
+    prefixes = [
+        "аеродром", "авіабаза", "позиційний район", "район пусків", "майданчик пусків",
+        "акваторія", "вогневі позиції", "передові позиції", "полігон", "брк",
+        "передові", "вогневі", "позиції", "лбз", "зона ризику", "флот рф", "рф", "тот"
+    ]
+    for p in prefixes:
+        text = re.sub(r'\b' + re.escape(p) + r'\b', '', text)
+    
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Cluster matching
+    if any(k in text for k in ["чорн", "море", "чф", "півден"]):
+        return "чорне море"
+    if "каспій" in text:
+        return "каспійське море"
+    if "азов" in text:
+        return "азовське море"
+    if "чауд" in text:
+        return "мис чауда"
+    if any(k in text for k in ["ахтарськ", "приморсько"]):
+        return "приморсько-ахтарськ"
+    if "єйськ" in text or "ейск" in text:
+        return "єйськ"
+    if "курськ" in text or "халін" in text:
+        return "курськ"
+    if "бєлгород" in text or "белгород" in text:
+        return "бєлгород"
+    if "брянськ" in text or "сеща" in text:
+        return "брянськ"
+    if "орел" in text or "орел" in text:
+        return "орел"
+    if "саваслейк" in text:
+        return "саваслейка"
+    if "олень" in text or "оленья" in text:
+        return "оленья"
+    if "енгельс" in text:
+        return "енгельс"
+    if "шайковк" in text:
+        return "шайковка"
+    if "моздок" in text:
+        return "моздок"
+    if "мачулищ" in text:
+        return "мачулищі"
+    if any(k in text for k in ["тарханкут", "бельбек", "саки", "гвардійськ", "джанкой", "крим"]):
+        return "крим"
+    if "капустін" in text or "капустин" in text:
+        return "капустін яр"
+    if "кінбурн" in text:
+        return "кінбурнська коса"
+    if "запорізьк" in text or "енергодар" in text or "пологи" in text:
+        return "запорізький напрямок"
+    if "донецьк" in text or "горлівк" in text:
+        return "донецький напрямок"
+    if "херсонськ" in text or "олешк" in text or "каховк" in text:
+        return "херсонський напрямок"
+
+    return text
+
+
+def are_origins_conflicting(origin1: Optional[str], origin2: Optional[str]) -> bool:
+    """
+    Returns True ONLY if both origins are valid, non-empty, and map to genuinely conflicting/disjoint
+    launch locations (e.g. Kursk vs Primorsko-Akhtarsk). Returns False if either is unknown or both match.
+    """
+    norm1 = normalize_launch_origin(origin1)
+    norm2 = normalize_launch_origin(origin2)
+    
+    if not norm1 or not norm2 or norm1 == "unknown" or norm2 == "unknown":
+        return False
+    
+    if norm1 == norm2 or norm1 in norm2 or norm2 in norm1:
+        return False
+    
+    return True
+
+
+def are_vectors_conflicting(vec1: Optional[str], vec2: Optional[str]) -> bool:
+    """
+    Returns True ONLY if attack vectors are distinctly diametric / mutually exclusive
+    (e.g., north_to_south vs south_to_north).
+    """
+    v1 = str(vec1 or "").strip().lower()
+    v2 = str(vec2 or "").strip().lower()
+    
+    if not v1 or not v2 or v1 == "unknown" or v2 == "unknown" or v1 == v2:
+        return False
+    
+    # Compatible combinations (e.g. sea_to_coast with south_to_north)
+    compatible_pairs = [
+        {"sea_to_coast", "south_to_north"},
+        {"sea_to_coast", "southeast_to_northwest"},
+        {"crimea_inland", "south_to_north"},
+        {"crimea_inland", "sea_to_coast"},
+        {"northeast_to_southwest", "north_to_south"},
+        {"southeast_to_northwest", "south_to_north"},
+        {"east_to_west", "northeast_to_southwest"},
+        {"east_to_west", "southeast_to_northwest"},
+    ]
+    pair = {v1, v2}
+    if any(pair == c for c in compatible_pairs):
+        return False
+    
+    # Strictly opposite vectors
+    opposite_pairs = [
+        {"north_to_south", "south_to_north"},
+        {"east_to_west", "west_to_east"},
+        {"northeast_to_southwest", "southwest_to_northeast"},
+        {"northwest_to_southeast", "southeast_to_northwest"},
+    ]
+    if any(pair == o for o in opposite_pairs):
+        return True
+    
+    return False
 
 
 def _extract_group_signature(detail: Optional[str], telemetry: Optional[dict]) -> tuple[Optional[str], set[str], Optional[int]]:
@@ -319,16 +463,18 @@ class ThreatState:
         t_inc = incoming_threat_type.lower()
         same_family = (
             t_exist == t_inc or
-            (t_exist in ["ballistic", "iskander_m", "kn23", "s300_s400"] and t_inc in ["ballistic", "iskander_m", "kn23", "s300_s400"]) or
-            (t_exist in ["cruise_missile", "kalibr", "kh101", "tu95_ms", "tu160"] and t_inc in ["cruise_missile", "kalibr", "kh101", "tu95_ms", "tu160"]) or
+            (t_exist in ["tu22m3", "kh22", "kh32"] and t_inc in ["tu22m3", "kh22", "kh32"]) or
             (t_exist in ["mig31k", "kinzhal"] and t_inc in ["mig31k", "kinzhal"]) or
-            (t_exist in ["shahed", "drone", "recon_uav", "shahed_jet"] and t_inc in ["shahed", "drone", "recon_uav", "shahed_jet"]) or
-            (t_exist in ["kab", "guided_bomb", "tactical_aviation", "su34", "su35"] and t_inc in ["kab", "guided_bomb", "tactical_aviation", "su34", "su35"])
+            (t_exist in ["tu95", "tu95_ms", "tu160", "cruise_missile", "kalibr", "kh101"] and t_inc in ["tu95", "tu95_ms", "tu160", "cruise_missile", "kalibr", "kh101"]) or
+            (t_exist in ["ballistic", "iskander", "iskander_m", "kn23", "s300_s400", "zircon"] and t_inc in ["ballistic", "iskander", "iskander_m", "kn23", "s300_s400", "zircon"]) or
+            (t_exist in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "fpv"] and t_inc in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "fpv"]) or
+            (t_exist in ["kab", "guided_bomb", "tactical_aviation", "su34", "su35", "su57", "su35_su57"] and t_inc in ["kab", "guided_bomb", "tactical_aviation", "su34", "su35", "su57", "su35_su57"]) or
+            (t_exist in ["artillery", "mlrs"] and t_inc in ["artillery", "mlrs"])
         )
         if not same_family:
             return False
 
-        # 1. Normalized group IDs comparison (e.g. '_wave2' vs '_w2')
+        # 1. Normalized group IDs comparison (e.g. '_wave2' vs '_w2', 'tu22m3_south_sea_1' vs 'tu22m3_black_sea_1')
         norm_incoming_gid = normalize_group_id(incoming_group_id)
         norm_existing_gid = normalize_group_id(existing.group_id)
 
@@ -353,37 +499,42 @@ class ThreatState:
         if existing_grp and incoming_grp and existing_grp.startswith("group_") and incoming_grp.startswith("group_") and existing_grp != incoming_grp:
             return False
 
-        # 3. Telemetry deep comparison across all threat types
+        # 3. Special handling for Strategic & Long-Range Aviation (Tu-22M3, MiG-31K, Tu-95MS, Tu-160)
+        # Multiple channels reporting the same bomber or missile launch in the same region must merge unless explicitly numbered as distinct waves
+        if t_exist in ["tu22m3", "kh22", "kh32", "mig31k", "kinzhal", "tu95", "tu95_ms", "tu160"]:
+            return True
+
+        # 4. Telemetry deep comparison across all threat types
         t_exist_tel = existing.telemetry or {}
         t_inc_tel = incoming_telemetry or {}
 
-        origin_exist = str(t_exist_tel.get("launch_origin") or "").strip().lower()
-        origin_inc = str(t_inc_tel.get("launch_origin") or "").strip().lower()
+        origin_exist = str(t_exist_tel.get("launch_origin") or "").strip()
+        origin_inc = str(t_inc_tel.get("launch_origin") or "").strip()
         
-        vec_exist = str(t_exist_tel.get("attack_vector") or "").strip().lower()
-        vec_inc = str(t_inc_tel.get("attack_vector") or "").strip().lower()
+        vec_exist = str(t_exist_tel.get("attack_vector") or "").strip()
+        vec_inc = str(t_inc_tel.get("attack_vector") or "").strip()
 
         count_exist = t_exist_tel.get("target_count")
         count_inc = t_inc_tel.get("target_count")
 
-        # Check if origins conflict (e.g. "Курськ" vs "Приморсько-Ахтарськ" or "Брянськ" vs "Чорне море")
-        if origin_exist and origin_inc and origin_exist != "unknown" and origin_inc != "unknown":
-            if origin_exist != origin_inc:
-                return False
+        # Check if origins genuinely conflict (e.g. "Курськ" vs "Приморсько-Ахтарськ")
+        if are_origins_conflicting(origin_exist, origin_inc):
+            return False
 
-        # Check if vectors conflict (e.g. "sea_to_coast" vs "northeast_to_southwest")
-        if vec_exist and vec_inc and vec_exist != "unknown" and vec_inc != "unknown":
-            if vec_exist != vec_inc:
-                return False
+        # Check if vectors genuinely conflict (e.g. "north_to_south" vs "south_to_north")
+        if are_vectors_conflicting(vec_exist, vec_inc):
+            return False
 
-        # 4. Tactical target cities within the region
+        # 5. Tactical target cities within the region
         if existing_targets and incoming_targets:
             if existing_targets.isdisjoint(incoming_targets):
                 return False
 
-        # 5. Telemetry signature match: update existing threat even if different channel used "Нова група"
-        has_origin_match = bool(origin_exist and origin_inc and origin_exist == origin_inc)
-        has_vector_match = bool(vec_exist and vec_inc and vec_exist == vec_inc)
+        # 6. Telemetry signature match: update existing threat even if different channel used "Нова група"
+        norm_orig_exist = normalize_launch_origin(origin_exist)
+        norm_orig_inc = normalize_launch_origin(origin_inc)
+        has_origin_match = bool(norm_orig_exist and norm_orig_inc and norm_orig_exist == norm_orig_inc)
+        has_vector_match = bool(vec_exist and vec_inc and (vec_exist == vec_inc or not are_vectors_conflicting(vec_exist, vec_inc)))
         has_targets_match = bool(existing_targets and incoming_targets and not existing_targets.isdisjoint(incoming_targets))
         has_count_match = bool(count_exist is not None and count_inc is not None and count_exist == count_inc)
         has_wave_match = bool(existing_wave is not None and incoming_wave is not None and existing_wave == incoming_wave)
@@ -398,14 +549,14 @@ class ThreatState:
         if incoming_grp == "new_group":
             return False
 
-        # 6. Time window check for generic/unspecified updates
+        # 7. Time window check for generic/unspecified updates
         ref_time = _parse_iso_time(existing.last_updated_at or existing.since)
         if ref_time:
             now = datetime.now(timezone.utc)
             elapsed = (now - ref_time).total_seconds()
             
             # Dynamic dedup window based on threat type speed/flight time
-            max_window = 1800 if t_exist in ["shahed", "drone", "recon_uav"] else 900
+            max_window = 1800 if t_exist in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "fpv"] else 900
             if elapsed <= max_window:
                 if not (existing_targets and incoming_targets and existing_targets.isdisjoint(incoming_targets)):
                     return True
