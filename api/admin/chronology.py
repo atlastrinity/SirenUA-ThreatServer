@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 def _apply_prediction_accuracy_filter(query: str, prediction_accuracy: str) -> str:
-    """Appends a SQL WHERE clause for prediction_accuracy filter."""
+    """Appends a SQL WHERE clause for prediction_accuracy filter matching dashboard symmetry."""
     if prediction_accuracy == "match":
         return query + " AND pe.prediction_accuracy = 'confirmed'"
     elif prediction_accuracy == "mismatch":
@@ -23,9 +23,9 @@ def _apply_prediction_accuracy_filter(query: str, prediction_accuracy: str) -> s
     elif prediction_accuracy == "mitigated":
         return query + " AND pe.prediction_accuracy = 'mitigated'"
     elif prediction_accuracy == "active":
-        return query + " AND (pe.lifecycle_status = 'active' OR (th.threat_type = 'official_alarm' AND tc.id IS NULL))"
+        return query + " AND (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND pe.lifecycle_status = 'active'"
     elif prediction_accuracy == "cleared":
-        return query + " AND (pe.lifecycle_status = 'cleared' OR (th.threat_type = 'official_alarm' AND tc.id IS NOT NULL))"
+        return query + " AND (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND (pe.lifecycle_status != 'active' OR pe.lifecycle_status IS NULL)"
     return query
 
 
@@ -84,8 +84,8 @@ async def get_admin_chronology(
         daily_agg_query = f'''
             SELECT date(datetime(pe.created_at, {tz_modifier})) as day,
                    COUNT(*) as total_events,
-                   SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
-                   SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
+                   SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND (pe.lifecycle_status != 'active' OR pe.lifecycle_status IS NULL) THEN 1 ELSE 0 END) as cleared,
+                   SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
                    SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,
@@ -396,7 +396,8 @@ async def get_admin_chronology_v2(
         daily_agg_query = f"""
             SELECT date(datetime(pe.created_at, {tz_modifier})) as day,
                    COUNT(*) as total_events,
-                   SUM(CASE WHEN pe.lifecycle_status = 'cleared' THEN 1 ELSE 0 END) as cleared,
+                   SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND (pe.lifecycle_status != 'active' OR pe.lifecycle_status IS NULL) THEN 1 ELSE 0 END) as cleared,
+                   SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND pe.lifecycle_status = 'active' THEN 1 ELSE 0 END) as active,
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END) as overestimated,
                    SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END) as mitigated,

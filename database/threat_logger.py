@@ -5,6 +5,7 @@ Functions: log_threat_to_db, log_threat_to_firestore, flush_history_batch, valid
 
 import json
 import time
+import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -66,130 +67,139 @@ def log_threat_to_db(
     event_timestamp: Optional[str] = None,
 ):
     """Log threat event and its telemetry to SQLite. Returns the threat_event_id."""
-    conn = None
-    try:
-        conn = get_sqlite_connection(core.config.DB_PATH)
-        cursor = conn.cursor()
+    for attempt in range(5):
+        conn = None
+        try:
+            conn = get_sqlite_connection(core.config.DB_PATH)
+            cursor = conn.cursor()
 
-        # Strict deduplication check against the latest record for (region, threat_type)
-        cursor.execute("""
-            SELECT id, threat_level, timestamp FROM threat_history 
-            WHERE region = ? AND threat_type = ? AND (is_test = ? OR is_test IS NULL)
-            ORDER BY id DESC LIMIT 1
-        """, (region, threat_type, 1 if is_test else 0))
-        last_rec = cursor.fetchone()
-        if last_rec:
-            last_id, last_level, last_ts = last_rec[0], last_rec[1], last_rec[2]
-            # 1. For official_alarm: never write consecutive identical level (high->high or none->none)
-            if threat_type == "official_alarm" and last_level == level:
-                return None
-
-            # 2. Never write consecutive 'none' records for any threat type
-            if level == "none" and last_level == "none":
-                return None
-
-            # 3. For identical non-test threat levels within 15 seconds: ignore redundant log
-            if last_level == level and not is_test:
-                cursor.execute("""
-                    SELECT id FROM threat_history 
-                    WHERE id = ? AND timestamp >= datetime('now', '-15 seconds')
-                """, (last_id,))
-                if cursor.fetchone():
+            # Strict deduplication check against the latest record for (region, threat_type)
+            cursor.execute("""
+                SELECT id, threat_level, timestamp FROM threat_history 
+                WHERE region = ? AND threat_type = ? AND (is_test = ? OR is_test IS NULL)
+                ORDER BY id DESC LIMIT 1
+            """, (region, threat_type, 1 if is_test else 0))
+            last_rec = cursor.fetchone()
+            if last_rec:
+                last_id, last_level, last_ts = last_rec[0], last_rec[1], last_rec[2]
+                # 1. For official_alarm: never write consecutive identical level (high->high or none->none)
+                if threat_type == "official_alarm" and last_level == level:
                     return None
 
-        norm_ts = _normalize_timestamp_for_db(event_timestamp)
-        if norm_ts:
-            cursor.execute(
-                "INSERT INTO threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (norm_ts, region, level, threat_type, detail, confidence, 1 if is_test else 0)
-            )
-        else:
-            cursor.execute(
-                "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
-                (region, level, threat_type, detail, confidence, 1 if is_test else 0)
-            )
-        event_id = cursor.lastrowid
+                # 2. Never write consecutive 'none' records for any threat type
+                if level == "none" and last_level == "none":
+                    return None
 
-        telemetry_id = None
-        group_id = None
+                # 3. For identical non-test threat levels within 15 seconds: ignore redundant log
+                if last_level == level and not is_test:
+                    cursor.execute("""
+                        SELECT id FROM threat_history 
+                        WHERE id = ? AND timestamp >= datetime('now', '-15 seconds')
+                    """, (last_id,))
+                    if cursor.fetchone():
+                        return None
 
-        if telemetry and isinstance(telemetry, dict) and event_id:
-            group_id = telemetry.get("group_id")
-            tags_json = json.dumps(telemetry.get("message_context_tags", []), ensure_ascii=False)
-            cursor.execute('''
-                INSERT INTO telemetry_data (
-                    threat_event_id, group_id, attack_vector, target_count, speed_kmh,
-                    altitude_category, heading_degrees, distance_to_target_km,
-                    launch_origin, weapon_subtype, engagement_status,
-                    air_defense_active, multiple_waves, wave_number,
-                    time_of_day_category, weather_factor, source_reliability,
-                    message_context_tags, strategic_priority, civilian_risk_level,
-                    event_phase, correlation_group, target_cities_coords
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                event_id,
-                group_id,
-                telemetry.get("attack_vector", "unknown"),
-                telemetry.get("target_count"),
-                telemetry.get("speed_kmh"),
-                telemetry.get("altitude_category", "unknown"),
-                telemetry.get("heading_degrees"),
-                telemetry.get("distance_to_target_km"),
-                telemetry.get("launch_origin"),
-                telemetry.get("weapon_subtype"),
-                telemetry.get("engagement_status", "unknown"),
-                1 if telemetry.get("air_defense_active") else 0,
-                1 if telemetry.get("multiple_waves") else 0,
-                telemetry.get("wave_number", 1),
-                telemetry.get("time_of_day_category", "unknown"),
-                telemetry.get("weather_factor", "unknown"),
-                telemetry.get("source_reliability", "medium"),
-                tags_json,
-                telemetry.get("strategic_priority"),
-                telemetry.get("civilian_risk_level", "moderate"),
-                telemetry.get("event_phase", "unknown"),
-                telemetry.get("correlation_group"),
-                json.dumps(telemetry.get("target_cities_coords", {}), ensure_ascii=False) if telemetry.get("target_cities_coords") else None
-            ))
-            telemetry_id = cursor.lastrowid
-
-        if level != "none" and event_id and threat_type != "official_alarm":
-            rules_applied_json = json.dumps(rules_applied) if rules_applied else None
+            norm_ts = _normalize_timestamp_for_db(event_timestamp)
             if norm_ts:
-                cursor.execute('''
-                    INSERT INTO paired_events (
-                        created_at, region, threat_event_id, telemetry_id, lifecycle_status,
-                        threat_level, threat_type, confidence_at_set, was_predictive,
-                        gemini_group_id, rules_applied
-                    ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
-                ''', (
-                    norm_ts, region, event_id, telemetry_id, level, threat_type,
-                    confidence, 1 if is_predictive else 0, group_id, rules_applied_json
-                ))
+                cursor.execute(
+                    "INSERT INTO threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (norm_ts, region, level, threat_type, detail, confidence, 1 if is_test else 0)
+                )
             else:
-                cursor.execute('''
-                    INSERT INTO paired_events (
-                        region, threat_event_id, telemetry_id, lifecycle_status,
-                        threat_level, threat_type, confidence_at_set, was_predictive,
-                        gemini_group_id, rules_applied
-                    ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
-                ''', (
-                    region, event_id, telemetry_id, level, threat_type,
-                    confidence, 1 if is_predictive else 0, group_id, rules_applied_json
-                ))
+                cursor.execute(
+                    "INSERT INTO threat_history (region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?)",
+                    (region, level, threat_type, detail, confidence, 1 if is_test else 0)
+                )
+            event_id = cursor.lastrowid
 
-        conn.commit()
-        return event_id
-    except Exception as e:
-        print(f"⚠️ Помилка запису в БД аналітики: {e}")
-        log_error_to_db("server", str(e), endpoint="log_threat_to_db", context=f"region={region}, level={level}")
-        return None
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
+            telemetry_id = None
+            group_id = None
+
+            if telemetry and isinstance(telemetry, dict) and event_id:
+                group_id = telemetry.get("group_id")
+                tags_json = json.dumps(telemetry.get("message_context_tags", []), ensure_ascii=False)
+                cursor.execute('''
+                    INSERT INTO telemetry_data (
+                        threat_event_id, group_id, attack_vector, target_count, speed_kmh,
+                        altitude_category, heading_degrees, distance_to_target_km,
+                        launch_origin, weapon_subtype, engagement_status,
+                        air_defense_active, multiple_waves, wave_number,
+                        time_of_day_category, weather_factor, source_reliability,
+                        message_context_tags, strategic_priority, civilian_risk_level,
+                        event_phase, correlation_group, target_cities_coords
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    event_id,
+                    group_id,
+                    telemetry.get("attack_vector", "unknown"),
+                    telemetry.get("target_count"),
+                    telemetry.get("speed_kmh"),
+                    telemetry.get("altitude_category", "unknown"),
+                    telemetry.get("heading_degrees"),
+                    telemetry.get("distance_to_target_km"),
+                    telemetry.get("launch_origin"),
+                    telemetry.get("weapon_subtype"),
+                    telemetry.get("engagement_status", "unknown"),
+                    1 if telemetry.get("air_defense_active") else 0,
+                    1 if telemetry.get("multiple_waves") else 0,
+                    telemetry.get("wave_number", 1),
+                    telemetry.get("time_of_day_category", "unknown"),
+                    telemetry.get("weather_factor", "unknown"),
+                    telemetry.get("source_reliability", "medium"),
+                    tags_json,
+                    telemetry.get("strategic_priority"),
+                    telemetry.get("civilian_risk_level", "moderate"),
+                    telemetry.get("event_phase", "unknown"),
+                    telemetry.get("correlation_group"),
+                    json.dumps(telemetry.get("target_cities_coords", {}), ensure_ascii=False) if telemetry.get("target_cities_coords") else None
+                ))
+                telemetry_id = cursor.lastrowid
+
+            if level != "none" and event_id and threat_type != "official_alarm":
+                rules_applied_json = json.dumps(rules_applied) if rules_applied else None
+                if norm_ts:
+                    cursor.execute('''
+                        INSERT INTO paired_events (
+                            created_at, region, threat_event_id, telemetry_id, lifecycle_status,
+                            threat_level, threat_type, confidence_at_set, was_predictive,
+                            gemini_group_id, rules_applied
+                        ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        norm_ts, region, event_id, telemetry_id, level, threat_type,
+                        confidence, 1 if is_predictive else 0, group_id, rules_applied_json
+                    ))
+                else:
+                    cursor.execute('''
+                        INSERT INTO paired_events (
+                            region, threat_event_id, telemetry_id, lifecycle_status,
+                            threat_level, threat_type, confidence_at_set, was_predictive,
+                            gemini_group_id, rules_applied
+                        ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        region, event_id, telemetry_id, level, threat_type,
+                        confidence, 1 if is_predictive else 0, group_id, rules_applied_json
+                    ))
+
+            conn.commit()
+            return event_id
+        except sqlite3.OperationalError as oe:
+            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            print(f"⚠️ Помилка запису в БД аналітики (OperationalError): {oe}")
+            log_error_to_db("server", str(oe), endpoint="log_threat_to_db", context=f"region={region}, level={level}")
+            return None
+        except Exception as e:
+            print(f"⚠️ Помилка запису в БД аналітики: {e}")
+            log_error_to_db("server", str(e), endpoint="log_threat_to_db", context=f"region={region}, level={level}")
+            return None
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    return None
 
 
 def log_threat_to_firestore(

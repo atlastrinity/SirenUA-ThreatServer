@@ -9,9 +9,10 @@ def get_sqlite_connection(db_path: str = None) -> sqlite3.Connection:
     """Отримує SQLite з'єднання з PRAGMA wal та busy_timeout."""
     if db_path is None:
         db_path = os.environ.get("DB_PATH") or core.config.DB_PATH or "threat_analytics.db"
-    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn = sqlite3.connect(db_path, timeout=60.0)
     conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA busy_timeout = 60000")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -50,23 +51,32 @@ def delete_test_history_from_sqlite():
 
 
 def execute_write(query: str, params: tuple = ()) -> bool:
-    """Виконує запис у базу даних SQLite з обробкою винятків та відкотом (rollback)."""
-    conn = None
-    try:
-        conn = get_sqlite_connection(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"⚠️ [SQL Write Error] {e}")
-        return False
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
+    """Виконує запис у базу даних SQLite з обробкою винятків, retry при lock та відкотом (rollback)."""
+    import time
+    for attempt in range(5):
+        conn = None
+        try:
+            conn = get_sqlite_connection(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            conn.commit()
+            return True
+        except sqlite3.OperationalError as oe:
+            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            print(f"⚠️ [SQL Write OperationalError] {oe}")
+            return False
+        except Exception as e:
+            print(f"⚠️ [SQL Write Error] {e}")
+            return False
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    return False
 
 
 def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds: int = 20) -> bool:
@@ -108,25 +118,38 @@ def is_duplicate_event(region: str, level: str, threat_type: str, window_seconds
 
 
 def execute_query_as_dicts(query: str, params: tuple = (), json_fields: list = None) -> List[Dict[str, Any]]:
-    """Допоміжна функція для виконання SQL-запитів і повернення результату у вигляді списку словників."""
+    """Допоміжна функція для виконання SQL-запитів і повернення результату у вигляді списку словників з retry."""
     import json
-    conn = get_sqlite_connection(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    try:
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        result = []
-        for row in rows:
-            row_dict = dict(row)
-            if json_fields:
-                for jf in json_fields:
-                    if jf in row_dict and isinstance(row_dict[jf], str) and row_dict[jf]:
-                        try:
-                            row_dict[jf] = json.loads(row_dict[jf])
-                        except Exception:
-                            pass
-            result.append(row_dict)
-        return result
-    finally:
-        conn.close()
+    import time
+    for attempt in range(5):
+        conn = None
+        try:
+            conn = get_sqlite_connection(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                row_dict = dict(row)
+                if json_fields:
+                    for jf in json_fields:
+                        if jf in row_dict and isinstance(row_dict[jf], str) and row_dict[jf]:
+                            try:
+                                row_dict[jf] = json.loads(row_dict[jf])
+                            except Exception:
+                                pass
+                result.append(row_dict)
+            return result
+        except sqlite3.OperationalError as oe:
+            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            raise oe
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    return []
