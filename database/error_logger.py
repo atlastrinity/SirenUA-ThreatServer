@@ -64,6 +64,10 @@ def log_error_to_db(
 
     error_msg = str(message)
 
+    # Ігноруємо внутрішній фоновий шум розриву з'єднання Telethon (автоматично відновлюється через Watchdog)
+    if "object has no attribute 'disconnect'" in error_msg or "object has no attribute 'recv'" in error_msg:
+        return
+
     # Prevent identical error floods within 30 seconds
     now = time.time()
     norm_msg = " ".join(error_msg.split())[:120].lower()
