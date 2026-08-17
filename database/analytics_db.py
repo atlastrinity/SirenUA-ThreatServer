@@ -478,8 +478,8 @@ def log_threat_to_db(region: str, level: str, threat_type: str, detail: str = No
             conn.commit()
             return event_id
         except sqlite3.OperationalError as oe:
-            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
-                time.sleep(0.05 * (attempt + 1))
+            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 7:
+                time.sleep(0.05 * (2 ** attempt))
                 continue
             print(f"⚠️ Помилка запису в БД аналітики (OperationalError): {oe}")
             log_error_to_db("server", str(oe), endpoint="log_threat_to_db", context=f"region={region}, level={level}")

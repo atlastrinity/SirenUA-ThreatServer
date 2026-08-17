@@ -89,9 +89,8 @@ def local_sqlite_backup(db_path: str = None) -> bool:
         from datetime import datetime, timezone
         os.makedirs(backup_dir, exist_ok=True)
         src_conn = get_sqlite_connection(target_path)
-        dst_conn = sqlite3.connect(backup_path)
-        with dst_conn:
-            src_conn.backup(dst_conn)
+        dst_conn = sqlite3.connect(backup_path, timeout=30.0)
+        src_conn.backup(dst_conn, pages=100, sleep=0.01)
         dst_conn.close()
         src_conn.close()
 
