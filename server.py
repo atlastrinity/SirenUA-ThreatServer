@@ -230,9 +230,24 @@ async def periodic_sqlite_backup():
 async def lifespan(app: FastAPI):
     """Lifecycle manager — запуск/зупинка Telegram моніторингу."""
     global aerial_alerts_task
+    import sys
     import database.analytics_db
     database.analytics_db.main_loop = asyncio.get_running_loop()
     
+    # Автоматичне блокування режиму сну macOS під час роботи сервера (24/7 Live Protection)
+    caffeinate_proc = None
+    if sys.platform == "darwin":
+        try:
+            import subprocess
+            caffeinate_proc = subprocess.Popen(
+                ["caffeinate", "-dimsu"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            logger.info("☕ [Caffeinate] Активовано системний захист від сну macOS (Sleep Prevention Active).")
+        except Exception as e:
+            logger.warning(f"Не вдалося активувати caffeinate: {e}")
+
     # Підключення автоматичного збору всіх помилок та логів у таблицю error_log
     try:
         from database.error_logger import attach_database_logging_handler
@@ -353,6 +368,12 @@ async def lifespan(app: FastAPI):
         logger.info("💾 [Lifespan Shutdown] Фінальний бекап SQLite успішно створено.")
     except Exception as e:
         logger.error(f"⚠️ [Lifespan Shutdown] Помилка створення фінального бекапу: {e}")
+
+    if caffeinate_proc:
+        try:
+            caffeinate_proc.terminate()
+        except Exception:
+            pass
 
 app = FastAPI(
     title="SirenUA Threat Monitor",
