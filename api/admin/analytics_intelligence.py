@@ -616,8 +616,10 @@ async def get_daily_summary(days: int = 30):
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive,
                    AVG(pe.confidence_at_set) as avg_confidence
             FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE pe.created_at >= datetime('now', '-{days} days')
               AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY day
             ORDER BY day
         """
@@ -877,7 +879,9 @@ async def get_air_defense_attrition(days: int = 30):
                 SUM(CASE WHEN tc.resolution_type = 'out_of_airspace' THEN 1 ELSE 0 END) as transit_count,
                 SUM(CASE WHEN tc.resolution_type = 'unknown' THEN 1 ELSE 0 END) as unknown_count
             FROM threat_clearings tc
+            LEFT JOIN threat_history th ON tc.original_threat_event_id = th.id
             WHERE tc.timestamp >= datetime('now', ?)
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY tc.region
             HAVING total_cleared >= 1
             ORDER BY intercepted_count DESC

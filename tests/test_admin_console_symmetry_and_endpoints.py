@@ -111,6 +111,51 @@ class TestAdminConsoleCrossTabSymmetry:
             f"Overestimated mismatch: Dash={dash_overestimated}, Chr1={chr1_overestimated}, Chr2={chr2_overestimated}"
         )
 
+    def test_complete_sum_equality_invariant(self):
+        """Перевіряє, що у всіх вкладках сума 5 взаємовиключних категорій точно дорівнює загальній кількості."""
+        dash = client.get("/api/admin/dashboard/stats").json()
+        chr_v1 = client.get("/api/admin/chronology?days=7").json()
+        chr_v2 = client.get("/api/admin/chronology/v2?days=7").json()
+
+        # 1. Dashboard: confirmed + mitigated + overestimated + active + cleared == total_events_7d
+        dash_acc = dash["accuracy"]
+        dash_sum = (
+            (dash_acc["confirmed"] or 0)
+            + (dash_acc["mitigated"] or 0)
+            + (dash_acc["overestimated"] or 0)
+            + (dash_acc["active"] or 0)
+            + (dash_acc["cleared"] or 0)
+        )
+        assert dash_sum == dash["total_events_7d"] == dash_acc["total"], (
+            f"Dashboard sum ({dash_sum}) != total_events_7d ({dash['total_events_7d']})"
+        )
+
+        # 2. Chronology v1 stats: confirmed + mitigated + overestimated + active + cleared == period_total
+        chr1_stats = chr_v1["stats"]
+        chr1_sum = (
+            (chr1_stats["confirmed"] or 0)
+            + (chr1_stats["mitigated"] or 0)
+            + (chr1_stats["overestimated"] or 0)
+            + (chr1_stats["active"] or 0)
+            + (chr1_stats["cleared"] or 0)
+        )
+        assert chr1_sum == chr_v1["period_total"] == dash["total_events_7d"], (
+            f"Chr v1 sum ({chr1_sum}) != period_total ({chr_v1['period_total']})"
+        )
+
+        # 3. Correlation v2 stats: confirmed + mitigated + overestimated + active + cleared == period_total
+        chr2_stats = chr_v2["stats"]
+        chr2_sum = (
+            (chr2_stats["confirmed"] or 0)
+            + (chr2_stats["mitigated"] or 0)
+            + (chr2_stats["overestimated"] or 0)
+            + (chr2_stats["active"] or 0)
+            + (chr2_stats["cleared"] or 0)
+        )
+        assert chr2_sum == chr_v2["period_total"] == dash["total_events_7d"], (
+            f"Chr v2 sum ({chr2_sum}) != period_total ({chr_v2['period_total']})"
+        )
+
 
 class TestAdminConsoleFilteringSymmetry:
     """Перевірка симетрії фільтрації за часом, регіонами, типами загроз та точністю."""
