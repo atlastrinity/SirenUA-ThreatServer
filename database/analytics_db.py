@@ -1170,19 +1170,25 @@ def reconcile_active_threats_with_db(manager):
                 c_cur = c_conn.cursor()
                 c_cur.execute("""
                     SELECT id FROM paired_events 
-                    WHERE region = ? AND gemini_group_id = ? AND lifecycle_status = 'active'
-                """, (region, t_gid))
+                    WHERE region = ? AND (gemini_group_id = ? OR threat_type = ?) AND lifecycle_status = 'active'
+                """, (region, t_gid, t.threat_type))
                 existing = c_cur.fetchone()
                 c_conn.close()
                 
                 if not existing:
+                    t_telem = getattr(t, "telemetry", None)
+                    if t_telem is None:
+                        t_telem = {"group_id": t_gid}
+                    elif isinstance(t_telem, dict) and not t_telem.get("group_id"):
+                        t_telem["group_id"] = t_gid
+
                     log_threat_to_db(
                         region=region,
                         level=t.level,
                         threat_type=t.threat_type,
                         detail=t.detail,
                         confidence=t.confidence,
-                        telemetry=getattr(t, "telemetry", None),
+                        telemetry=t_telem,
                         is_predictive=getattr(t, "is_predictive", False),
                         event_timestamp=t.since
                     )
