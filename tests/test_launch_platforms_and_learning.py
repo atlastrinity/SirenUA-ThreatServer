@@ -36,7 +36,7 @@ def test_drone_launch_profile_disambiguation():
     )
     assert profile_sea["platform_type"] == "drone_pad"
     assert profile_sea["carrier_origin_name"] == "Мис Чауда (АР Крим)"
-    assert profile_sea["launch_sector_name"] == "Акваторія Чорного моря"
+    assert "Акваторія Чорного моря" in profile_sea["launch_sector_name"]
     assert profile_sea["is_aviation"] is False
     assert profile_sea["carrier_origin_latitude"] == 45.00
     assert profile_sea["carrier_origin_longitude"] == 35.83

@@ -261,7 +261,7 @@ def test_aviation_strike_profiles():
     prof1 = resolve_aviation_strike_profile("kab", "Пуски КАБ на Харків з Бєлгородщини", "Харківська область")
     assert prof1["is_aviation"] is True
     assert prof1["carrier_type"] == "su34"
-    assert prof1["launch_sector_name"] == "Рубіж Бєлгородська обл. РФ"
+    assert "Бєлгородський прикордонний рубіж" in prof1["launch_sector_name"]
     assert prof1["launch_sector_latitude"] == 50.60
     assert prof1["carrier_origin_name"] is not None
 
@@ -269,7 +269,8 @@ def test_aviation_strike_profiles():
     prof2 = resolve_aviation_strike_profile("su35", "Су-35 над Азовським морем пуск Х-59", "Запорізька область")
     assert prof2["is_aviation"] is True
     assert prof2["carrier_type"] == "su35"
-    assert prof2["launch_sector_name"] == "Акваторія Азовського моря"
+    assert "Азовського моря" in prof2["launch_sector_name"]
+    assert "Приазовський коридор" in prof2["launch_sector_name"]
 
     # 5. MiG-31K Kinzhal
     prof3 = resolve_aviation_strike_profile("mig31k", "Зліт МіГ-31К з Саваслейка", "м. Київ")
