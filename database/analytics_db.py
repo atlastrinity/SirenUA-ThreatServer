@@ -1002,7 +1002,9 @@ async def sync_threat_state_to_db(region: str, state, telemetry: dict = None, ru
             "confidence": t.confidence,
             "is_predictive": getattr(t, "is_predictive", False),
             "is_test": t.is_test,
-            "since": t.since
+            "since": t.since,
+            "telemetry": getattr(t, "telemetry", None) or telemetry,
+            "group_id": getattr(t, "group_id", None)
         }
         for t in state.active_threats
         if t.threat_type and t.threat_type != THREAT_OFFICIAL_ALARM
@@ -1012,6 +1014,7 @@ async def sync_threat_state_to_db(region: str, state, telemetry: dict = None, ru
     added_ids = set(curr_active_threats.keys()) - set(prev_active_threats.keys())
     for tid in added_ids:
         t_data = curr_active_threats[tid]
+        t_telemetry = t_data.get("telemetry") or telemetry
         safe_run_task(asyncio.to_thread(
             log_threat_to_db,
             region=region,
@@ -1019,7 +1022,7 @@ async def sync_threat_state_to_db(region: str, state, telemetry: dict = None, ru
             threat_type=t_data["threat_type"],
             detail=t_data["detail"],
             confidence=t_data["confidence"],
-            telemetry=telemetry,
+            telemetry=t_telemetry,
             rules_applied=rules_applied,
             is_predictive=t_data["is_predictive"],
             event_timestamp=t_data.get("since")
@@ -1032,10 +1035,11 @@ async def sync_threat_state_to_db(region: str, state, telemetry: dict = None, ru
             threat_type=t_data["threat_type"],
             detail=t_data["detail"],
             confidence=t_data["confidence"],
-            telemetry=telemetry,
+            telemetry=t_telemetry,
             is_test=t_data["is_test"],
             timestamp=t_data.get("since")
         ))
+
             
     # Detect cleared threats
     cleared_ids = set(prev_active_threats.keys()) - set(curr_active_threats.keys())

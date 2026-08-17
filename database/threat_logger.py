@@ -115,8 +115,13 @@ def log_threat_to_db(
             telemetry_id = None
             group_id = None
 
-            if telemetry and isinstance(telemetry, dict) and event_id:
+            if telemetry and isinstance(telemetry, dict):
                 group_id = telemetry.get("group_id")
+
+            if not group_id and is_predictive:
+                group_id = f"pred_{region}_{threat_type}"
+
+            if telemetry and isinstance(telemetry, dict) and event_id:
                 tags_json = json.dumps(telemetry.get("message_context_tags", []), ensure_ascii=False)
                 cursor.execute('''
                     INSERT INTO telemetry_data (
