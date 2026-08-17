@@ -1339,6 +1339,7 @@ class TelegramThreatMonitor:
 
     def _get_latest_telemetry(self, region: str) -> dict:
         """Get the latest telemetry data for a region from the DB."""
+        conn = None
         try:
             from database.connection import get_sqlite_connection
             import sqlite3
@@ -1352,7 +1353,6 @@ class TelegramThreatMonitor:
                 ORDER BY th.timestamp DESC LIMIT 1
             ''', (region,))
             row = cursor.fetchone()
-            conn.close()
             if row:
                 res = dict(row)
                 if res.get("target_cities_coords"):
@@ -1364,10 +1364,17 @@ class TelegramThreatMonitor:
                 return res
         except Exception:
             pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         return {}
 
     def _get_learned_eta_math(self, source: str, target: str, threat_type: str) -> Optional[int]:
         """Fetch empirical flight duration in seconds from learned gemini_rules (eta_math)."""
+        conn = None
         try:
             from database.connection import get_sqlite_connection
             import json
@@ -1381,7 +1388,6 @@ class TelegramThreatMonitor:
                 ORDER BY (accuracy_score * evidence_count) DESC LIMIT 1
             ''', (source, target, threat_type))
             row = cursor.fetchone()
-            conn.close()
             if row and row[0]:
                 data = json.loads(row[0])
                 avg_min = data.get("avg_eta_minutes")
@@ -1389,19 +1395,26 @@ class TelegramThreatMonitor:
                     return int(avg_min * 60)
         except Exception:
             pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         return None
 
     def _get_historical_route_score(self, source: str, target: str) -> float:
         """Check DB for historical threat progression from source → target region, combining gemini_rules and threat_clearings."""
+        conn = None
         try:
             from database.connection import get_sqlite_connection
             conn = get_sqlite_connection()
             cursor = conn.cursor()
 
-            # 1. Primary check: learned empirical route_pattern rules
+            # 1. Primary check: learned empirical route_pattern, launch_site_pattern, aviation_strike_pattern rules
             cursor.execute('''
                 SELECT accuracy_score, evidence_count FROM gemini_rules
-                WHERE rule_type = 'route_pattern'
+                WHERE rule_type IN ('route_pattern', 'launch_site_pattern', 'aviation_strike_pattern')
                   AND source_region = ? AND target_region = ?
                   AND is_active = 1 AND accuracy_score >= 0.55
                 ORDER BY (accuracy_score * evidence_count) DESC LIMIT 1
@@ -1409,7 +1422,6 @@ class TelegramThreatMonitor:
             rule_row = cursor.fetchone()
             if rule_row:
                 acc = rule_row[0] or 0.6
-                conn.close()
                 return min(0.35, max(0.15, round(acc * 0.35, 2)))
 
             # 2. Secondary check: historical threat_clearings confirmations
@@ -1423,8 +1435,8 @@ class TelegramThreatMonitor:
                 AND prediction_accuracy_hint = 'confirmed'
                 AND timestamp >= datetime('now', '-30 days')
             ''', (target, source))
-            count = cursor.fetchone()[0]
-            conn.close()
+            row = cursor.fetchone()
+            count = row[0] if row else 0
             # Score: 0 events=0, 1-2=0.05, 3-5=0.1, 6+=0.15
             if count >= 6:
                 return 0.15
@@ -1434,6 +1446,12 @@ class TelegramThreatMonitor:
                 return 0.05
         except Exception:
             pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         return 0.0
 
 

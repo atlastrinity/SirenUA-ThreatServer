@@ -149,3 +149,20 @@ async def trigger_admin_post_mortem(hours: int = 4):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/admin/rules/relearn")
+async def trigger_admin_relearn():
+    """Викликати центральний цикл автонавчання правил Gemini (Rules Learner)."""
+    try:
+        from analyzer.rules.learner import GeminiRulesLearner
+        learner = GeminiRulesLearner()
+        total_learned = learner.run_rules_learner()
+        return {
+            "status": "success",
+            "total_learned": total_learned,
+            "message": f"Автонавчання завершено: {total_learned} активних правил."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

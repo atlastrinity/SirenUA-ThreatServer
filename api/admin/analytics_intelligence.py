@@ -242,7 +242,7 @@ async def get_trajectory_heatmap(days: int = 30):
         rules_query = """
             SELECT source_region, target_region, threat_type, evidence_count, accuracy_score
             FROM gemini_rules
-            WHERE is_active = 1 AND rule_type = 'route_pattern'
+            WHERE is_active = 1 AND rule_type IN ('route_pattern', 'aviation_strike_pattern', 'launch_site_pattern')
             ORDER BY evidence_count DESC
         """
         rules = execute_query_as_dicts(rules_query)
@@ -336,7 +336,7 @@ async def get_launch_origins(days: int = 30):
         rules_query = """
             SELECT source_region as name, threat_type, evidence_count as total_launches, rule_type
             FROM gemini_rules
-            WHERE is_active = 1 AND rule_type IN ('launch_site_pattern', 'route_pattern')
+            WHERE is_active = 1 AND rule_type IN ('launch_site_pattern', 'aviation_strike_pattern', 'route_pattern')
               AND source_region NOT IN (SELECT DISTINCT region FROM threat_history)
             ORDER BY evidence_count DESC
         """
@@ -525,7 +525,7 @@ async def get_flight_corridors(days: int = 30):
             SELECT source_region, target_region, threat_type,
                    evidence_count, accuracy_score, rule_text
             FROM gemini_rules
-            WHERE is_active = 1 AND rule_type = 'route_pattern'
+            WHERE is_active = 1 AND rule_type IN ('route_pattern', 'aviation_strike_pattern', 'launch_site_pattern')
             ORDER BY evidence_count DESC
         """
         rules = execute_query_as_dicts(query)
@@ -778,7 +778,7 @@ async def get_multihop_flight_chains(days: int = 30):
         rules_query = """
             SELECT source_region, target_region, evidence_count, accuracy_score
             FROM gemini_rules
-            WHERE rule_type = 'route_pattern' AND is_active = 1
+            WHERE rule_type IN ('route_pattern', 'aviation_strike_pattern', 'launch_site_pattern') AND is_active = 1
         """
         rules_rows = execute_query_as_dicts(rules_query)
         rule_map = {}

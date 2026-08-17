@@ -257,4 +257,23 @@ def prune_expired_missile_threats(threat_manager: Any, official_alarms_dict: Dic
                     "reason": reason
                 })
 
+    # Clean up any stale active paired_events in DB older than 2 hours
+    try:
+        from database.connection import execute_write
+        stale_cleanup_sql = """
+            UPDATE paired_events
+            SET lifecycle_status = 'cleared',
+                prediction_accuracy = CASE 
+                    WHEN prediction_accuracy IS NOT NULL AND prediction_accuracy != '' THEN prediction_accuracy
+                    WHEN was_predictive = 1 THEN 'overestimated'
+                    ELSE 'mitigated'
+                END
+            WHERE lifecycle_status = 'active'
+              AND created_at <= datetime('now', '-2 hours')
+        """
+        execute_write(stale_cleanup_sql)
+    except Exception as cleanup_err:
+        logger.debug(f"[Missile-Lifecycle] DB stale cleanup error: {cleanup_err}")
+
     return cleared_summary
+

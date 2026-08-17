@@ -331,7 +331,7 @@ class GeminiRulesLearner:
                 HAVING occurrence_count >= 2
             ''')
 
-            for row in cursor.fetchall():
+            for row in _fetch_dict_rows(cursor):
                 src = row["launch_origin"]
                 tgt = row["target_region"]
                 threat_type = row["threat_type"]
@@ -352,19 +352,19 @@ class GeminiRulesLearner:
 
                 cursor.execute('''
                     DELETE FROM gemini_rules 
-                    WHERE rule_type = 'route_pattern' 
+                    WHERE rule_type = 'aviation_strike_pattern' 
                       AND source_region = ? AND target_region = ? AND threat_type = ?
                 ''', (src, tgt, threat_type))
 
                 cursor.execute('''
                     INSERT INTO gemini_rules (rule_type, source_region, target_region, threat_type,
                         rule_text, rule_json, evidence_count, accuracy_score, is_active, updated_at)
-                    VALUES ('route_pattern', ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                    VALUES ('aviation_strike_pattern', ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
                 ''', (src, tgt, threat_type, rule_text, rule_json, count, acc))
 
                 rules_updated += 1
                 if self._rule_audit_callback:
-                    self._rule_audit_callback("added", rule_type="route_pattern", rule_text=rule_text,
+                    self._rule_audit_callback("added", rule_type="aviation_strike_pattern", rule_text=rule_text,
                         source_region=src, target_region=tgt, threat_type=threat_type,
                         reason=f"aviation_rule: count={count}, accuracy={acc:.2f}")
         except Exception as e:
@@ -395,7 +395,7 @@ class GeminiRulesLearner:
                 HAVING occurrence_count >= 2
             ''')
 
-            for row in cursor.fetchall():
+            for row in _fetch_dict_rows(cursor):
                 src = row["launch_origin"]
                 tgt = row["target_region"]
                 threat_type = row["threat_type"]

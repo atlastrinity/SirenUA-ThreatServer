@@ -237,3 +237,53 @@ def test_autonomous_launch_site_pattern_learning():
     finally:
         if os.path.exists(db_path):
             os.remove(db_path)
+
+
+def test_autonomous_aviation_strike_pattern_learning():
+    """Rules learner must correctly derive aviation_strike_pattern rule_type for tactical aviation/missiles."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+        db_path = tf.name
+
+    try:
+        init_analytics_db_tables_only(db_path)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Seed telemetry and paired cleared events for KAB from Belgorod airbase
+        for i in range(4):
+            cursor.execute("""
+                INSERT INTO telemetry_data (threat_event_id, weapon_subtype, launch_origin, speed_kmh, heading_degrees)
+                VALUES (?, 'kab', 'Аеродром Балтимор (Воронеж)', 900, 220)
+            """, (i + 1,))
+            telemetry_id = cursor.lastrowid
+
+            cursor.execute("""
+                INSERT INTO paired_events (threat_event_id, telemetry_id, region, threat_type, prediction_accuracy, lifecycle_status, created_at)
+                VALUES (?, ?, 'Харківська область', 'kab', 'confirmed', 'cleared', datetime('now', '-1 days'))
+            """, (i + 1, telemetry_id))
+
+        conn.commit()
+        conn.close()
+
+        learner = GeminiRulesLearner(db_path=db_path)
+        total_learned = learner.run_rules_learner()
+        assert total_learned >= 1
+
+        # Verify aviation_strike_pattern rule_type specifically
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rules = conn.execute("SELECT * FROM gemini_rules WHERE rule_type = 'aviation_strike_pattern'").fetchall()
+        conn.close()
+
+        assert len(rules) >= 1
+        rule = rules[0]
+        assert rule["source_region"] == "Аеродром Балтимор (Воронеж)"
+        assert rule["target_region"] == "Харківська область"
+        assert rule["threat_type"] == "kab"
+        assert rule["accuracy_score"] >= 0.90
+        assert "Авіаційний удар" in rule["rule_text"]
+
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+

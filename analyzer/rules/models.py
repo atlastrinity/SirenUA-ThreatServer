@@ -12,7 +12,9 @@ class RuleType(str, Enum):
     CONFIDENCE_CORRECTION = "confidence_correction"
     TIME_PATTERN = "time_pattern"
     ETA_MATH = "eta_math"
-    LAUNCH_HUB = "launch_hub"
+    LAUNCH_SITE_PATTERN = "launch_site_pattern"
+    AVIATION_STRIKE_PATTERN = "aviation_strike_pattern"
+    POST_MORTEM = "post_mortem"
 
 
 @dataclass

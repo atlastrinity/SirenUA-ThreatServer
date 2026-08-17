@@ -54,14 +54,8 @@ async def get_admin_dashboard_stats():
         else:
             accuracy_pct = 0
 
-        # Active threats right now (100% matched with in-memory threat manager and iOS map)
-        from core.globals import threat_manager
-        if threat_manager and hasattr(threat_manager, "threats") and threat_manager.threats:
-            active_now = sum(len(state.active_threats) for state in threat_manager.threats.values())
-        else:
-            active_query = "SELECT COUNT(*) as c FROM paired_events pe LEFT JOIN threat_history th ON pe.threat_event_id = th.id WHERE pe.lifecycle_status = 'active' AND (th.is_test = 0 OR th.is_test IS NULL)"
-            active_rows = execute_query_as_dicts(active_query)
-            active_now = active_rows[0]["c"] if active_rows else 0
+        # Active threats right now (100% matched with paired_events lifecycle sessions in DB)
+        active_now = acc.get("active", 0)
 
         # Average response time (how early AI detected before alarm)
         avg_query = """

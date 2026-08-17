@@ -167,3 +167,11 @@ def test_admin_rules_endpoints():
     assert res_metrics.status_code == 200
     data_metrics = res_metrics.json()
     assert "region_metrics" in data_metrics
+
+    # 4. Rules Relearn Trigger
+    res_relearn = client.post("/api/admin/rules/relearn")
+    assert res_relearn.status_code == 200
+    data_relearn = res_relearn.json()
+    assert data_relearn["status"] == "success"
+    assert "total_learned" in data_relearn
+
