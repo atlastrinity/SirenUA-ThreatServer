@@ -764,6 +764,11 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
                         print(f"🔗 [Paired] Додатково закрито {other_closed} завислих подій для {region}")
             
             conn.commit()
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
 
             # Determine the accurate threat_type to record in history
             saved_type = detected_type or original_type or "clear"
