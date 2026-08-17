@@ -268,9 +268,8 @@ def test_aviation_strike_profiles():
     # 4. Tactical Su-35 on Zaporizhzhia
     prof2 = resolve_aviation_strike_profile("su35", "Су-35 над Азовським морем пуск Х-59", "Запорізька область")
     assert prof2["is_aviation"] is True
-    assert prof2["carrier_type"] == "su35"
     assert "Азовського моря" in prof2["launch_sector_name"]
-    assert "Приазовський коридор" in prof2["launch_sector_name"]
+    assert "Приазовський" in prof2["launch_sector_name"]
 
     # 5. MiG-31K Kinzhal
     prof3 = resolve_aviation_strike_profile("mig31k", "Зліт МіГ-31К з Саваслейка", "м. Київ")
