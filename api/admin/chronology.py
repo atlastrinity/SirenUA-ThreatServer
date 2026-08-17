@@ -365,6 +365,7 @@ async def get_admin_chronology_v2(
             "active": sum(1 for e in correlated_events if e["match_type"] == "active"),
             "cleared": sum(1 for e in correlated_events if e["match_type"] == "cleared"),
         }
+        period_total = len(correlated_events)
 
         # Time delta distribution (for histogram)
         deltas = [e["time_delta_seconds"] for e in correlated_events if e.get("time_delta_seconds") is not None]
@@ -385,6 +386,8 @@ async def get_admin_chronology_v2(
                 filtered_events = [e for e in correlated_events if e["match_type"] == "overestimated"]
             elif match_filter == "active":
                 filtered_events = [e for e in correlated_events if e["match_type"] == "active"]
+            elif match_filter == "cleared":
+                filtered_events = [e for e in correlated_events if e["match_type"] == "cleared"]
 
         total_count = len(filtered_events)
         sliced_events = filtered_events[:limit]
@@ -424,6 +427,7 @@ async def get_admin_chronology_v2(
 
         return {
             "total": total_count,
+            "period_total": period_total,
             "stats": stats,
             "events": sliced_events,
             "daily_stats": daily_stats,

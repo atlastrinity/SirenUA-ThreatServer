@@ -27,13 +27,14 @@ async def get_admin_dashboard_stats():
         total_7d = total_rows[0]["c"] if total_rows else 0
 
         # Accuracy breakdown (7d) directly from paired_events (AI threat lifecycle sessions)
+        # Categories are mutually exclusive so confirmed + mitigated + overestimated + active + cleared == total
         accuracy_query = """
             SELECT
                 COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END), 0) as confirmed,
                 COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END), 0) as mitigated,
                 COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END), 0) as overestimated,
-                COALESCE(SUM(CASE WHEN pe.lifecycle_status = 'active' THEN 1 ELSE 0 END), 0) as active,
-                COALESCE(SUM(CASE WHEN pe.lifecycle_status = 'cleared' AND (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) THEN 1 ELSE 0 END), 0) as cleared,
+                COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND pe.lifecycle_status = 'active' THEN 1 ELSE 0 END), 0) as active,
+                COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND (pe.lifecycle_status != 'active' OR pe.lifecycle_status IS NULL) THEN 1 ELSE 0 END), 0) as cleared,
                 COUNT(*) as total
             FROM paired_events pe
             WHERE pe.created_at >= datetime('now', '-7 days')
