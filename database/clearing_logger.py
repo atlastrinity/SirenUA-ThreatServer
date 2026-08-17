@@ -360,8 +360,8 @@ def log_clearing_to_db(
 
             return clearing_id
         except sqlite3.OperationalError as oe:
-            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
-                time.sleep(0.1 * (attempt + 1))
+            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 7:
+                time.sleep(0.05 * (2 ** attempt))
                 continue
             print(f"⚠️ Помилка запису clearing в БД (OperationalError): {oe}")
             log_error_to_db("server", str(oe), endpoint="log_clearing_to_db", context=f"region={region}")

@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import asyncio
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -231,11 +232,14 @@ class GeminiThreatAnalyzer:
         max_attempts = len(self.api_keys) if self.api_keys else 1
         for attempt in range(max_attempts):
             try:
-                response = await self.model.generate_content_async(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        response_mime_type="application/json",
-                    )
+                response = await asyncio.wait_for(
+                    self.model.generate_content_async(
+                        prompt,
+                        generation_config=genai.types.GenerationConfig(
+                            response_mime_type="application/json",
+                        )
+                    ),
+                    timeout=10.0
                 )
                 
                 results = parse_gemini_json(response.text)
@@ -533,11 +537,14 @@ Here are the latest Telegram messages:
         max_attempts = len(self.api_keys) if self.api_keys else 1
         for attempt in range(max_attempts):
             try:
-                response = await self.model.generate_content_async(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        response_mime_type="application/json",
-                    )
+                response = await asyncio.wait_for(
+                    self.model.generate_content_async(
+                        prompt,
+                        generation_config=genai.types.GenerationConfig(
+                            response_mime_type="application/json",
+                        )
+                    ),
+                    timeout=10.0
                 )
                 
                 result_text = response.text
