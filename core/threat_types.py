@@ -549,7 +549,7 @@ DRONE_LAUNCH_SITES: Dict[str, Dict[str, Any]] = {
     DRONE_SITE_CHAUDA: {
         "title": "Мис Чауда (АР Крим)",
         "primary_threat": THREAT_SHAHED,
-        "keywords": ["чауда", "chauda", "крим", "ар крим", "феодосія", "чорне море"],
+        "keywords": ["чауда", "chauda", "феодосія", "мис чауда"],
         "lat_lon": (45.00, 35.83),
         "target_regions": ["Одеська область", "Миколаївська область", "Херсонська область", "Кіровоградська область", "Вінницька область", "Черкаська область"],
     },
@@ -1355,7 +1355,7 @@ def resolve_aviation_strike_profile(
                     airbase_key = DRONE_SITE_PRIMORSKO_AKHTARSK
                     sector_key = SECTOR_AZOV_SEA
             else:
-                if not airbase_key:
+                if not airbase_key or airbase_key not in DRONE_LAUNCH_SITES:
                     if sector_key == SECTOR_BLACK_SEA:
                         airbase_key = DRONE_SITE_CHAUDA
                     elif sector_key == SECTOR_KURSK:
