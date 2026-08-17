@@ -199,10 +199,10 @@ async def poll_aerial_alerts():
                 a_type = alert_types_dict.get(region_name)
                 threat_manager.set_alarm_active(region_name, is_act, alert_type=a_type)
 
-            # Автоматично знімаємо протерміновані загрози та загрози у знятих тривогах
+            # Автоматично знімаємо протерміновані загрози та загрози у знятих тривогах (у фоновому потоці)
             try:
                 from services.missile_lifecycle_service import prune_expired_missile_threats
-                prune_expired_missile_threats(threat_manager, official_dict)
+                await asyncio.to_thread(prune_expired_missile_threats, threat_manager, official_dict)
             except Exception as prune_err:
                 logger.error(f"Помилка під час prune_expired_missile_threats: {prune_err}")
             

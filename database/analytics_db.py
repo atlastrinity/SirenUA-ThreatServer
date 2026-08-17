@@ -803,8 +803,8 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
             
             return clearing_id
         except sqlite3.OperationalError as oe:
-            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
-                time.sleep(0.05 * (attempt + 1))
+            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 7:
+                time.sleep(0.05 * (2 ** attempt))
                 continue
             print(f"⚠️ Помилка запису clearing в БД (OperationalError): {oe}")
             log_error_to_db("server", str(oe), endpoint="log_clearing_to_db", context=f"region={region}")
@@ -823,26 +823,42 @@ def log_clearing_to_db(region: str, clearing_telemetry: dict = None,
 
 
 def validate_prediction_on_alarm(region: str):
-    """Marks predictive paired_events as 'confirmed' when official alarm activates."""
-    try:
-        conn = get_sqlite_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE paired_events 
-            SET prediction_accuracy = 'confirmed'
-            WHERE region = ? 
-              AND was_predictive = 1 
-              AND lifecycle_status = 'active'
-              AND prediction_accuracy IS NULL
-        ''', (region,))
-        updated = cursor.rowcount
-        conn.commit()
-        conn.close()
-        if updated > 0:
-            print(f"✅ [Validation] Офіційна тривога підтвердила {updated} предикцій Gemini для {region}")
-    except Exception as e:
-        print(f"⚠️ [Validation] Помилка валідації предикції: {e}")
-        log_error_to_db("server", str(e), endpoint="validate_prediction_on_alarm", context=f"region={region}")
+    """Marks predictive paired_events as 'confirmed' when official alarm activates with retry on lock."""
+    for attempt in range(5):
+        conn = None
+        try:
+            conn = get_sqlite_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE paired_events 
+                SET prediction_accuracy = 'confirmed'
+                WHERE region = ? 
+                  AND was_predictive = 1 
+                  AND lifecycle_status = 'active'
+                  AND prediction_accuracy IS NULL
+            ''', (region,))
+            updated = cursor.rowcount
+            conn.commit()
+            if updated > 0:
+                print(f"✅ [Validation] Офіційна тривога підтвердила {updated} предикцій Gemini для {region}")
+            return
+        except sqlite3.OperationalError as oe:
+            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
+                time.sleep(0.05 * (2 ** attempt))
+                continue
+            print(f"⚠️ [Validation] Помилка валідації предикції: {oe}")
+            log_error_to_db("server", str(oe), endpoint="validate_prediction_on_alarm", context=f"region={region}")
+            return
+        except Exception as e:
+            print(f"⚠️ [Validation] Помилка валідації предикції: {e}")
+            log_error_to_db("server", str(e), endpoint="validate_prediction_on_alarm", context=f"region={region}")
+            return
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def flush_history_batch():
