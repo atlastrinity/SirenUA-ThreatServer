@@ -1297,16 +1297,30 @@ def resolve_aviation_strike_profile(
                 drone_site_found = site_key
                 break
         
-        # 1. If specific drone site explicitly mentioned in text, use it as physical launchpad
+        # 1. If trajectory transit is known, resolve ingress corridor where threat first entered Ukraine
+        if transit_from:
+            if transit_from in ["Запорізька область", "Дніпропетровська область", "Донецька область", "Луганська область"]:
+                sector_key = SECTOR_AZOV_SEA
+            elif transit_from in ["Сумська область", "Чернігівська область", "Київська область", "Житомирська область", "Полтавська область"]:
+                sector_key = SECTOR_KURSK
+            elif transit_from in ["Харківська область"]:
+                sector_key = SECTOR_BELGOROD
+            elif transit_from in ["Херсонська область", "Миколаївська область", "Одеська область", "АР Крим"]:
+                if "чорн" in text_lower or "мор" in text_lower or "південь" in text_lower or target_region in ["Одеська область", "Миколаївська область"]:
+                    sector_key = SECTOR_BLACK_SEA
+                else:
+                    sector_key = SECTOR_CHAUDA
+
+        # 2. If specific drone site explicitly mentioned in text, use it as physical launchpad
         if drone_site_found:
             airbase_key = drone_site_found
             if not sector_key:
-                if target_region in ["Одеська область", "Миколаївська область", "Вінницька область", "Хмельницька область", "Чернівецька область", "Херсонська область"] or "чорн" in text_lower or "мор" in text_lower or "південь" in text_lower:
+                if "чорн" in text_lower or "мор" in text_lower or "південь" in text_lower:
                     sector_key = SECTOR_BLACK_SEA
                 elif airbase_key == DRONE_SITE_CHAUDA:
                     sector_key = SECTOR_BLACK_SEA if target_region in ["Одеська область", "Миколаївська область", "Вінницька область", "Хмельницька область", "Чернівецька область", "Херсонська область"] else SECTOR_CHAUDA
                 elif airbase_key in [DRONE_SITE_PRIMORSKO_AKHTARSK, DRONE_SITE_YEYSK]:
-                    if target_region in ["Одеська область", "Миколаївська область", "Херсонська область", "Вінницька область"]:
+                    if target_region in ["Одеська область", "Миколаївська область"] and ("мор" in text_lower or "південь" in text_lower or "чорн" in text_lower):
                         sector_key = SECTOR_BLACK_SEA
                     else:
                         sector_key = SECTOR_AZOV_SEA
@@ -1317,29 +1331,39 @@ def resolve_aviation_strike_profile(
                 elif airbase_key == DRONE_SITE_MILLEROVO:
                     sector_key = SECTOR_BELGOROD if target_region in ["Харківська область", "Сумська область", "Полтавська область"] else SECTOR_ROSTOV_TAGANROG
         else:
-            # 2. Regional heuristics for all 26 Ukrainian regions
-            if "чорн" in text_lower or "мор" in text_lower or target_region in ["Одеська область", "Миколаївська область", "Херсонська область", "Вінницька область", "Чернівецька область"]:
-                airbase_key = DRONE_SITE_CHAUDA
-                sector_key = SECTOR_BLACK_SEA
-            elif target_region in ["Запорізька область", "Дніпропетровська область", "Донецька область"]:
-                airbase_key = DRONE_SITE_PRIMORSKO_AKHTARSK
-                sector_key = SECTOR_AZOV_SEA
-            elif target_region in ["Сумська область", "Чернігівська область", "Київська область", "Житомирська область"]:
-                airbase_key = DRONE_SITE_OREL if "орел" in text_lower else DRONE_SITE_KURSK
-                sector_key = SECTOR_KURSK
-            elif target_region in ["Харківська область", "Полтавська область"]:
-                airbase_key = DRONE_SITE_MILLEROVO if "міллеров" in text_lower else DRONE_SITE_PRIMORSKO_AKHTARSK
-                sector_key = SECTOR_BELGOROD if "міллеров" in text_lower else SECTOR_AZOV_SEA
-            elif target_region in ["Вінницька область", "Хмельницька область", "Черкаська область", "Кіровоградська область"]:
-                airbase_key = DRONE_SITE_CHAUDA if "південь" in text_lower else DRONE_SITE_PRIMORSKO_AKHTARSK
-                sector_key = SECTOR_BLACK_SEA if "південь" in text_lower or target_region in ["Вінницька область", "Кіровоградська область"] else SECTOR_AZOV_SEA
-            elif target_region in ["Львівська область", "Тернопільська область", "Івано-Франківська область", "Рівненська область", "Волинська область", "Закарпатська область"]:
-                airbase_key = DRONE_SITE_KURSK if "північ" in text_lower else DRONE_SITE_CHAUDA
-                sector_key = SECTOR_KURSK if "північ" in text_lower else SECTOR_BLACK_SEA
-            else:
-                airbase_key = DRONE_SITE_PRIMORSKO_AKHTARSK
-                if not sector_key:
+            # 3. Regional heuristics for all 26 Ukrainian regions (when no transit or specific text)
+            if not sector_key:
+                if "чорн" in text_lower or "мор" in text_lower or target_region in ["Одеська область", "Миколаївська область", "Херсонська область"]:
+                    airbase_key = DRONE_SITE_CHAUDA
+                    sector_key = SECTOR_BLACK_SEA
+                elif target_region in ["Запорізька область", "Дніпропетровська область", "Донецька область"]:
+                    airbase_key = DRONE_SITE_PRIMORSKO_AKHTARSK
                     sector_key = SECTOR_AZOV_SEA
+                elif target_region in ["Сумська область", "Чернігівська область", "Київська область", "Житомирська область"]:
+                    airbase_key = DRONE_SITE_OREL if "орел" in text_lower else DRONE_SITE_KURSK
+                    sector_key = SECTOR_KURSK
+                elif target_region in ["Харківська область", "Полтавська область"]:
+                    airbase_key = DRONE_SITE_MILLEROVO if "міллеров" in text_lower else DRONE_SITE_PRIMORSKO_AKHTARSK
+                    sector_key = SECTOR_BELGOROD if "міллеров" in text_lower else SECTOR_AZOV_SEA
+                elif target_region in ["Вінницька область", "Хмельницька область", "Черкаська область", "Кіровоградська область"]:
+                    airbase_key = DRONE_SITE_CHAUDA if "південь" in text_lower else DRONE_SITE_PRIMORSKO_AKHTARSK
+                    sector_key = SECTOR_BLACK_SEA if "південь" in text_lower else SECTOR_AZOV_SEA
+                elif target_region in ["Львівська область", "Тернопільська область", "Івано-Франківська область", "Рівненська область", "Волинська область", "Чернівецька область", "Закарпатська область"]:
+                    airbase_key = DRONE_SITE_KURSK if "північ" in text_lower else DRONE_SITE_CHAUDA
+                    sector_key = SECTOR_KURSK if "північ" in text_lower else SECTOR_BLACK_SEA
+                else:
+                    airbase_key = DRONE_SITE_PRIMORSKO_AKHTARSK
+                    sector_key = SECTOR_AZOV_SEA
+            else:
+                if not airbase_key:
+                    if sector_key == SECTOR_BLACK_SEA:
+                        airbase_key = DRONE_SITE_CHAUDA
+                    elif sector_key == SECTOR_KURSK:
+                        airbase_key = DRONE_SITE_KURSK
+                    elif sector_key == SECTOR_BELGOROD:
+                        airbase_key = DRONE_SITE_MILLEROVO
+                    else:
+                        airbase_key = DRONE_SITE_PRIMORSKO_AKHTARSK
 
         pad_info = DRONE_LAUNCH_SITES.get(airbase_key) or RUSSIAN_AIRBASES.get(airbase_key)
         sector_info = AVIATION_LAUNCH_SECTORS.get(sector_key)
