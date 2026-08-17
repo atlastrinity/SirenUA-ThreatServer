@@ -6,7 +6,7 @@ Periodically analyzes paired threat events to derive and validate AI rules.
 import asyncio
 
 async def run_rules_learner_loop(monitor_instance):
-    """Background task that analyzes paired events every 6 hours to derive new rules."""
+    """Background task that analyzes paired events every 3 hours to derive new rules."""
     # Wait 5 minutes before first run to let data accumulate
     await asyncio.sleep(300)
     
@@ -18,8 +18,8 @@ async def run_rules_learner_loop(monitor_instance):
         except Exception as e:
             print(f"⚠️ [Rules Learner] Помилка: {e}")
         
-        # Sleep 6 hours
-        await asyncio.sleep(6 * 3600)
+        # Sleep 3 hours
+        await asyncio.sleep(3 * 3600)
 
 
 def run_rules_learner(monitor_instance) -> int:

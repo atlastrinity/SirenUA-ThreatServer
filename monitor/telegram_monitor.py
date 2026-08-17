@@ -2024,7 +2024,7 @@ class TelegramThreatMonitor:
         return get_time_of_day_modifier(threat_type)
 
     async def _rules_learner_loop(self):
-        """Background task that analyzes paired events every 6 hours to derive new rules."""
+        """Background task that analyzes paired events every 3 hours to derive new rules."""
         from monitor.rules_evaluator import run_rules_learner_loop
         await run_rules_learner_loop(self)
 
