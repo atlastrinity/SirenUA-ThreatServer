@@ -541,6 +541,25 @@ class MockThreatManager:
             self.threats[region].is_active = is_active
             self.threats[region].official_alert_type = alert_type if is_active else None
             
+            # Якщо офіційну тривогу в області знято — автоматично знімаємо всі активні тактичні загрози для цієї області
+            if current_official and not is_active:
+                active_to_clear = list(self.threats[region].active_threats)
+                for t in active_to_clear:
+                    clearing_telemetry = {
+                        "linked_group_id": t.group_id,
+                        "resolution_type": "all_clear_official",
+                        "prediction_accuracy_hint": "confirmed" if not t.is_predictive or (t.confidence and t.confidence >= 70) else "mitigated",
+                        "damage_assessment": "none",
+                        "impact_confirmed": False,
+                        "clearing_context_tags": ["all_clear_official", "official_alarm_ended"]
+                    }
+                    self.clear_threat(
+                        region,
+                        clearing_telemetry=clearing_telemetry,
+                        threat_type=t.threat_type,
+                        group_id=t.group_id
+                    )
+            
             if has_changed:
                 level_str = "high" if is_active else "none"
                 

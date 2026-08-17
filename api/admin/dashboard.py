@@ -20,8 +20,10 @@ async def get_admin_dashboard_stats():
         total_query = """
             SELECT COUNT(*) as c 
             FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE pe.created_at >= datetime('now', '-7 days')
               AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
         """
         total_rows = execute_query_as_dicts(total_query)
         total_7d = total_rows[0]["c"] if total_rows else 0
@@ -37,8 +39,10 @@ async def get_admin_dashboard_stats():
                 COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND (pe.lifecycle_status != 'active' OR pe.lifecycle_status IS NULL) THEN 1 ELSE 0 END), 0) as cleared,
                 COUNT(*) as total
             FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE pe.created_at >= datetime('now', '-7 days')
               AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
         """
         accuracy_rows = execute_query_as_dicts(accuracy_query)
         acc = accuracy_rows[0] if accuracy_rows else {"confirmed": 0, "mitigated": 0, "overestimated": 0, "active": 0, "cleared": 0, "total": 0}
@@ -55,7 +59,7 @@ async def get_admin_dashboard_stats():
         if threat_manager and hasattr(threat_manager, "threats") and threat_manager.threats:
             active_now = sum(len(state.active_threats) for state in threat_manager.threats.values())
         else:
-            active_query = "SELECT COUNT(*) as c FROM paired_events WHERE lifecycle_status = 'active'"
+            active_query = "SELECT COUNT(*) as c FROM paired_events pe LEFT JOIN threat_history th ON pe.threat_event_id = th.id WHERE pe.lifecycle_status = 'active' AND (th.is_test = 0 OR th.is_test IS NULL)"
             active_rows = execute_query_as_dicts(active_query)
             active_now = active_rows[0]["c"] if active_rows else 0
 
@@ -74,6 +78,7 @@ async def get_admin_dashboard_stats():
                 AND th_ai.threat_type NOT IN ('official_alarm', 'threat_clear')
                 AND th_ai.threat_level != 'none'
                 AND (th_ai.is_test = 0 OR th_ai.is_test IS NULL)
+                AND (th_alarm.is_test = 0 OR th_alarm.is_test IS NULL)
         """
         avg_rows = execute_query_as_dicts(avg_query)
         avg_row = avg_rows[0] if avg_rows else None
@@ -83,8 +88,10 @@ async def get_admin_dashboard_stats():
         type_query = """
             SELECT pe.threat_type, COUNT(*) as count
             FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE pe.created_at >= datetime('now', '-7 days') 
               AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY pe.threat_type ORDER BY count DESC
         """
         by_type = execute_query_as_dicts(type_query)
@@ -93,8 +100,10 @@ async def get_admin_dashboard_stats():
         regions_query = """
             SELECT pe.region, COUNT(*) as count
             FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE pe.created_at >= datetime('now', '-7 days') 
               AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY pe.region ORDER BY count DESC LIMIT 10
         """
         top_regions = execute_query_as_dicts(regions_query)
@@ -104,8 +113,10 @@ async def get_admin_dashboard_stats():
             SELECT CAST(strftime('%H', datetime(pe.created_at, {tz_modifier})) AS INTEGER) as hour,
                    COUNT(*) as count
             FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE pe.created_at >= datetime('now', '-7 days') 
               AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY hour ORDER BY hour
         """
         hourly = execute_query_as_dicts(hourly_query)

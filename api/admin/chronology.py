@@ -113,6 +113,59 @@ async def get_admin_chronology(
         daily_agg_query += " GROUP BY day ORDER BY day"
         daily_stats = execute_query_as_dicts(daily_agg_query, agg_params)
 
+        # Overall period breakdown (matches region and threat_type, but before prediction_accuracy filter)
+        stats_query = f'''
+            SELECT
+                COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END), 0) as confirmed,
+                COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END), 0) as mitigated,
+                COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END), 0) as overestimated,
+                COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND pe.lifecycle_status = 'active' THEN 1 ELSE 0 END), 0) as active,
+                COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND (pe.lifecycle_status != 'active' OR pe.lifecycle_status IS NULL) THEN 1 ELSE 0 END), 0) as cleared,
+                COUNT(*) as total
+            FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE pe.created_at >= datetime('now', ?)
+              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
+        '''
+        stats_params = [day_filter]
+        if decoded_region:
+            stats_query += " AND pe.region = ?"
+            stats_params.append(decoded_region)
+        if threat_type:
+            stats_query += " AND pe.threat_type = ?"
+            stats_params.append(threat_type)
+        if was_predictive is not None:
+            stats_query += " AND pe.was_predictive = ?"
+            stats_params.append(was_predictive)
+
+        stats_rows = execute_query_as_dicts(stats_query, stats_params)
+        stats_dict = stats_rows[0] if stats_rows else {"confirmed": 0, "mitigated": 0, "overestimated": 0, "active": 0, "cleared": 0, "total": 0}
+        period_total = stats_dict.get("total", 0)
+
+        # Count total matching query without limit
+        count_query = f'''
+            SELECT COUNT(*) as c
+            FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE pe.created_at >= datetime('now', ?)
+              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
+        '''
+        count_params = [day_filter]
+        if decoded_region:
+            count_query += " AND pe.region = ?"
+            count_params.append(decoded_region)
+        if threat_type:
+            count_query += " AND pe.threat_type = ?"
+            count_params.append(threat_type)
+        if was_predictive is not None:
+            count_query += " AND pe.was_predictive = ?"
+            count_params.append(was_predictive)
+        if prediction_accuracy:
+            count_query = _apply_prediction_accuracy_filter(count_query, prediction_accuracy)
+        count_rows = execute_query_as_dicts(count_query, count_params)
+
         events = []
         for row in rows:
             event = dict(row)
@@ -130,7 +183,16 @@ async def get_admin_chronology(
                 event["match_type"] = "cleared"
             events.append(event)
 
-        return {"total": len(events), "days": days, "events": events, "daily_stats": daily_stats}
+        filtered_total = count_rows[0]["c"] if count_rows else len(events)
+
+        return {
+            "total": filtered_total,
+            "period_total": period_total,
+            "stats": stats_dict,
+            "days": days,
+            "events": events,
+            "daily_stats": daily_stats
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

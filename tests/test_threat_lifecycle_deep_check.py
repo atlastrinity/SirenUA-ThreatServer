@@ -220,22 +220,51 @@ class TestMissileLifecycleExpiration:
         assert res_type == "intercepted"
         assert "Перевищено максимальний час польоту" in reason
 
-    def test_fast_threat_cleared_on_official_alarm_cleared(self):
-        # Якщо відбій офіційної тривоги в області — крилата ракета негайно знімається
-        recent_time = datetime.now(timezone.utc) - timedelta(minutes=2)
+    def test_parse_eta_seconds_from_str(self):
+        from services.missile_lifecycle_service import parse_eta_seconds_from_str
+        assert parse_eta_seconds_from_str("~15 хв") == 900
+        assert parse_eta_seconds_from_str("до 20 хв") == 1200
+        assert parse_eta_seconds_from_str("3-5 хв") == 300
+        assert parse_eta_seconds_from_str("1 год 10 хв") == 4200
+        assert parse_eta_seconds_from_str("до 1 год") == 3600
+        assert parse_eta_seconds_from_str(None) is None
+
+    def test_yellow_zone_eta_expiration(self):
+        # Загроза в жовтій зоні (без тривоги) з ETA 10 хв, створена 12 хв тому
+        past_time = datetime.now(timezone.utc) - timedelta(minutes=12)
         threat = SingleThreat(
-            level="high",
-            threat_type="cruise_missile",
-            detail="Ракета в напрямку міста"
+            level="medium",
+            threat_type="shahed",
+            detail="БпЛА курсом на область",
+            eta="~10 хв",
+            is_predictive=True
         )
-        threat.since = recent_time.isoformat()
+        threat.since = past_time.isoformat()
 
         should_expire, res_type, reason = should_expire_missile_threat(
             threat, is_official_alarm_active=False
         )
         assert should_expire is True
-        assert res_type == "intercepted"
-        assert "Офіційну тривогу в області знято" in reason
+        assert res_type == "expired"
+        assert "Прогноз не реалізувався" in reason
+
+    def test_official_alarm_all_clear_clears_active_threats(self):
+        # При відбої офіційної тривоги всі активні загрози в області автоматично очищаються
+        manager = MockThreatManager()
+        region = "Полтавська область"
+
+        # 1. Встановлюємо загрозу та вмикаємо офіційну тривогу
+        manager.set_threat(region, "high", "shahed", detail="БпЛА над областю", is_test=False)
+        manager.set_alarm_active(region, True)
+        assert manager.threats[region].is_active is True
+        assert manager.threats[region].level == "high"
+        assert len(manager.threats[region].active_threats) == 1
+
+        # 2. Офіційний відбій тривоги
+        manager.set_alarm_active(region, False)
+        assert manager.threats[region].is_active is False
+        assert manager.threats[region].level == "none"
+        assert len(manager.threats[region].active_threats) == 0
 
 
 class TestAPIEndpoints:

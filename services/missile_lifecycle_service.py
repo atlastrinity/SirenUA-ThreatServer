@@ -4,6 +4,7 @@ Calculates realistic missile flight times and enforces automatic expiration & tr
 when flight duration elapses or official alarms in transit corridors clear.
 """
 
+import re
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any, List
 import logging
@@ -33,6 +34,69 @@ MAX_FLIGHT_TIMEOUT_SECONDS = {
     THREAT_ARTILLERY: 180,      # 3 хвилини
     THREAT_SHAHED: 2700,        # 45 хвилин
 }
+
+
+def parse_eta_seconds_from_str(eta_str: Optional[str]) -> Optional[int]:
+    """
+    Парсить рядкові формати ETA (наприклад '~15 хв', 'до 20 хв', '10-15 хв', '1 год 20 хв', 'до 1 год')
+    у загальну кількість секунд.
+    """
+    if not eta_str:
+        return None
+    s = str(eta_str).lower().replace("~", "").replace("+", "").replace("до", "").strip()
+
+    # 1. Години та хвилини ("1 год 20 хв")
+    if "год" in s and "хв" in s:
+        parts = s.split("год")
+        if len(parts) == 2:
+            try:
+                hr = int(parts[0].strip())
+                mn = int(parts[1].replace("хв", "").strip())
+                return (hr * 60 + mn) * 60
+            except ValueError:
+                pass
+
+    # 2. Тільки хвилини ("15 хв", "10-15 хв")
+    if "хв" in s:
+        val = s.replace("хв", "").strip()
+        if "-" in val:
+            comps = val.split("-")
+            if len(comps) == 2:
+                try:
+                    max_mn = int(comps[1].strip())
+                    return max_mn * 60
+                except ValueError:
+                    pass
+        else:
+            try:
+                return int(val) * 60
+            except ValueError:
+                pass
+
+    # 3. Тільки години ("1 год", "1-2 год")
+    if "год" in s:
+        val = s.replace("год", "").strip()
+        if "-" in val:
+            comps = val.split("-")
+            if len(comps) == 2:
+                try:
+                    max_hr = float(comps[1].strip())
+                    return int(max_hr * 3600)
+                except ValueError:
+                    pass
+        else:
+            try:
+                return int(float(val) * 3600)
+            except ValueError:
+                pass
+
+    # 4. Числові значення
+    try:
+        val = int(s)
+        return val * 60 if val < 180 else val
+    except ValueError:
+        return None
+
 
 def get_missile_max_flight_seconds(threat_type: Optional[str], distance_km: float = 150.0) -> int:
     """
@@ -70,11 +134,11 @@ def should_expire_missile_threat(
 ) -> Tuple[bool, str, str]:
     """
     Перевіряє, чи має бути знята загроза/траєкторія ракети або БПЛА:
-    1. Для прямих швидкісних загроз (ракета/балістика/КАБ, is_predictive=False): якщо офіційна тривога в області знята
-       і минуло щонайменше 90 секунд з моменту появи — загроза вважається завершеною (приліт/збиття).
-    2. Для прогнозних загроз (жовті зони, is_predictive=True): відсутність офіційної тривоги є штатним станом
-       (вони існують ДО включення сирени), тому вони знімаються за кінематичним розрахунком часу (ETA/таймаут).
-    3. Якщо минув максимальний час польоту (elapsed_seconds > max_flight_seconds) — загроза знімається (expired).
+    1. Для жовтих зон (де офіційної тривоги немає, is_official_alarm_active=False):
+       якщо минув розрахунковий час ETA (+ буфер 45-90с), або перевищено максимальний час очікування —
+       загроза знімається автоматично (не лишається безпідставно зі статусом 'в області').
+    2. Для загального життєвого циклу: якщо минув максимальний час польоту (elapsed_seconds > max_flight_seconds) —
+       загроза знімається (expired / intercepted).
     
     Повертає: (should_expire: bool, resolution_type: str, reason: str)
     """
@@ -99,36 +163,40 @@ def should_expire_missile_threat(
         THREAT_KAB, THREAT_TU95, THREAT_ISKANDER
     ])
 
-    # ПРАВИЛО 1: Прямі загрози (ракети, балістика, КАБи, Шахеди, БпЛА) при знятті офіційної тривоги
-    if not is_predictive and not is_official_alarm_active:
-        if elapsed_seconds >= 60:  # Буфер 60с для синхронізації з сиренами
-            res = "intercepted" if is_fast_threat else "expired"
-            return True, res, f"Офіційну тривогу в області знято. Пряму загрозу {t_type} завершено (збито ППО або відбій небезпеки)."
+    # ПРАВИЛО 1: Якщо в області немає офіційної тривоги (жовта зона або знята тривога)
+    if not is_official_alarm_active:
+        # Визначаємо розрахунковий час ETA (в секундах)
+        eta_sec = getattr(threat_item, "eta_seconds", None)
+        if not eta_sec or eta_sec <= 0:
+            eta_str = getattr(threat_item, "eta", None)
+            eta_sec = parse_eta_seconds_from_str(eta_str)
 
-    # ПРАВИЛО 2: Минув максимальний час польоту за кінематикою / ETA
-    eta_sec = getattr(threat_item, "eta_seconds", None)
-    if is_predictive:
         if eta_sec and eta_sec > 0:
-            if is_fast_threat:
-                buffer_sec = 30  # Швидкісні ракети/балістика/КАБ: 30 секунд буфера
-            elif THREAT_SHAHED in t_type:
-                buffer_sec = 90  # Шахеди/БпЛА: 90 секунд (1.5 хв) буфера
-            else:
-                buffer_sec = 45
+            # Буфер після досягнення 0 / "в області"
+            buffer_sec = 45 if is_fast_threat else 90
             max_seconds = eta_sec + buffer_sec
+            if elapsed_seconds >= max_seconds:
+                res = "expired" if is_predictive else ("intercepted" if is_fast_threat else "expired")
+                reason = (f"Прогноз не реалізувався (офіційну тривогу не оголошено, час підльоту {int(elapsed_seconds)}с вичерпано)"
+                          if is_predictive else
+                          f"Час підльоту загрози {t_type} ({int(elapsed_seconds)}с) вичерпано без підтвердження тривоги")
+                return True, res, f"{reason}. Загрозу знято."
         else:
-            if is_fast_threat:
-                max_seconds = 300  # 5 хвилин максимум для швидкісних без ETA
-            elif THREAT_SHAHED in t_type:
-                max_seconds = 1200 # 20 хвилин для Шахедів без ETA
+            # Загроза без точного ETA у жовтій зоні без сирени
+            if is_predictive:
+                max_seconds = 180 if is_fast_threat else 600  # 3 хв для ракет, 10 хв для БпЛА
             else:
-                max_seconds = get_missile_max_flight_seconds(t_type)
-    else:
-        max_seconds = get_missile_max_flight_seconds(t_type)
+                max_seconds = 300 if is_fast_threat else 900  # 5 хв для ракет, 15 хв для БпЛА
+            
+            if elapsed_seconds >= max_seconds:
+                res = "expired"
+                return True, res, f"Перевищено максимальний час очікування у жовтій зоні ({int(elapsed_seconds)}с). Загрозу знято."
 
+    # ПРАВИЛО 2: Загальний таймаут польоту під час тривоги (запобігає вічним зависанням)
+    max_seconds = get_missile_max_flight_seconds(t_type)
     if elapsed_seconds >= max_seconds:
         res = "intercepted" if (is_fast_threat and not is_predictive) else "expired"
-        reason_label = "Прогноз не реалізувався (ціль змінила курс або ліквідована)" if is_predictive else ("Збито ППО або відбій небезпеки" if is_fast_threat else "Час польоту вичерпано")
+        reason_label = "Прогноз не реалізувався" if is_predictive else ("Збито ППО або відбій небезпеки" if is_fast_threat else "Час польоту вичерпано")
         return True, res, f"{reason_label}. Перевищено максимальний час польоту ({int(elapsed_seconds)} сек). Траєкторію вилучено."
 
     return False, "", ""
@@ -151,13 +219,19 @@ def prune_expired_missile_threats(threat_manager: Any, official_alarms_dict: Dic
             if should_expire:
                 logger.info(f"🚀 [Missile-Lifecycle] Зняття загрози для {region} (тип: {threat.threat_type}, група: {threat.group_id}): {reason}")
                 
+                # Точне визначення accuracy для AI навчання
+                if not is_official:
+                    accuracy_hint = "overestimated" if (threat.is_predictive or res_type == "expired") else "mitigated"
+                else:
+                    accuracy_hint = "confirmed" if res_type == "intercepted" else "mitigated"
+                
                 clearing_telemetry = {
                     "linked_group_id": threat.group_id,
                     "resolution_type": res_type,
-                    "prediction_accuracy_hint": "confirmed" if res_type == "intercepted" else "overestimated",
+                    "prediction_accuracy_hint": accuracy_hint,
                     "damage_assessment": "none",
                     "impact_confirmed": (res_type == "intercepted"),
-                    "clearing_context_tags": ["missile_lifecycle", res_type]
+                    "clearing_context_tags": ["missile_lifecycle", res_type, "yellow_zone_pruning" if not is_official else "alarm_pruning"]
                 }
                 
                 # Логуємо зняття в БД

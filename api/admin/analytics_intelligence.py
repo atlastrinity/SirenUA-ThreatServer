@@ -409,8 +409,10 @@ async def get_threat_type_distribution(days: int = 30):
                    pe.threat_type,
                    COUNT(*) as count
             FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE pe.created_at >= datetime('now', '-{days} days')
               AND pe.threat_type NOT IN ('{THREAT_OFFICIAL_ALARM}', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY day, pe.threat_type
             ORDER BY day
         """
@@ -464,8 +466,10 @@ async def get_region_risk_matrix(days: int = 30):
                    SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                    SUM(CASE WHEN pe.was_predictive = 1 THEN 1 ELSE 0 END) as predictive
             FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
             WHERE pe.created_at >= datetime('now', '-{days} days')
               AND pe.threat_type NOT IN ('{THREAT_OFFICIAL_ALARM}', 'threat_clear')
+              AND (th.is_test = 0 OR th.is_test IS NULL)
             GROUP BY pe.region, pe.threat_type
             ORDER BY total_events DESC
         """
