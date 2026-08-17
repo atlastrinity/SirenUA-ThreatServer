@@ -221,41 +221,93 @@ def smart_local_incremental_backup() -> dict:
             archive_conn.close()
             archive_conn = None
 
-        # 2. Attach archive DB to live DB connection and copy new rows
-        src_conn = get_sqlite_connection(DB_PATH)
+        # 2. Lock-free read from live DB and copy new records into archive DB
+        read_conn = None
+        archive_conn = None
         total_appended = 0
         try:
-            src_conn.execute(f"ATTACH DATABASE '{archive_path}' AS archive_db")
+            # Connect to live DB in read-only mode (never blocks active writes)
+            db_abs_path = os.path.abspath(DB_PATH)
+            read_conn = sqlite3.connect(f"file:{db_abs_path}?mode=ro", uri=True, timeout=15.0)
+            read_conn.row_factory = sqlite3.Row
+            read_conn.execute("PRAGMA query_only = ON")
 
-            tables_to_sync = [
-                ("threat_history", "INSERT OR IGNORE INTO archive_db.threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test) SELECT timestamp, region, threat_level, threat_type, detail, confidence, is_test FROM main.threat_history"),
-                ("paired_events", "INSERT OR IGNORE INTO archive_db.paired_events (created_at, region, threat_event_id, telemetry_id, clearing_event_id, lifecycle_status, threat_level, threat_type, confidence_at_set, confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds, gemini_group_id, rules_applied) SELECT created_at, region, threat_event_id, telemetry_id, clearing_event_id, lifecycle_status, threat_level, threat_type, confidence_at_set, confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds, gemini_group_id, rules_applied FROM main.paired_events"),
-                ("threat_clearings", "INSERT OR IGNORE INTO archive_db.threat_clearings (timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test) SELECT timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test FROM main.threat_clearings"),
-                ("telemetry_data", "INSERT OR IGNORE INTO archive_db.telemetry_data (threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords) SELECT threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords FROM main.telemetry_data"),
-                ("gemini_rules", "INSERT OR REPLACE INTO archive_db.gemini_rules (id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated) SELECT id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated FROM main.gemini_rules"),
-                ("gemini_rules_audit", "INSERT OR IGNORE INTO archive_db.gemini_rules_audit (id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason) SELECT id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason FROM main.gemini_rules_audit"),
-                ("palantir_reports", "INSERT OR REPLACE INTO archive_db.palantir_reports (id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by) SELECT id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by FROM main.palantir_reports"),
-                ("analytics_reports", "INSERT OR REPLACE INTO archive_db.analytics_reports (id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by) SELECT id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by FROM main.analytics_reports"),
-                ("error_log", "INSERT OR IGNORE INTO archive_db.error_log (id, timestamp, source, error_type, message, endpoint, context) SELECT id, timestamp, source, error_type, message, endpoint, context FROM main.error_log"),
+            archive_conn = get_sqlite_connection(archive_path)
+
+            table_configs = [
+                (
+                    "threat_history",
+                    "SELECT timestamp, region, threat_level, threat_type, detail, confidence, is_test FROM threat_history WHERE timestamp > (SELECT COALESCE(MAX(timestamp), '1970-01-01') FROM archive_db.threat_history)" if False else "SELECT timestamp, region, threat_level, threat_type, detail, confidence, is_test FROM threat_history",
+                    "INSERT OR IGNORE INTO threat_history (timestamp, region, threat_level, threat_type, detail, confidence, is_test) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    "paired_events",
+                    "SELECT created_at, region, threat_event_id, telemetry_id, clearing_event_id, lifecycle_status, threat_level, threat_type, confidence_at_set, confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds, gemini_group_id, rules_applied FROM paired_events",
+                    "INSERT OR IGNORE INTO paired_events (created_at, region, threat_event_id, telemetry_id, clearing_event_id, lifecycle_status, threat_level, threat_type, confidence_at_set, confidence_at_clear, was_predictive, prediction_accuracy, duration_seconds, gemini_group_id, rules_applied) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    "threat_clearings",
+                    "SELECT timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test FROM threat_clearings",
+                    "INSERT OR IGNORE INTO threat_clearings (timestamp, region, original_threat_event_id, linked_group_id, linked_correlation_group, resolution_type, intercepted_count, total_targets_in_wave, impact_confirmed, damage_assessment, civilian_casualties_reported, infrastructure_hit, air_defense_effectiveness, threat_duration_assessment, prediction_accuracy_hint, was_predictive, original_threat_level, original_threat_type, original_confidence, clearing_confidence, clearing_context_tags, source_reliability, time_of_day_category, clearing_source_channel, clearing_message_text, threat_set_timestamp, threat_duration_seconds, is_test) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    "telemetry_data",
+                    "SELECT threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords FROM telemetry_data",
+                    "INSERT OR IGNORE INTO telemetry_data (threat_event_id, group_id, attack_vector, target_count, speed_kmh, altitude_category, heading_degrees, distance_to_target_km, launch_origin, weapon_subtype, engagement_status, air_defense_active, multiple_waves, wave_number, time_of_day_category, weather_factor, source_reliability, message_context_tags, strategic_priority, civilian_risk_level, event_phase, correlation_group, target_cities_coords) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    "gemini_rules",
+                    "SELECT id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated FROM gemini_rules",
+                    "INSERT OR REPLACE INTO gemini_rules (id, created_at, updated_at, rule_type, source_region, target_region, threat_type, rule_text, rule_json, evidence_count, accuracy_score, is_active, last_validated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    "gemini_rules_audit",
+                    "SELECT id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason FROM gemini_rules_audit",
+                    "INSERT OR IGNORE INTO gemini_rules_audit (id, timestamp, action, rule_type, rule_text, source_region, target_region, threat_type, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    "palantir_reports",
+                    "SELECT id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by FROM palantir_reports",
+                    "INSERT OR REPLACE INTO palantir_reports (id, created_at, report_date, threat_assessment_summary, palantir_vectors_json, launch_hubs_json, risk_matrix_json, confidence_index, generated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    "analytics_reports",
+                    "SELECT id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by FROM analytics_reports",
+                    "INSERT OR REPLACE INTO analytics_reports (id, created_at, report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    "error_log",
+                    "SELECT id, timestamp, source, error_type, message, endpoint, context FROM error_log",
+                    "INSERT OR IGNORE INTO error_log (id, timestamp, source, error_type, message, endpoint, context) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                ),
             ]
 
-            for table, query in tables_to_sync:
+            for table_name, select_sql, insert_sql in table_configs:
                 try:
-                    cur = src_conn.execute(query)
-                    added_stats[table] = cur.rowcount
-                    if cur.rowcount > 0:
-                        total_appended += cur.rowcount
+                    rows = read_conn.execute(select_sql).fetchall()
+                    if rows:
+                        data = [tuple(r) for r in rows]
+                        cur = archive_conn.executemany(insert_sql, data)
+                        added_stats[table_name] = cur.rowcount
+                        if cur.rowcount > 0:
+                            total_appended += cur.rowcount
                 except Exception as te:
-                    logger.debug(f"[Smart Backup] Помилка синхронізації таблиці {table}: {te}")
+                    logger.debug(f"[Smart Backup] Помилка синхронізації таблиці {table_name}: {te}")
 
-            src_conn.commit()
+            archive_conn.commit()
         finally:
-            try:
-                src_conn.execute("DETACH DATABASE archive_db")
-            except Exception:
-                pass
-            src_conn.close()
-            src_conn = None
+            if read_conn:
+                try:
+                    read_conn.close()
+                except Exception:
+                    pass
+                read_conn = None
+            if archive_conn:
+                try:
+                    archive_conn.close()
+                except Exception:
+                    pass
+                archive_conn = None
 
         # 3. Also update latest full snapshot file with non-blocking chunked backup
         base_dir = os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else "."
