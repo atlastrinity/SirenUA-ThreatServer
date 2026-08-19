@@ -266,9 +266,11 @@ async def get_trajectory_heatmap(days: int = 30):
         corridors = []
 
         def _build_corridor_item(src, tgt, count, threat_type, avg_conf, data_source, speed=None):
+            if not src or not tgt or src == tgt:
+                return None
             src_coords = resolve_entity_coordinates(src)
             tgt_coords = resolve_entity_coordinates(tgt)
-            if src_coords and tgt_coords:
+            if src_coords and tgt_coords and src_coords != tgt_coords:
                 item = {
                     "source": src,
                     "target": tgt,
@@ -532,11 +534,17 @@ async def get_flight_corridors(days: int = 30):
 
         corridors = []
         for r in rules:
-            src_coords = resolve_entity_coordinates(r["source_region"])
-            tgt_coords = resolve_entity_coordinates(r["target_region"])
+            src = r.get("source_region")
+            tgt = r.get("target_region")
+            if not src or not tgt or src == tgt:
+                continue
+            src_coords = resolve_entity_coordinates(src)
+            tgt_coords = resolve_entity_coordinates(tgt)
+            if src_coords == tgt_coords:
+                continue
             corridors.append({
-                "source": r["source_region"],
-                "target": r["target_region"],
+                "source": src,
+                "target": tgt,
                 "source_lat": src_coords[0],
                 "source_lon": src_coords[1],
                 "target_lat": tgt_coords[0],
@@ -561,16 +569,22 @@ async def get_flight_corridors(days: int = 30):
             """
             obs = execute_query_as_dicts(obs_query)
             for o in obs:
-                src_coords = resolve_entity_coordinates(o["source_region"])
-                tgt_coords = resolve_entity_coordinates(o["target_region"])
+                src = o.get("source_region")
+                tgt = o.get("target_region")
+                if not src or not tgt or src == tgt:
+                    continue
+                src_coords = resolve_entity_coordinates(src)
+                tgt_coords = resolve_entity_coordinates(tgt)
+                if src_coords == tgt_coords:
+                    continue
                 corridors.append({
-                    "source": o["source_region"],
-                    "target": o["target_region"],
+                    "source": src,
+                    "target": tgt,
                     "source_lat": src_coords[0],
                     "source_lon": src_coords[1],
                     "target_lat": tgt_coords[0],
                     "target_lon": tgt_coords[1],
-                    "route_description": f"Спостережуваний вектор {o['source_region']} → {o['target_region']}",
+                    "route_description": f"Спостережуваний вектор {src} → {tgt}",
                     "threat_type": o["threat_type"],
                     "count": o["count"],
                     "accuracy": 85,
@@ -650,40 +664,20 @@ async def get_daily_summary(days: int = 30):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/admin/analytics/generate_daily_report")
+@router.post("/api/admin/analytics/generate_report")
 async def generate_daily_report():
-    """Ручна генерація аналітичного звіту. Зберігає у таблицю analytics_reports."""
+    """Сформувати та зберегти зведений аналітичний звіт у БД."""
     try:
-        # Gather all analytics data for today
-        trajectory_data = await get_trajectory_heatmap(days=1)
-        launch_data = await get_launch_origins(days=1)
-        risk_data = await get_region_risk_matrix(days=1)
-        type_data = await get_threat_type_distribution(days=1)
-        daily_data = await get_daily_summary(days=1)
-
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        trajectory_data = await get_trajectory_heatmap(days=7)
+        launch_data = await get_launch_origins(days=7)
+        risk_data = await get_region_risk_matrix(days=7)
 
-        summary_parts = []
-        summary_parts.append(f"📊 Аналітичний звіт за {today}")
-        summary_parts.append(f"Загальна кількість коридорів: {trajectory_data['total']}")
-        summary_parts.append(f"Пускових хабів зафіксовано: {launch_data['total']}")
-        summary_parts.append(f"Областей під загрозою: {risk_data['total']}")
+        summary_text = f"Звіт за {today}: виявлено {trajectory_data['total']} активних траєкторій, {launch_data['total']} пускових хабів, {risk_data['total']} областей у зоні ризику."
 
-        if type_data.get("categories"):
-            cats = type_data["categories"]
-            summary_parts.append(f"БПЛА: {cats.get('БПЛА', 0)} | Крилаті ракети: {cats.get('Крилаті ракети', 0)} | Балістика: {cats.get('Балістика', 0)}")
-
-        if daily_data.get("summaries"):
-            latest = daily_data["summaries"][-1] if daily_data["summaries"] else {}
-            if latest:
-                summary_parts.append(f"Ефективність AI: {latest.get('effectiveness_pct', 0)}%")
-
-        summary_text = "\n".join(summary_parts)
-
-        # Save to analytics_reports table
         execute_write(
             """INSERT INTO analytics_reports (report_date, report_type, summary_text, trajectory_data, launch_data, risk_matrix, generated_by)
-               VALUES (?, 'daily', ?, ?, ?, ?, 'manual')""",
+               VALUES (?, 'daily', ?, ?, ?, ?, 'palantir_engine')""",
             (
                 today,
                 summary_text,
@@ -766,13 +760,16 @@ async def get_multihop_flight_chains(days: int = 30):
             for i in range(len(route_list) - 1):
                 src = route_list[i]
                 tgt = route_list[i + 1]
-                if src not in junction_branches:
-                    junction_branches[src] = {}
-                junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + 4
+                if src and tgt and src != tgt:
+                    if src not in junction_branches:
+                        junction_branches[src] = {}
+                    junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + 4
 
             for i in range(len(route_list) - 2):
-                sub_chain = " ➔ ".join(route_list[i:i+3])
-                chain_counts[sub_chain] = chain_counts.get(sub_chain, 0) + 4
+                r1, r2, r3 = route_list[i], route_list[i+1], route_list[i+2]
+                if r1 != r2 and r2 != r3 and r1 != r3:
+                    sub_chain = f"{r1} ➔ {r2} ➔ {r3}"
+                    chain_counts[sub_chain] = chain_counts.get(sub_chain, 0) + 4
 
         # 2. From gemini_rules route patterns
         rules_query = """
@@ -788,7 +785,7 @@ async def get_multihop_flight_chains(days: int = 30):
             cnt = r.get("evidence_count") or 1
             acc = r.get("accuracy_score") or 0.6
             weight = max(1, int(round(cnt * (acc / 0.5))))
-            if src and tgt:
+            if src and tgt and src != tgt:
                 if src not in junction_branches:
                     junction_branches[src] = {}
                 junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + weight
@@ -800,9 +797,9 @@ async def get_multihop_flight_chains(days: int = 30):
         # Synthesize multi-hop Markov chains from connected learned route rules
         for src, next_nodes in rule_map.items():
             for mid, cnt1, acc1 in next_nodes:
-                if mid in rule_map:
+                if mid in rule_map and mid != src:
                     for tgt, cnt2, acc2 in rule_map[mid]:
-                        if tgt != src:
+                        if tgt != src and tgt != mid:
                             chain_str = f"{src} ➔ {mid} ➔ {tgt}"
                             comb_weight = max(1, int(round(min(cnt1, cnt2) * ((acc1 + acc2) / 1.0))))
                             chain_counts[chain_str] = chain_counts.get(chain_str, 0) + comb_weight
@@ -830,12 +827,12 @@ async def get_multihop_flight_chains(days: int = 30):
                 for i in range(len(regions) - 1):
                     src = regions[i]
                     tgt = regions[i + 1]
-                    if src not in junction_branches:
-                        junction_branches[src] = {}
-                    junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + 1
+                    if src and tgt and src != tgt:
+                        if src not in junction_branches:
+                            junction_branches[src] = {}
+                        junction_branches[src][tgt] = junction_branches[src].get(tgt, 0) + 1
 
                 for i in range(len(regions) - 2):
-                    sub_chain = " ➔ ".join(regions[i:i+3])
                     chain_counts[sub_chain] = chain_counts.get(sub_chain, 0) + 1
 
         formatted_chains = [
