@@ -424,7 +424,9 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    error_msg = str(exc.errors())
+    from fastapi.encoders import jsonable_encoder
+    safe_errors = jsonable_encoder(exc.errors())
+    error_msg = str(safe_errors)
     safe_run_task(asyncio.to_thread(
         log_error_to_db,
         "server",
@@ -435,7 +437,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     ))
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": safe_errors},
     )
 
 @app.exception_handler(Exception)
