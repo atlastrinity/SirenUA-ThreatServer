@@ -63,6 +63,18 @@ def test_kinematics_calculations():
     eta_sec, eta_str = calculate_kinematic_eta(350.0, THREAT_TU22M3)
     assert eta_sec < 600  # < 10 mins
 
+    # Test Red vs Yellow zone terminal ETA (distance=0 / eta_seconds=0)
+    from core.threat_types import format_eta_seconds_to_str
+    assert format_eta_seconds_to_str(0, is_official_alarm=True, is_predictive=False) == "в області"
+    assert format_eta_seconds_to_str(0, is_official_alarm=False, is_predictive=True) == "на підльоті"
+    assert format_eta_seconds_to_str(0, is_official_alarm=False, is_predictive=False) == "на підльоті"
+
+    _, zero_red_str = calculate_kinematic_eta(0, THREAT_SHAHED, is_official_alarm=True, is_predictive=False)
+    assert zero_red_str == "в області"
+
+    _, zero_yellow_str = calculate_kinematic_eta(0, THREAT_SHAHED, is_official_alarm=False, is_predictive=True)
+    assert zero_yellow_str == "на підльоті"
+
     print("✅ Kinematics calculation tests passed!")
 
 def test_rules_engine_learning():

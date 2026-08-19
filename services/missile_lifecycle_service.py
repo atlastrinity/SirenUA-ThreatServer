@@ -172,8 +172,8 @@ def should_expire_missile_threat(
             eta_sec = parse_eta_seconds_from_str(eta_str)
 
         if eta_sec and eta_sec > 0:
-            # Буфер після досягнення 0 / "в області"
-            buffer_sec = 45 if is_fast_threat else 90
+            # Буфер після досягнення 0 / "на підльоті" (короткий час верифікації без сирени)
+            buffer_sec = 30 if is_fast_threat else 45
             max_seconds = eta_sec + buffer_sec
             if elapsed_seconds >= max_seconds:
                 res = "expired" if is_predictive else ("intercepted" if is_fast_threat else "expired")
@@ -182,11 +182,11 @@ def should_expire_missile_threat(
                           f"Час підльоту загрози {t_type} ({int(elapsed_seconds)}с) вичерпано без підтвердження тривоги")
                 return True, res, f"{reason}. Загрозу знято."
         else:
-            # Загроза без точного ETA у жовтій зоні без сирени
+            # Загроза без точного ETA у жовтій зоні без сирени (швидке очищення непідтверджених загроз)
             if is_predictive:
-                max_seconds = 180 if is_fast_threat else 600  # 3 хв для ракет, 10 хв для БпЛА
+                max_seconds = 120 if is_fast_threat else 240  # 2 хв для ракет/КАБ, 4 хв для БпЛА
             else:
-                max_seconds = 300 if is_fast_threat else 900  # 5 хв для ракет, 15 хв для БпЛА
+                max_seconds = 180 if is_fast_threat else 360  # 3 хв для ракет/КАБ, 6 хв для БпЛА
             
             if elapsed_seconds >= max_seconds:
                 res = "expired"

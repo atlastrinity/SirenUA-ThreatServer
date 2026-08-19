@@ -1035,10 +1035,10 @@ def get_threat_speed(threat_type: Optional[str], custom_speed: Optional[float] =
         return DEFAULT_SPEEDS_KMH[THREAT_UNKNOWN]
     return DEFAULT_SPEEDS_KMH.get(threat_type, DEFAULT_SPEEDS_KMH[THREAT_UNKNOWN])
 
-def format_eta_seconds_to_str(eta_seconds: Optional[int]) -> str:
+def format_eta_seconds_to_str(eta_seconds: Optional[int], is_official_alarm: bool = True, is_predictive: bool = False) -> str:
     """Formats ETA in seconds into standardized human-readable Ukrainian string with unified 'до ...' format."""
     if eta_seconds is None or eta_seconds <= 0:
-        return "в області"
+        return "в області" if (is_official_alarm and not is_predictive) else "на підльоті"
     
     total_mins = max(1, round(eta_seconds / 60))
     if total_mins < 60:
@@ -1053,18 +1053,21 @@ def format_eta_seconds_to_str(eta_seconds: Optional[int]) -> str:
 def calculate_kinematic_eta(
     distance_km: float, 
     threat_type: Optional[str], 
-    speed_kmh: Optional[float] = None
+    speed_kmh: Optional[float] = None,
+    is_official_alarm: bool = True,
+    is_predictive: bool = False
 ) -> Tuple[int, str]:
     """
     Calculates exact flight duration (seconds) and formatted ETA text
     using physics ballistics formulas for departure & arrival threat objects.
     """
+    terminal_label = "в області" if (is_official_alarm and not is_predictive) else "на підльоті"
     if distance_km <= 0:
-        return 0, "в області"
+        return 0, terminal_label
         
     speed = get_threat_speed(threat_type, speed_kmh)
     if speed <= 0:
-        return 0, "в області"
+        return 0, terminal_label
         
     eta_seconds = int((distance_km / speed) * 3600)
     
@@ -1076,7 +1079,7 @@ def calculate_kinematic_eta(
     elif threat_type in (THREAT_TU95, THREAT_SU35):
         eta_seconds = max(900, eta_seconds + 600)  # standoff launch buffer
 
-    eta_str = format_eta_seconds_to_str(eta_seconds)
+    eta_str = format_eta_seconds_to_str(eta_seconds, is_official_alarm=is_official_alarm, is_predictive=is_predictive)
     return eta_seconds, eta_str
 
 def get_threat_title(threat_type: Optional[str]) -> str:

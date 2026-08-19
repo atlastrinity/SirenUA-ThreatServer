@@ -248,6 +248,49 @@ class TestMissileLifecycleExpiration:
         assert res_type == "expired"
         assert "Прогноз не реалізувався" in reason
 
+    def test_yellow_zone_buffer_thresholds(self):
+        now = datetime.now(timezone.utc)
+        
+        # 1. Швидка ціль (КАБ / крилата ракета) з ETA 60 сек (буфер 30 сек -> max 90 сек)
+        fast_threat = SingleThreat(
+            level="medium",
+            threat_type="kab",
+            detail="КАБ курсом на область",
+            eta="до 1 хв",
+            eta_seconds=60,
+            is_predictive=True
+        )
+        # 80 сек тому: ще в межах буфера (<= 90)
+        fast_threat.since = (now - timedelta(seconds=80)).isoformat()
+        exp, _, _ = should_expire_missile_threat(fast_threat, is_official_alarm_active=False, now_dt=now)
+        assert exp is False
+
+        # 95 сек тому: буфер вичерпано (> 90)
+        fast_threat.since = (now - timedelta(seconds=95)).isoformat()
+        exp, res, reason = should_expire_missile_threat(fast_threat, is_official_alarm_active=False, now_dt=now)
+        assert exp is True
+        assert res == "expired"
+
+        # 2. Дрон (Шахед) з ETA 60 сек (буфер 45 сек -> max 105 сек)
+        drone_threat = SingleThreat(
+            level="medium",
+            threat_type="shahed",
+            detail="БпЛА курсом на область",
+            eta="до 1 хв",
+            eta_seconds=60,
+            is_predictive=True
+        )
+        # 95 сек тому: ще в межах буфера для дрона (<= 105)
+        drone_threat.since = (now - timedelta(seconds=95)).isoformat()
+        exp, _, _ = should_expire_missile_threat(drone_threat, is_official_alarm_active=False, now_dt=now)
+        assert exp is False
+
+        # 110 сек тому: буфер вичерпано (> 105)
+        drone_threat.since = (now - timedelta(seconds=110)).isoformat()
+        exp, res, reason = should_expire_missile_threat(drone_threat, is_official_alarm_active=False, now_dt=now)
+        assert exp is True
+        assert res == "expired"
+
     def test_official_alarm_all_clear_clears_active_threats(self):
         # При відбої офіційної тривоги всі активні загрози в області автоматично очищаються
         manager = MockThreatManager()

@@ -24,7 +24,7 @@ def sanitize_threat_consistency(level: str, detail: Optional[str], is_predictive
             level = "high"
 
     if is_predictive:
-        if eta == "в області":
+        if eta in ("в області", "на підльоті"):
             eta = "~15-30 хв"
         clean_detail = detail
         for p in ["в області", "в межах області", "у межах області", "в повітряному просторі"]:

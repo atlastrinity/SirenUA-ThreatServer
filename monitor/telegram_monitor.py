@@ -1804,7 +1804,10 @@ class TelegramThreatMonitor:
                 await self._run_predictive_reevaluation(region, threat_type, group_id)
             except Exception as e:
                 print(f"⚠️ [Re-evaluation] Error executing task for {region}: {e}")
-            self._reevaluation_tasks.pop(key, None)
+            finally:
+                current_task = asyncio.current_task()
+                if self._reevaluation_tasks.get(key) is current_task:
+                    self._reevaluation_tasks.pop(key, None)
             
         self._reevaluation_tasks[key] = asyncio.create_task(reevaluate())
         print(f"⏳ Заплановано переоцінку предиктивної загрози для {region} (тип: {threat_type}, група: {group_id}) через {int(delay_seconds)} сек")
@@ -1930,6 +1933,12 @@ class TelegramThreatMonitor:
                 for threat in list(state.active_threats):
                     t_type = threat.threat_type
                     t_gid = threat.group_id
+                    key = (region, t_type, t_gid)
+                    if key in self._reevaluation_tasks and not self._reevaluation_tasks[key].done():
+                        continue
+                    if key in self._clear_tasks and not self._clear_tasks[key].done():
+                        continue
+
                     since_str = threat.since
                     if not since_str:
                         continue
@@ -1947,12 +1956,11 @@ class TelegramThreatMonitor:
                         elapsed = (datetime.now(timezone.utc) - since_dt).total_seconds()
                         remaining = delay - elapsed
                         
-                        key = (region, t_type, t_gid)
                         if is_pred:
                             if remaining <= 0:
                                 if key not in self._reevaluation_tasks:
-                                    self._schedule_predictive_reevaluation(region, 30.0, t_type, t_gid)
-                                    print(f"⏳ Предиктивна загроза для {region} (тип: {t_type}) застаріла (ETA минув). Заплановано переоцінку через 30 сек.")
+                                    self._schedule_predictive_reevaluation(region, 60.0, t_type, t_gid)
+                                    print(f"⏳ Предиктивна загроза для {region} (тип: {t_type}) застаріла (ETA минув). Заплановано переоцінку через 60 сек.")
                             else:
                                 if key not in self._reevaluation_tasks:
                                     self._schedule_predictive_reevaluation(region, remaining, t_type, t_gid)

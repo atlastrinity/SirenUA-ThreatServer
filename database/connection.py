@@ -9,9 +9,9 @@ def get_sqlite_connection(db_path: str = None) -> sqlite3.Connection:
     """Отримує SQLite з'єднання з PRAGMA wal та busy_timeout."""
     if db_path is None:
         db_path = os.environ.get("DB_PATH") or core.config.DB_PATH or "threat_analytics.db"
-    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn = sqlite3.connect(db_path, timeout=30.0)
     conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 10000")
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA wal_autocheckpoint = 1000")
     return conn
@@ -54,7 +54,7 @@ def delete_test_history_from_sqlite():
 def execute_write(query: str, params: tuple = ()) -> bool:
     """Виконує запис у базу даних SQLite з обробкою винятків, retry при lock та відкотом (rollback)."""
     import time
-    for attempt in range(5):
+    for attempt in range(10):
         conn = None
         try:
             conn = get_sqlite_connection(DB_PATH)
@@ -63,8 +63,8 @@ def execute_write(query: str, params: tuple = ()) -> bool:
             conn.commit()
             return True
         except sqlite3.OperationalError as oe:
-            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
-                time.sleep(0.1 * (attempt + 1))
+            if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 9:
+                time.sleep(min(0.15 * (1.5 ** attempt), 1.5))
                 continue
             print(f"⚠️ [SQL Write OperationalError] {oe}")
             return False
