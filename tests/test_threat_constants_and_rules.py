@@ -283,7 +283,7 @@ def test_aviation_strike_profiles():
     prof1 = resolve_aviation_strike_profile("kab", "Пуски КАБ на Харків з Бєлгородщини", "Харківська область")
     assert prof1["is_aviation"] is True
     assert prof1["carrier_type"] == "su34"
-    assert "Бєлгородський прикордонний рубіж" in prof1["launch_sector_name"]
+    assert "Бєлгородський рубіж" in prof1["launch_sector_name"]
     assert prof1["launch_sector_latitude"] == 50.60
     assert prof1["carrier_origin_name"] is not None
 
