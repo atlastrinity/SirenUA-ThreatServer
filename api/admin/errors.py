@@ -73,15 +73,17 @@ async def get_admin_errors_summary(days: int = 7):
 
 
 @router.delete("/api/admin/errors")
+@router.post("/api/admin/errors/clear")
 async def clear_admin_errors(source: str = None, error_type: str = None):
     """Очищає логи помилок (повністю або за фільтром)."""
+    import asyncio
     from database.db_helpers import execute_write
     if source and error_type:
-        deleted = execute_write("DELETE FROM error_log WHERE source = ? AND error_type = ?", (source, error_type))
+        deleted = await asyncio.to_thread(execute_write, "DELETE FROM error_log WHERE source = ? AND error_type = ?", (source, error_type))
     elif source:
-        deleted = execute_write("DELETE FROM error_log WHERE source = ?", (source,))
+        deleted = await asyncio.to_thread(execute_write, "DELETE FROM error_log WHERE source = ?", (source,))
     elif error_type:
-        deleted = execute_write("DELETE FROM error_log WHERE error_type = ?", (error_type,))
+        deleted = await asyncio.to_thread(execute_write, "DELETE FROM error_log WHERE error_type = ?", (error_type,))
     else:
-        deleted = execute_write("DELETE FROM error_log")
+        deleted = await asyncio.to_thread(execute_write, "DELETE FROM error_log")
     return {"status": "ok", "deleted": deleted}
