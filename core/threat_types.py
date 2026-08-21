@@ -1412,6 +1412,12 @@ def resolve_aviation_strike_profile(
 
         pad_info = DRONE_LAUNCH_SITES.get(airbase_key) or RUSSIAN_AIRBASES.get(airbase_key)
         sector_info = AVIATION_LAUNCH_SECTORS.get(sector_key)
+        
+        is_maritime_corridor = sector_key in [SECTOR_BLACK_SEA, SECTOR_AZOV_SEA]
+        launch_name = sector_info["title"] if (is_maritime_corridor and sector_info) else (pad_info["title"] if pad_info else "Полігон Халіно / Курськ (РФ)")
+        launch_lat = sector_info["lat_lon"][0] if (is_maritime_corridor and sector_info) else (pad_info["lat_lon"][0] if pad_info else 51.75)
+        launch_lon = sector_info["lat_lon"][1] if (is_maritime_corridor and sector_info) else (pad_info["lat_lon"][1] if pad_info else 36.29)
+
         return {
             "is_aviation": False,
             "platform_type": platform_type,
@@ -1419,9 +1425,9 @@ def resolve_aviation_strike_profile(
             "carrier_origin_name": pad_info["title"] if pad_info else "Мис Чауда (АР Крим)",
             "carrier_origin_latitude": pad_info["lat_lon"][0] if pad_info else 45.00,
             "carrier_origin_longitude": pad_info["lat_lon"][1] if pad_info else 35.83,
-            "launch_sector_name": sector_info["title"] if sector_info else "Акваторія Чорного моря",
-            "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else 44.50,
-            "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else 32.00,
+            "launch_sector_name": launch_name,
+            "launch_sector_latitude": launch_lat,
+            "launch_sector_longitude": launch_lon,
         }
 
     # =========================================================================
@@ -1624,6 +1630,12 @@ def resolve_aviation_strike_profile(
 
         site_info = BALLISTIC_LAUNCH_SITES.get(ballistic_site_key)
         sector_info = AVIATION_LAUNCH_SECTORS.get(sector_key)
+        is_maritime_ballistic = sector_key in [SECTOR_BLACK_SEA, SECTOR_AZOV_SEA, SECTOR_CASPIAN_SEA]
+        
+        launch_name = sector_info["title"] if (is_maritime_ballistic and sector_info) else (site_info["title"] if site_info else "Позиційний район Бєлгородська обл. РФ")
+        launch_lat = sector_info["lat_lon"][0] if (is_maritime_ballistic and sector_info) else (site_info["lat_lon"][0] if site_info else 50.60)
+        launch_lon = sector_info["lat_lon"][1] if (is_maritime_ballistic and sector_info) else (site_info["lat_lon"][1] if site_info else 36.58)
+
         return {
             "is_aviation": False,
             "platform_type": platform_type,
@@ -1631,9 +1643,9 @@ def resolve_aviation_strike_profile(
             "carrier_origin_name": site_info["title"] if site_info else "Позиційний район Бєлгородська обл. РФ",
             "carrier_origin_latitude": site_info["lat_lon"][0] if site_info else 50.60,
             "carrier_origin_longitude": site_info["lat_lon"][1] if site_info else 36.58,
-            "launch_sector_name": sector_info["title"] if sector_info else (site_info["title"] if site_info else None),
-            "launch_sector_latitude": sector_info["lat_lon"][0] if sector_info else 50.60,
-            "launch_sector_longitude": sector_info["lat_lon"][1] if sector_info else 36.58,
+            "launch_sector_name": launch_name,
+            "launch_sector_latitude": launch_lat,
+            "launch_sector_longitude": launch_lon,
         }
 
     # =========================================================================
