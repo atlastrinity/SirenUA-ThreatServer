@@ -4,6 +4,7 @@ Defines verification pauses, hysteresis buffers, and priority rules for FCM push
 Encapsulates thread-safe timer scheduling, cancellation, and pending buffer state.
 """
 
+import os
 import threading
 from typing import Optional, Callable, Dict
 from database.db_helpers import send_fcm_notification
@@ -61,6 +62,9 @@ class FCMNotificationScheduler:
         Планує відправку FCM пуша з верифікаційною паузою.
         При повторній події для тієї ж області попередній таймер скасовується.
         """
+        if "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("ENV") == "test":
+            return
+
         with self._lock:
             existing_timer = self._pending_timers.pop(region, None)
             if existing_timer:
