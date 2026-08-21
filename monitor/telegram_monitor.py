@@ -999,8 +999,10 @@ class TelegramThreatMonitor:
         
         for source_region, state in active_threats.items():
             threat_type = state.threat_type
-            
-            # Get telemetry for this region from the latest DB entry
+
+            # Tactical short-range munitions (KABs, Artillery, MLRS, FPV) cannot transit across distant oblasts
+            if threat_type in ("kab", "artillery", "mlrs", "fpv", "recon", "recon_uav", "urban_fights"):
+                continue
             telemetry = self._get_latest_telemetry(source_region)
             
             # Calculate direction bearing
