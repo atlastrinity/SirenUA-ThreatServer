@@ -325,7 +325,7 @@ class GeminiRulesLearner:
                 JOIN telemetry_data td ON pe.telemetry_id = td.id
                 WHERE pe.lifecycle_status = 'cleared'
                   AND td.launch_origin IS NOT NULL
-                  AND pe.threat_type IN ('kab', 'su35', 'mig31k', 'tu95', 'tu22m3', 'cruise_missile', 'shahed', 'ballistic', 'iskander')
+                  AND pe.threat_type IN ('kab', 'su35', 'mig31k', 'tu95', 'tu22m3', 'cruise_missile', 'shahed', 'reactive_uav', 'jet_shahed', 'ballistic', 'iskander', 'zircon', 'artillery', 'mlrs', 'fpv')
                   AND pe.created_at >= datetime('now', '-30 days')
                 GROUP BY td.launch_origin, pe.region, pe.threat_type
                 HAVING occurrence_count >= 2
