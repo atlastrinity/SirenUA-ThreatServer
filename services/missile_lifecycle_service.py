@@ -204,6 +204,103 @@ def should_expire_missile_threat(
     return False, "", ""
 
 
+def cleanup_stale_paired_events() -> int:
+    """
+    Cleans up any stale active paired_events in DB older than 2 hours.
+    Ensures every cleared event is properly logged in threat_clearings and threat_history
+    so that no threat is left without a closing clearing event in the chronology.
+    """
+    cleared_count = 0
+    try:
+        from database.db_helpers import get_sqlite_connection
+        from database.analytics_db import log_clearing_to_db
+        import sqlite3
+
+        conn = get_sqlite_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Query active paired events older than 2 hours
+        cursor.execute("""
+            SELECT pe.id, pe.region, pe.threat_type, pe.threat_level, pe.gemini_group_id,
+                   pe.was_predictive, pe.created_at, pe.threat_event_id,
+                   th.timestamp as threat_timestamp, th.detail as threat_detail
+            FROM paired_events pe
+            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+            WHERE pe.lifecycle_status = 'active'
+              AND pe.created_at <= datetime('now', '-2 hours')
+        """)
+        stale_rows = cursor.fetchall()
+        conn.close()
+
+        for row in stale_rows:
+            region = row["region"]
+            threat_type = row["threat_type"]
+            group_id = row["gemini_group_id"]
+            was_predictive = bool(row["was_predictive"])
+            created_at_str = row["created_at"] or row["threat_timestamp"]
+
+            # Calculate realistic clearing timestamp based on threat kinematics
+            max_sec = get_missile_max_flight_seconds(threat_type)
+            clearing_ts = None
+            if created_at_str:
+                try:
+                    c_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00").replace(" ", "T"))
+                    if c_dt.tzinfo is None:
+                        c_dt = c_dt.replace(tzinfo=timezone.utc)
+                    from datetime import timedelta
+                    clear_dt = c_dt + timedelta(seconds=max_sec)
+                    clearing_ts = clear_dt.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    clearing_ts = None
+
+            accuracy_hint = "overestimated" if was_predictive else "mitigated"
+            clearing_telemetry = {
+                "linked_group_id": group_id,
+                "resolution_type": "expired",
+                "prediction_accuracy_hint": accuracy_hint,
+                "damage_assessment": "none",
+                "impact_confirmed": False,
+                "clearing_context_tags": ["stale_lifecycle_cleanup", "expired"]
+            }
+            reason = f"🟢 Відбій загрози {threat_type or 'БпЛА'}. Час польоту вичерпано. Траєкторію вилучено."
+
+            try:
+                log_clearing_to_db(
+                    region=region,
+                    clearing_telemetry=clearing_telemetry,
+                    source_channel="StaleLifecycleCleanup",
+                    message_text=reason,
+                    clearing_confidence=80,
+                    was_predictive=was_predictive,
+                    threat_type=threat_type,
+                    clearing_timestamp=clearing_ts,
+                    skip_history_log=False
+                )
+                cleared_count += 1
+            except Exception as log_err:
+                logger.error(f"⚠️ Error logging clearing for stale paired event {row['id']}: {log_err}")
+
+        # Fallback safety update for any remaining orphaned active paired_events older than 3 hours
+        from database.connection import execute_write
+        execute_write("""
+            UPDATE paired_events
+            SET lifecycle_status = 'cleared',
+                prediction_accuracy = CASE 
+                    WHEN prediction_accuracy IS NOT NULL AND prediction_accuracy != '' THEN prediction_accuracy
+                    WHEN was_predictive = 1 THEN 'overestimated'
+                    ELSE 'mitigated'
+                END
+            WHERE lifecycle_status = 'active'
+              AND created_at <= datetime('now', '-3 hours')
+        """)
+
+    except Exception as cleanup_err:
+        logger.debug(f"[Missile-Lifecycle] DB stale cleanup error: {cleanup_err}")
+
+    return cleared_count
+
+
 def prune_expired_missile_threats(threat_manager: Any, official_alarms_dict: Dict[str, bool]) -> List[Dict[str, Any]]:
     """
     Періодично перевіряє всі активні загрози та траєкторії ракет у всіх областях,
@@ -259,23 +356,8 @@ def prune_expired_missile_threats(threat_manager: Any, official_alarms_dict: Dic
                     "reason": reason
                 })
 
-    # Clean up any stale active paired_events in DB older than 2 hours
-    try:
-        from database.connection import execute_write
-        stale_cleanup_sql = """
-            UPDATE paired_events
-            SET lifecycle_status = 'cleared',
-                prediction_accuracy = CASE 
-                    WHEN prediction_accuracy IS NOT NULL AND prediction_accuracy != '' THEN prediction_accuracy
-                    WHEN was_predictive = 1 THEN 'overestimated'
-                    ELSE 'mitigated'
-                END
-            WHERE lifecycle_status = 'active'
-              AND created_at <= datetime('now', '-2 hours')
-        """
-        execute_write(stale_cleanup_sql)
-    except Exception as cleanup_err:
-        logger.debug(f"[Missile-Lifecycle] DB stale cleanup error: {cleanup_err}")
+    # Clean up stale active paired events with full threat_history and threat_clearings logging
+    cleanup_stale_paired_events()
 
     return cleared_summary
 

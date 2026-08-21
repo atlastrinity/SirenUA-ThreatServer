@@ -1512,9 +1512,6 @@ class TelegramThreatMonitor:
                 seg_regions = self._extract_regions(segment)
                 if seg_regions:
                     for region in seg_regions:
-                        self.threat_manager.clear_threat(region)
-                        self._cancel_clear_tasks(region)
-                        cleared_regions.add(region)
                         from database.analytics_db import log_clearing_to_db
                         log_clearing_to_db(
                             region=region,
@@ -1525,6 +1522,9 @@ class TelegramThreatMonitor:
                             is_test=is_test,
                             clearing_timestamp=msg_date
                         )
+                        self.threat_manager.clear_threat(region)
+                        self._cancel_clear_tasks(region)
+                        cleared_regions.add(region)
                 else:
                     # If it says 'clear' but names no regions, it might be a general clear.
                     # We only clear all if the entire message contains no other region mentions

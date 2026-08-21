@@ -429,6 +429,26 @@ class MockThreatManager:
             self.real_threats_backup[region] = old_state.to_dict()
             self.save_real_threats_to_db()
 
+            # Ensure closing clearing event is logged to DB if active paired event exists
+            try:
+                from database.analytics_db import log_clearing_to_db
+                target_gid = linked_gid or (removed_threat.group_id if removed_threat else None)
+                target_type = clearing_type or (removed_threat.threat_type if removed_threat else None)
+                target_tel = dict(clearing_telemetry) if clearing_telemetry else {}
+                if target_gid and "linked_group_id" not in target_tel:
+                    target_tel["linked_group_id"] = target_gid
+                log_clearing_to_db(
+                    region=region,
+                    clearing_telemetry=target_tel,
+                    source_channel="ThreatManager",
+                    message_text=f"🟢 Відбій загрози {target_type or 'БпЛА'}",
+                    threat_type=target_type,
+                    clearing_timestamp=target_tel.get("clearing_timestamp"),
+                    skip_history_log=False
+                )
+            except Exception:
+                pass
+
         if has_changed:
             current_level = old_state.level
             if current_level == "none":

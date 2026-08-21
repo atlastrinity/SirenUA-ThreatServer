@@ -1120,7 +1120,7 @@ def reconcile_active_threats_with_db(manager):
                 if t.threat_type and t.threat_type != THREAT_OFFICIAL_ALARM
             ]
             
-        # 2. Close stale DB records that are not in RAM
+        # 2. Close stale DB records that are not in RAM with full lifecycle logging
         for row in active_db_rows:
             pe_id = row["id"]
             reg = row["region"]
@@ -1136,12 +1136,31 @@ def reconcile_active_threats_with_db(manager):
                     break
                     
             if not matching_in_ram:
-                cursor.execute("""
-                    UPDATE paired_events 
-                    SET lifecycle_status = 'cleared', 
-                        prediction_accuracy = COALESCE(prediction_accuracy, 'overestimated')
-                    WHERE id = ?
-                """, (pe_id,))
+                try:
+                    clearing_telemetry = {
+                        "linked_group_id": gid,
+                        "resolution_type": "expired",
+                        "prediction_accuracy_hint": "overestimated",
+                        "damage_assessment": "none",
+                        "impact_confirmed": False,
+                        "clearing_context_tags": ["reconcile_active_threats", "expired"]
+                    }
+                    log_clearing_to_db(
+                        region=reg,
+                        clearing_telemetry=clearing_telemetry,
+                        source_channel="ReconcileActiveThreats",
+                        message_text=f"🟢 Відбій загрози {t_type or 'БпЛА'}. Час польоту вичерпано. Траєкторію вилучено.",
+                        clearing_confidence=80,
+                        threat_type=t_type,
+                        skip_history_log=False
+                    )
+                except Exception as log_err:
+                    cursor.execute("""
+                        UPDATE paired_events 
+                        SET lifecycle_status = 'cleared', 
+                            prediction_accuracy = COALESCE(prediction_accuracy, 'overestimated')
+                        WHERE id = ?
+                    """, (pe_id,))
         
         conn.commit()
         conn.close()
