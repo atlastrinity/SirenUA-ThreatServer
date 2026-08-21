@@ -181,7 +181,7 @@ class GeminiThreatAnalyzer:
         except Exception as e:
             print(f"⚠️ [Rules Engine] Помилка навчання: {e}")
             if self._error_callback:
-                self._error_callback("gemini", str(e), endpoint="run_rules_learner")
+                self._error_callback("gemini", str(e).strip() or repr(e) or type(e).__name__, endpoint="run_rules_learner")
             return 0
 
     async def run_post_mortem(self, hours: int = 4) -> Dict[str, Any]:
@@ -193,7 +193,7 @@ class GeminiThreatAnalyzer:
         except Exception as e:
             print(f"⚠️ [Post-Mortem] Помилка виконання рефлексії: {e}")
             if self._error_callback:
-                self._error_callback("gemini", str(e), endpoint="run_post_mortem")
+                self._error_callback("gemini", str(e).strip() or repr(e) or type(e).__name__, endpoint="run_post_mortem")
             return {"status": "error", "error": str(e)}
 
     async def analyze_batch(self, messages: List[Dict[str, str]], context_messages: List[Dict[str, str]] = None) -> List[Dict[str, Any]]:
