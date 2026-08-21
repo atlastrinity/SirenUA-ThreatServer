@@ -157,8 +157,8 @@ def backup_sqlite_to_firestore():
             ("threat_history", ["id", "timestamp", "region", "threat_level", "threat_type", "detail", "confidence", "is_test"], None),
             ("threat_clearings", ["id", "timestamp", "region", "original_threat_event_id", "linked_group_id", "linked_correlation_group", "resolution_type", "intercepted_count", "total_targets_in_wave", "impact_confirmed", "damage_assessment", "civilian_casualties_reported", "infrastructure_hit", "air_defense_effectiveness", "threat_duration_assessment", "prediction_accuracy_hint", "was_predictive", "original_threat_level", "original_threat_type", "original_confidence", "clearing_confidence", "clearing_context_tags", "source_reliability", "time_of_day_category", "clearing_source_channel", "clearing_message_text", "threat_set_timestamp", "threat_duration_seconds", "is_test"], None),
             ("telemetry_data", ["id", "threat_event_id", "group_id", "attack_vector", "target_count", "speed_kmh", "altitude_category", "heading_degrees", "distance_to_target_km", "launch_origin", "weapon_subtype", "engagement_status", "air_defense_active", "multiple_waves", "wave_number", "time_of_day_category", "weather_factor", "source_reliability", "message_context_tags", "strategic_priority", "civilian_risk_level", "event_phase", "correlation_group", "target_cities_coords"], None),
-            ("gemini_rules_audit", ["id", "timestamp", "action", "rule_type", "rule_text", "source_region", "target_region", "threat_type", "reason"], None),
-            ("error_log", ["id", "timestamp", "source", "error_type", "message", "endpoint", "context"], None),
+            ("gemini_rules_audit", ["id", "timestamp", "action", "rule_type", "rule_text", "source_region", "target_region", "threat_type", "reason"], 500),
+            ("error_log", ["id", "timestamp", "source", "error_type", "message", "endpoint", "context"], 500),
             ("analytics_reports", ["id", "created_at", "report_date", "report_type", "summary_text", "trajectory_data", "launch_data", "risk_matrix", "generated_by"], 200),
             ("palantir_reports", ["id", "created_at", "report_date", "threat_assessment_summary", "palantir_vectors_json", "launch_hubs_json", "risk_matrix_json", "confidence_index", "generated_by"], 200),
         ]
@@ -183,22 +183,53 @@ def backup_sqlite_to_firestore():
         compressed = gzip.compress(json_str.encode('utf-8'))
         encoded = base64.b64encode(compressed).decode('utf-8')
         
+        chunk_size = 700_000
+        chunks = [encoded[i:i+chunk_size] for i in range(0, len(encoded), chunk_size)]
+        
         doc_ref = db.collection('sirenua_backup').document('sqlite_compressed')
-        run_firestore_with_retry(
-            lambda: doc_ref.set({
-                "timestamp": firestore.SERVER_TIMESTAMP,
-                "data": encoded,
-                "version": "2.0",
-                "tables_backed_up": list(backup_data.keys()),
-                "uncompressed_size_kb": len(json_str) / 1024,
-                "compressed_size_kb": len(compressed) / 1024
-            }),
-            operation_name="backup_sqlite_to_firestore_set",
-            context_info="saving_sqlite_compressed",
-            max_retries=3
-        )
+        if len(chunks) == 1:
+            run_firestore_with_retry(
+                lambda: doc_ref.set({
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                    "data": encoded,
+                    "chunks_count": 1,
+                    "version": "2.0",
+                    "tables_backed_up": list(backup_data.keys()),
+                    "uncompressed_size_kb": len(json_str) / 1024,
+                    "compressed_size_kb": len(compressed) / 1024
+                }),
+                operation_name="backup_sqlite_to_firestore_set",
+                context_info="saving_sqlite_compressed",
+                max_retries=3
+            )
+        else:
+            for idx, chunk in enumerate(chunks):
+                chunk_ref = db.collection('sirenua_backup').document(f'sqlite_compressed_chunk_{idx}')
+                run_firestore_with_retry(
+                    lambda c_ref=chunk_ref, c_data=chunk, c_idx=idx: c_ref.set({
+                        "data": c_data,
+                        "chunk_index": c_idx,
+                        "total_chunks": len(chunks)
+                    }),
+                    operation_name=f"backup_sqlite_chunk_{idx}",
+                    context_info=f"saving_chunk_{idx}",
+                    max_retries=3
+                )
+            run_firestore_with_retry(
+                lambda: doc_ref.set({
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                    "chunks_count": len(chunks),
+                    "version": "2.0",
+                    "tables_backed_up": list(backup_data.keys()),
+                    "uncompressed_size_kb": len(json_str) / 1024,
+                    "compressed_size_kb": len(compressed) / 1024
+                }),
+                operation_name="backup_sqlite_to_firestore_manifest",
+                context_info="saving_sqlite_manifest",
+                max_retries=3
+            )
         local_sqlite_backup()
-        print(f"💾 [Backup] SQLite атомарно стиснуто ({len(compressed)/1024:.1f} KB) і збережено в Firestore & Local!")
+        print(f"💾 [Backup] SQLite атомарно стиснуто ({len(compressed)/1024:.1f} KB, {len(chunks)} chunk(s)) і збережено в Firestore & Local!")
         return True
     except Exception as e:
         logger.error(f"Помилка резервного копіювання SQLite у Firestore: {e}")
@@ -350,7 +381,23 @@ def restore_sqlite_from_firestore(force: bool = False):
             return res
             
         payload = doc.to_dict() or {}
-        encoded = payload.get("data")
+        chunks_count = payload.get("chunks_count", 1)
+        encoded = ""
+        if chunks_count > 1:
+            for idx in range(chunks_count):
+                chunk_ref = db.collection('sirenua_backup').document(f'sqlite_compressed_chunk_{idx}')
+                chunk_doc = run_firestore_with_retry(
+                    lambda c_ref=chunk_ref: c_ref.get(),
+                    operation_name=f"restore_sqlite_chunk_{idx}_get",
+                    context_info=f"fetching_chunk_{idx}",
+                    max_retries=3
+                )
+                if chunk_doc and chunk_doc.exists:
+                    c_dict = chunk_doc.to_dict() or {}
+                    encoded += (c_dict.get("data") or "")
+        else:
+            encoded = payload.get("data") or ""
+            
         if not encoded:
             print("⚠️ [Restore] Дані бекапу SQLite порожні, спроба завантаження з колекції sirenua_history...")
             res = _restore_from_sirenua_history_collection(db)

@@ -146,6 +146,19 @@ async def trigger_admin_post_mortem(hours: int = 4):
         from analyzer.rules.post_mortem import GeminiPostMortemAnalyzer
         analyzer = GeminiPostMortemAnalyzer()
         result = await analyzer.run_post_mortem(hours=hours)
+        if isinstance(result, dict):
+            rules_list = result.get("rules", [])
+            rules_details = []
+            for r in rules_list:
+                if isinstance(r, dict):
+                    rules_details.append({
+                        "rule_type": r.get("rule_type", "general"),
+                        "rule_text": r.get("rule_text", ""),
+                        "accuracy_score": r.get("accuracy") or r.get("accuracy_score")
+                    })
+            result["rules_created"] = result.get("saved_rules_count", len(rules_list))
+            result["message"] = result.get("tactical_assessment") or result.get("message") or "Рефлексію Post-Mortem виконано успішно"
+            result["rules_details"] = rules_details
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -155,12 +168,17 @@ async def trigger_admin_post_mortem(hours: int = 4):
 async def trigger_admin_relearn():
     """Викликати центральний цикл автонавчання правил Gemini (Rules Learner)."""
     try:
-        from analyzer.rules.learner import GeminiRulesLearner
-        learner = GeminiRulesLearner()
-        total_learned = learner.run_rules_learner()
+        from analyzer.gemini_analyzer import GeminiThreatAnalyzer
+        from database.error_logger import log_error_to_db, log_rule_audit_to_db
+        import asyncio
+
+        analyzer = GeminiThreatAnalyzer(error_callback=log_error_to_db, rule_audit_callback=log_rule_audit_to_db)
+        loop = asyncio.get_running_loop()
+        total_learned = await loop.run_in_executor(None, analyzer.run_rules_learner)
         return {
             "status": "success",
             "total_learned": total_learned,
+            "rules_updated": total_learned,
             "message": f"Автонавчання завершено: {total_learned} активних правил."
         }
     except Exception as e:

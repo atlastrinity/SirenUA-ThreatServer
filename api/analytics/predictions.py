@@ -74,19 +74,24 @@ async def get_rules(
 
 
 @router.post("/api/analytics/rules/rebuild")
+@router.post("/api/analytics/predictions/learn")
 async def rebuild_rules():
-    """Перебудовує правила класифікації з поточної бази даних (Gemini)."""
+    """Перебудовує правила класифікації з поточної бази даних (Gemini) або викликає фонове автонавчання."""
     try:
         from analyzer.gemini_analyzer import GeminiThreatAnalyzer
         from database.error_logger import log_error_to_db, log_rule_audit_to_db
         import asyncio
 
         analyzer = GeminiThreatAnalyzer(error_callback=log_error_to_db, rule_audit_callback=log_rule_audit_to_db)
-        
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         rules_updated = await loop.run_in_executor(None, analyzer.run_rules_learner)
         
-        return {"status": "ok", "rules_updated": rules_updated}
+        return {
+            "status": "ok",
+            "rules_updated": rules_updated,
+            "total_learned": rules_updated,
+            "message": f"Автонавчання завершено: {rules_updated} активних правил."
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

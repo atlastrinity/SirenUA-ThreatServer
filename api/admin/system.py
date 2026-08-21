@@ -78,7 +78,7 @@ async def get_sources_status():
     import core.globals
     ukraine_alarm_token = os.environ.get("UKRAINE_ALARM_API_KEY") or os.environ.get("UKRAINE_ALARM_TOKEN")
     alerts_in_ua_token = os.environ.get("ALERTS_TOKEN")
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEYS")
     telegram_monitor = getattr(core.globals, "telegram_monitor", None)
     sources_info = getattr(core.globals, "sources_status", {})
 
@@ -118,7 +118,7 @@ async def get_sources_status():
             "gemini": {
                 "name": "Аналізатор Gemini AI",
                 "configured": bool(gemini_key),
-                "status": "ONLINE" if (gemini_key and telegram_monitor and telegram_monitor.analyzer.is_configured) else ("MOCK" if not IS_LIVE_MODE else "OFFLINE")
+                "status": "ONLINE" if (gemini_key and telegram_monitor and getattr(telegram_monitor, "analyzer", None) and telegram_monitor.analyzer.is_configured) else ("MOCK" if not IS_LIVE_MODE else "OFFLINE")
             }
         }
     }

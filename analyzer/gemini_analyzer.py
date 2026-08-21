@@ -267,7 +267,7 @@ class GeminiThreatAnalyzer:
                 
                 return results
             except Exception as e:
-                error_msg = str(e)
+                error_msg = str(e).strip() or f"{type(e).__name__}"
                 print(f"❌ Gemini API Error (Attempt {attempt + 1}/{max_attempts}): {error_msg}")
                 self.last_error = error_msg
                 
@@ -558,7 +558,7 @@ Here are the latest Telegram messages:
                 self.last_error = None
                 return json.loads(result_text.strip())
             except Exception as e:
-                error_msg = str(e)
+                error_msg = str(e).strip() or f"{type(e).__name__}"
                 print(f"❌ Gemini Re-evaluation API Error (Attempt {attempt + 1}/{max_attempts}): {error_msg}")
                 is_rate_limit = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "rate limit" in error_msg.lower()
                 
