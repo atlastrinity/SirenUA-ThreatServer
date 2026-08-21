@@ -3,6 +3,7 @@ SirenUA Database & Push Notification Helpers.
 Handles Firebase / Firestore clients, backups, and FCM queue worker.
 """
 
+import os
 import sqlite3
 import asyncio
 from datetime import datetime, timezone
@@ -149,6 +150,9 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
     Звук, вібрація та рівень переривання визначаються виключно iOS-клієнтом
     на основі локальних налаштувань користувача (6 рубільників).
     """
+    if "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("ENV") == "test":
+        return
+
     if not HAS_FIREBASE or not firebase_admin._apps:
         return
 
