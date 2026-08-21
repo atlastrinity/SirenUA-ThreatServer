@@ -65,7 +65,8 @@ async def get_admin_chronology(
 
         decoded_region = None
         if region:
-            decoded_region = unquote(region)
+            from core.regions import normalize_region_name
+            decoded_region = normalize_region_name(unquote(region))
             query += " AND pe.region = ?"
             params.append(decoded_region)
         if threat_type:
@@ -355,7 +356,8 @@ async def get_admin_chronology_v2(
         extra_params = []
         decoded_region = None
         if region:
-            decoded_region = unquote(region)
+            from core.regions import normalize_region_name
+            decoded_region = normalize_region_name(unquote(region))
             where_extra += " AND pe.region = ?"
             extra_params.append(decoded_region)
         if threat_type:

@@ -15,7 +15,8 @@ router = APIRouter()
 async def get_region_telemetry(region: str, limit: int = 50, days: int = 30):
     """Повна телеметрія для регіону з групуванням."""
     from urllib.parse import unquote
-    region = unquote(region)
+    from core.regions import normalize_region_name
+    region = normalize_region_name(unquote(region))
 
     base_query = '''
         SELECT th.id, th.timestamp, th.region, th.threat_level, th.threat_type,
@@ -91,7 +92,8 @@ async def get_attack_groups(days: int = 7, limit: int = 50):
 async def get_lifecycle_data(region: str, days: int = 30, limit: int = 50):
     """Повний lifecycle загроз для регіону: встановлення → зняття з телеметрією обох подій."""
     from urllib.parse import unquote
-    region = unquote(region)
+    from core.regions import normalize_region_name
+    region = normalize_region_name(unquote(region))
 
     base_query = '''
         SELECT 
@@ -154,7 +156,8 @@ async def get_paired_events(region: str = None, status: str = None, days: int = 
     filters = {}
     if region:
         from urllib.parse import unquote
-        filters["pe.region"] = unquote(region)
+        from core.regions import normalize_region_name
+        filters["pe.region"] = normalize_region_name(unquote(region))
     if status:
         filters["pe.lifecycle_status"] = status
 

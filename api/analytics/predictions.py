@@ -31,7 +31,8 @@ async def get_predictions(region: str = None, days: int = 3, limit: int = 50):
     filters = {}
     if region:
         from urllib.parse import unquote
-        filters["th.region"] = unquote(region)
+        from core.regions import normalize_region_name
+        filters["th.region"] = normalize_region_name(unquote(region))
 
     events = build_and_execute_query(
         base_query=base_query,
@@ -122,7 +123,8 @@ async def get_region_history(
     from urllib.parse import unquote
     from datetime import datetime as dt, timedelta, time as dt_time, timezone
     from database.db_helpers import DB_PATH
-    region = unquote(region)
+    from core.regions import normalize_region_name
+    region = normalize_region_name(unquote(region))
     
     # --- Часова зона Києва ---
     try:
