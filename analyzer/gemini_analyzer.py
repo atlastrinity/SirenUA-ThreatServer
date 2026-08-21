@@ -88,15 +88,34 @@ class GeminiThreatAnalyzer:
             if not all_rules:
                 return ""
 
+            # Extract direct words present in text for exact scoring
+            direct_keywords = [kw for kw in detected_keywords if kw in text_lower]
+
             # If specific clusters detected, prioritize relevant rules (RAG filtering)
             selected_rules = []
-            if detected_keywords:
+            if direct_keywords or detected_keywords:
+                # 1. Primary pass: match direct keywords in target_region or rule_text
                 for rule in all_rules:
-                    rule_str = f"{rule['source_region']} {rule['target_region']} {rule['threat_type']} {rule['rule_text']}".lower()
-                    if any(kw in rule_str for kw in detected_keywords):
+                    rule_target = (rule['target_region'] or "").lower()
+                    rule_source = (rule['source_region'] or "").lower()
+                    rule_type = (rule['threat_type'] or "").lower()
+                    rule_text = (rule['rule_text'] or "").lower()
+                    
+                    # Direct match has highest relevance
+                    if any(kw in rule_target or kw in rule_source or kw in rule_text for kw in direct_keywords):
                         selected_rules.append(rule)
                     if len(selected_rules) >= 8:
                         break
+
+                # 2. Secondary pass: match broader cluster keywords if under 8 rules
+                if len(selected_rules) < 8:
+                    for rule in all_rules:
+                        if rule not in selected_rules:
+                            rule_str = f"{rule['source_region']} {rule['target_region']} {rule['threat_type']} {rule['rule_text']}".lower()
+                            if any(kw in rule_str for kw in detected_keywords):
+                                selected_rules.append(rule)
+                            if len(selected_rules) >= 8:
+                                break
 
             # Fallback to top general rules if no specific match
             if not selected_rules:
