@@ -144,11 +144,18 @@ def test_rules_learner_and_evaluator(temp_rules_db):
     assert "Чернігівська область" in prompt_ctx
 
 
-def test_admin_rules_endpoints():
+def test_admin_rules_endpoints(temp_rules_db, monkeypatch):
     """Test Admin Console API endpoints for Gemini rules."""
-    from fastapi.testclient import TestClient
-    from server import app
+    monkeypatch.setenv("DB_PATH", temp_rules_db)
+    import core.config
+    monkeypatch.setattr(core.config, "DB_PATH", temp_rules_db)
 
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api.admin import router as admin_router
+
+    app = FastAPI()
+    app.include_router(admin_router)
     client = TestClient(app)
 
     # 1. Rules History
@@ -168,10 +175,13 @@ def test_admin_rules_endpoints():
     data_metrics = res_metrics.json()
     assert "region_metrics" in data_metrics
 
-    # 4. Rules Relearn Trigger
-    res_relearn = client.post("/api/admin/rules/relearn")
-    assert res_relearn.status_code == 200
-    data_relearn = res_relearn.json()
-    assert data_relearn["status"] == "success"
-    assert "total_learned" in data_relearn
+    # 4. Rules Relearn Trigger (mock backup_sqlite_to_firestore to avoid network overhead)
+    from unittest.mock import patch
+    with patch("database.db_helpers.backup_sqlite_to_firestore", return_value=True), \
+         patch("database.firestore_sync.backup_sqlite_to_firestore", return_value=True):
+        res_relearn = client.post("/api/admin/rules/relearn")
+        assert res_relearn.status_code == 200
+        data_relearn = res_relearn.json()
+        assert data_relearn["status"] == "success"
+        assert "total_learned" in data_relearn
 
