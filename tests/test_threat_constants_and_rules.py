@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from core.threat_types import (
-    THREAT_SHAHED, THREAT_CRUISE_MISSILE, THREAT_BALLISTIC, THREAT_MIG31K,
+    THREAT_SHAHED, THREAT_REACTIVE_UAV, THREAT_JET_SHAHED, THREAT_CRUISE_MISSILE, THREAT_BALLISTIC, THREAT_MIG31K,
     THREAT_KAB, THREAT_TU95, THREAT_TU22M3, THREAT_SU35, THREAT_ISKANDER,
     THREAT_ARTILLERY, THREAT_RECON, THREAT_UNKNOWN, ALL_THREAT_TYPES,
     AIRBASE_SAVASLEYKA, AIRBASE_OLENYA, AIRBASE_ENGELS, AIRBASE_SHAYKOVKA,
@@ -30,6 +30,8 @@ def test_threat_types_detection():
     assert detect_threat_type_from_text("Зліт 4х Бортів Ту-95МС з Оленьї") == THREAT_TU95
     assert detect_threat_type_from_text("Ту-22М3 над Калузькою областю") == THREAT_TU22M3
     assert detect_threat_type_from_text("БпЛА Shahed в напрямку Одеси") == THREAT_SHAHED
+    assert detect_threat_type_from_text("Реактивний Shahed-238 курсом на Запоріжжя") == THREAT_REACTIVE_UAV
+    assert detect_threat_type_from_text("Виявлено реактивний БпЛА над Сумщиною") == THREAT_REACTIVE_UAV
     assert detect_threat_type_from_text("Загроза балістичного озброєння з Криму") == THREAT_BALLISTIC
     assert detect_threat_type_from_text("Пуск Іскандер-М з Бєлгорода") == THREAT_ISKANDER
     assert detect_threat_type_from_text("Пуск крилатих ракет Калібр з Чорного моря") == THREAT_CRUISE_MISSILE
@@ -55,9 +57,17 @@ def test_kinematics_calculations():
     eta_sec, eta_str = calculate_kinematic_eta(150.0, THREAT_BALLISTIC)
     assert eta_sec > 0 and ("до" in eta_str or "хв" in eta_str)
     
-    # Shahed long range (400 km)
-    eta_sec, eta_str = calculate_kinematic_eta(400.0, THREAT_SHAHED)
-    assert eta_sec > 7000  # ~2 hours
+    # Regular Piston Shahed long range (400 km) @ 165 km/h -> ~2.42 hours (~8727 sec)
+    eta_sec_piston, eta_str_piston = calculate_kinematic_eta(400.0, THREAT_SHAHED)
+    assert get_threat_speed(THREAT_SHAHED) == 165.0
+    assert eta_sec_piston > 7000  # ~2.4 hours
+
+    # Reactive Jet Shahed-238 (400 km) @ 500 km/h -> 48 mins (2880 sec)
+    eta_sec_jet, eta_str_jet = calculate_kinematic_eta(400.0, THREAT_REACTIVE_UAV)
+    assert get_threat_speed(THREAT_REACTIVE_UAV) == 500.0
+    assert get_threat_speed(THREAT_JET_SHAHED) == 500.0
+    assert 2800 <= eta_sec_jet <= 2950  # ~48 mins
+    assert eta_sec_jet < eta_sec_piston / 2  # More than 2x faster than piston!
 
     # Tu-22M3 supersonic (350 km)
     eta_sec, eta_str = calculate_kinematic_eta(350.0, THREAT_TU22M3)

@@ -7,9 +7,12 @@ from typing import Dict, Tuple, Optional, List, Any
 import re
 
 # ==============================================================================
+# ==============================================================================
 # 1. THREAT TYPE IDENTIFIER CONSTANTS (Single Source of Truth)
 # ==============================================================================
 THREAT_SHAHED = "shahed"
+THREAT_REACTIVE_UAV = "reactive_uav"
+THREAT_JET_SHAHED = "jet_shahed"
 THREAT_CRUISE_MISSILE = "cruise_missile"
 THREAT_BALLISTIC = "ballistic"
 THREAT_MIG31K = "mig31k"
@@ -33,6 +36,8 @@ THREAT_UNKNOWN = "unknown"
 
 ALL_THREAT_TYPES: List[str] = [
     THREAT_SHAHED,
+    THREAT_REACTIVE_UAV,
+    THREAT_JET_SHAHED,
     THREAT_CRUISE_MISSILE,
     THREAT_BALLISTIC,
     THREAT_MIG31K,
@@ -59,6 +64,10 @@ ALL_THREAT_TYPES: List[str] = [
 # ==============================================================================
 THREAT_TITLES: Dict[str, str] = {
     THREAT_SHAHED: "БПЛА Shahed-136",
+    THREAT_REACTIVE_UAV: "Реактивний ударний БпЛА (Shahed-238)",
+    THREAT_JET_SHAHED: "Реактивний БпЛА Shahed-238",
+    "reactive_drone": "Реактивний ударний дрон",
+    "jet_drone": "Реактивний ударний дрон",
     THREAT_CRUISE_MISSILE: "Крилаті ракети",
     THREAT_BALLISTIC: "Балістична ракета",
     THREAT_MIG31K: "МіГ-31К (Кинджал)",
@@ -86,6 +95,10 @@ THREAT_TYPES = THREAT_TITLES
 
 THREAT_SHORT_NAMES: Dict[str, str] = {
     THREAT_SHAHED: "БпЛА",
+    THREAT_REACTIVE_UAV: "реактивний БпЛА",
+    THREAT_JET_SHAHED: "реактивний БпЛА",
+    "reactive_drone": "реактивний дрон",
+    "jet_drone": "реактивний дрон",
     THREAT_CRUISE_MISSILE: "крилата ракета",
     THREAT_BALLISTIC: "балістика",
     THREAT_MIG31K: "МіГ-31К",
@@ -112,7 +125,11 @@ THREAT_SHORT_NAMES: Dict[str, str] = {
 # 3. KINEMATICS & CRUISING SPEEDS (KM/H & KM/MIN)
 # ==============================================================================
 DEFAULT_SPEEDS_KMH: Dict[str, float] = {
-    THREAT_SHAHED: 165.0,          # ~150-180 km/h (Shahed-136/Geran)
+    THREAT_SHAHED: 165.0,          # ~150-180 km/h (Shahed-136/131/Geran piston)
+    THREAT_REACTIVE_UAV: 500.0,    # ~450-550 km/h (Shahed-238 / Jet UAV micro-turbojet)
+    THREAT_JET_SHAHED: 500.0,      # ~450-550 km/h
+    "reactive_drone": 500.0,
+    "jet_drone": 500.0,
     THREAT_CRUISE_MISSILE: 850.0,  # ~800-900 km/h (Kh-101/Kalibr)
     THREAT_BALLISTIC: 5500.0,      # ~4500-7000 km/h (Iskander-M/S-300)
     THREAT_MIG31K: 2500.0,         # ~2500 km/h (Kh-47M2 Kinzhal launch phase)
@@ -142,7 +159,11 @@ KM_PER_MINUTE: Dict[str, float] = {
 # 4. AUTO-CLEAR TIMEOUTS (TTL SECONDS) & DEFAULT ETAS
 # ==============================================================================
 THREAT_AUTO_CLEAR_DELAYS: Dict[str, Tuple[int, int]] = {
-    THREAT_SHAHED: (10800, 10800),         # 3 hours max TTL
+    THREAT_SHAHED: (10800, 10800),         # 3 hours max TTL (piston cruising)
+    THREAT_REACTIVE_UAV: (3600, 3600),     # 60 mins (jet speed traversal)
+    THREAT_JET_SHAHED: (3600, 3600),
+    "reactive_drone": (3600, 3600),
+    "jet_drone": (3600, 3600),
     THREAT_CRUISE_MISSILE: (2700, 3600),   # 45-60 mins
     THREAT_BALLISTIC: (600, 1800),         # 10-30 mins
     THREAT_MIG31K: (1800, 2700),           # 30-45 mins
@@ -166,6 +187,10 @@ THREAT_AUTO_CLEAR_DELAYS: Dict[str, Tuple[int, int]] = {
 
 THREAT_DEFAULT_ETAS: Dict[str, Tuple[str, str]] = {
     THREAT_SHAHED: ("до 3 год", "до 1.5 год"),
+    THREAT_REACTIVE_UAV: ("до 40 хв", "до 25 хв"),
+    THREAT_JET_SHAHED: ("до 40 хв", "до 25 хв"),
+    "reactive_drone": ("до 40 хв", "до 25 хв"),
+    "jet_drone": ("до 40 хв", "до 25 хв"),
     THREAT_CRUISE_MISSILE: ("до 55 хв", "до 30 хв"),
     THREAT_BALLISTIC: ("до 15 хв", "до 5 хв"),
     THREAT_MIG31K: ("до 40 хв", "до 40 хв"),
@@ -189,6 +214,8 @@ THREAT_DEFAULT_ETAS: Dict[str, Tuple[str, str]] = {
 
 THREAT_PREDICTIVE_WEIGHTS: Dict[str, float] = {
     THREAT_SHAHED: 0.15,
+    THREAT_REACTIVE_UAV: 0.10,
+    THREAT_JET_SHAHED: 0.10,
     THREAT_CRUISE_MISSILE: 0.08,
     THREAT_MIG31K: 0.05,
     THREAT_BALLISTIC: 0.0,
@@ -212,6 +239,8 @@ THREAT_PREDICTIVE_WEIGHTS: Dict[str, float] = {
 
 THREAT_ETA_DEFAULTS_SECONDS: Dict[str, int] = {
     THREAT_SHAHED: 5400,
+    THREAT_REACTIVE_UAV: 1800,
+    THREAT_JET_SHAHED: 1800,
     THREAT_CRUISE_MISSILE: 1200,
     THREAT_BALLISTIC: 180,
     THREAT_MIG31K: 1200,
@@ -238,6 +267,8 @@ THREAT_ETA_DEFAULTS_SECONDS: Dict[str, int] = {
 # ==============================================================================
 THREAT_ICONS: Dict[str, str] = {
     THREAT_SHAHED: "airplane.circle.fill",
+    THREAT_REACTIVE_UAV: "airplane.circle.fill",
+    THREAT_JET_SHAHED: "airplane.circle.fill",
     THREAT_CRUISE_MISSILE: "paperplane.fill",
     THREAT_BALLISTIC: "flame.fill",
     THREAT_MIG31K: "bolt.fill",
@@ -278,6 +309,13 @@ THREAT_KEYWORDS: Dict[str, List[str]] = {
     ],
     THREAT_TU22M3: [
         "ту-22", "ту22", "tu-22", "tu22", "х-22", "х22", "х-32", "х32"
+    ],
+    THREAT_REACTIVE_UAV: [
+        "реактивний шахед", "реактивні шахеди", "реактивних шахед", "реактивний бпла",
+        "реактивні бпла", "реактивних бпла", "реактивний дрон", "реактивні дрони",
+        "реактивних дрон", "shahed-238", "shahed 238", "shahed238", "шахед-238",
+        "шахед 238", "шахед238", "шахід-238", "шахід 238", "герань-3", "герань 3",
+        "реактивн"
     ],
     THREAT_SHAHED: [
         "шахед", "shahed", "бпла", "дрон", "безпілотник", "беспилотник", "мопед",
@@ -1091,6 +1129,10 @@ def get_threat_title(threat_type: Optional[str]) -> str:
 NOTIFICATION_THREAT_NAMES: Dict[str, str] = {
     THREAT_BALLISTIC: "Балістична загроза",
     THREAT_SHAHED: "Загроза БпЛА Shahed",
+    THREAT_REACTIVE_UAV: "Загроза реактивного БпЛА",
+    THREAT_JET_SHAHED: "Загроза реактивного БпЛА Shahed-238",
+    "reactive_drone": "Загроза реактивного дрона",
+    "jet_drone": "Загроза реактивного дрона",
     THREAT_CRUISE_MISSILE: "Загроза крилатих ракет",
     THREAT_KAB: "Загроза КАБ",
     THREAT_MIG31K: "Зліт МіГ-31К (Кинджал)",
@@ -1289,7 +1331,7 @@ def resolve_aviation_strike_profile(
     # A. БПЛА / ДРОНИ (Shahed-136, Реактивні БпЛА, Гербера)
     # Фізичний майданчик пуску — ЗАВЖДИ сухопутний полігон РФ/Криму!
     # =========================================================================
-    if threat_type in [THREAT_SHAHED, "shahed", "shahed_136", "reactive_uav"]:
+    if threat_type in [THREAT_SHAHED, "shahed", "shahed_136", "reactive_uav", THREAT_REACTIVE_UAV, THREAT_JET_SHAHED, "jet_shahed", "jet_drone", "reactive_drone", "shahed_238"]:
         platform_type = "drone_pad"
         carrier_type = "drone_launcher"
         

@@ -467,7 +467,7 @@ class ThreatState:
             (t_exist in ["mig31k", "kinzhal"] and t_inc in ["mig31k", "kinzhal"]) or
             (t_exist in ["tu95", "tu95_ms", "tu160", "cruise_missile", "kalibr", "kh101"] and t_inc in ["tu95", "tu95_ms", "tu160", "cruise_missile", "kalibr", "kh101"]) or
             (t_exist in ["ballistic", "iskander", "iskander_m", "kn23", "s300_s400", "zircon"] and t_inc in ["ballistic", "iskander", "iskander_m", "kn23", "s300_s400", "zircon"]) or
-            (t_exist in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "fpv"] and t_inc in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "fpv"]) or
+            (t_exist in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "reactive_uav", "jet_shahed", "reactive_drone", "jet_drone", "fpv"] and t_inc in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "reactive_uav", "jet_shahed", "reactive_drone", "jet_drone", "fpv"]) or
             (t_exist in ["kab", "guided_bomb", "tactical_aviation", "su34", "su35", "su57", "su35_su57"] and t_inc in ["kab", "guided_bomb", "tactical_aviation", "su34", "su35", "su57", "su35_su57"]) or
             (t_exist in ["artillery", "mlrs"] and t_inc in ["artillery", "mlrs"])
         )
@@ -556,7 +556,7 @@ class ThreatState:
             elapsed = (now - ref_time).total_seconds()
             
             # Dynamic dedup window based on threat type speed/flight time
-            max_window = 1800 if t_exist in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "fpv"] else 900
+            max_window = 1800 if t_exist in ["shahed", "drone", "recon", "recon_uav", "shahed_jet", "reactive_uav", "jet_shahed", "reactive_drone", "jet_drone", "fpv"] else 900
             if elapsed <= max_window:
                 if not (existing_targets and incoming_targets and existing_targets.isdisjoint(incoming_targets)):
                     return True

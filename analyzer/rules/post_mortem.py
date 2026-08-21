@@ -38,7 +38,7 @@ POST_MORTEM_SYSTEM_PROMPT = """Ти — головний тактичний оф
       "rule_type": "route_pattern | launch_site_pattern | aviation_strike_pattern | confidence_correction | time_pattern | eta_math",
       "source_region": "Назва області або району пуску",
       "target_region": "Назва цільової області",
-      "threat_type": "shahed | cruise_missile | ballistic | kab | mig31k",
+      "threat_type": "shahed | reactive_uav | cruise_missile | ballistic | kab | mig31k",
       "rule_text": "Чітке формулювання правила українською мовою",
       "confidence_score": 0.88,
       "reason": "Чому це правило сформульовано на основі цієї сесії"

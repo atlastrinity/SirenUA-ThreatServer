@@ -11,6 +11,7 @@ import logging
 
 from core.threat_types import (
     THREAT_SHAHED,
+    THREAT_REACTIVE_UAV,
     THREAT_CRUISE_MISSILE,
     THREAT_BALLISTIC,
     THREAT_MIG31K,
@@ -33,6 +34,7 @@ MAX_FLIGHT_TIMEOUT_SECONDS = {
     THREAT_TU95: 1200,          # 20 хвилин
     THREAT_ARTILLERY: 180,      # 3 хвилини
     THREAT_SHAHED: 2700,        # 45 хвилин
+    THREAT_REACTIVE_UAV: 1800,  # 30 хвилин (реактивний БпЛА 500 км/год)
 }
 
 
