@@ -435,26 +435,43 @@ class GeminiRulesLearner:
         return rules_updated
 
     def run_rules_learner(self) -> int:
-        """Central Rules Learner loop executed autonomously."""
-        try:
-            conn = get_sqlite_connection(self.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+        """Central Rules Learner loop executed autonomously with retry on database lock."""
+        import time
+        for attempt in range(5):
+            conn = None
+            try:
+                conn = get_sqlite_connection(self.db_path)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            apply_rule_decay(cursor, self._rule_audit_callback)
-            r1 = self._learn_route_patterns(cursor)
-            r2 = self._learn_confidence_corrections(cursor)
-            r3 = self._learn_time_patterns(cursor)
-            r4 = self._learn_eta_math_patterns(cursor)
-            r5 = self._learn_aviation_strike_patterns(cursor)
-            r6 = self._learn_launch_site_patterns(cursor)
+                apply_rule_decay(cursor, self._rule_audit_callback)
+                r1 = self._learn_route_patterns(cursor)
+                r2 = self._learn_confidence_corrections(cursor)
+                r3 = self._learn_time_patterns(cursor)
+                r4 = self._learn_eta_math_patterns(cursor)
+                r5 = self._learn_aviation_strike_patterns(cursor)
+                r6 = self._learn_launch_site_patterns(cursor)
 
-            conn.commit()
-            conn.close()
+                conn.commit()
+                conn.close()
+                conn = None
 
-            total_learned = r1 + r2 + r3 + r4 + r5 + r6
-            print(f"🧠 [Rules Learner] Навчання завершено: {total_learned} активних правил (маршрути: {r1}, confidence: {r2}, час: {r3}, ETA: {r4}, авіація: {r5}, майданчики: {r6})")
-            return total_learned
-        except Exception as e:
-            print(f"⚠️ [Rules Learner] Помилка виконання циклу навчання: {e}")
-            return 0
+                total_learned = r1 + r2 + r3 + r4 + r5 + r6
+                print(f"🧠 [Rules Learner] Навчання завершено: {total_learned} активних правил (маршрути: {r1}, confidence: {r2}, час: {r3}, ETA: {r4}, авіація: {r5}, майданчики: {r6})")
+                return total_learned
+            except sqlite3.OperationalError as oe:
+                if ("locked" in str(oe).lower() or "busy" in str(oe).lower()) and attempt < 4:
+                    time.sleep(0.1 * (2 ** attempt))
+                    continue
+                print(f"⚠️ [Rules Learner] Помилка виконання циклу навчання: {oe}")
+                return 0
+            except Exception as e:
+                print(f"⚠️ [Rules Learner] Помилка виконання циклу навчання: {e}")
+                return 0
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        return 0
