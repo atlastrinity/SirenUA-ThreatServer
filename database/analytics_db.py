@@ -1111,6 +1111,7 @@ def reconcile_active_threats_with_db(manager):
             WHERE lifecycle_status = 'active'
         """)
         active_db_rows = cursor.fetchall()
+        conn.close()
         
         # Build RAM active map: region -> list of active SingleThreat
         ram_active_map = {}
@@ -1155,15 +1156,16 @@ def reconcile_active_threats_with_db(manager):
                         skip_history_log=False
                     )
                 except Exception as log_err:
-                    cursor.execute("""
+                    u_conn = get_sqlite_connection()
+                    u_cur = u_conn.cursor()
+                    u_cur.execute("""
                         UPDATE paired_events 
                         SET lifecycle_status = 'cleared', 
                             prediction_accuracy = COALESCE(prediction_accuracy, 'overestimated')
                         WHERE id = ?
                     """, (pe_id,))
-        
-        conn.commit()
-        conn.close()
+                    u_conn.commit()
+                    u_conn.close()
         
         # 3. For all active threats in RAM, ensure they exist in paired_events
         for region, state in manager.threats.items():
@@ -1187,10 +1189,16 @@ def reconcile_active_threats_with_db(manager):
                 t_gid = getattr(t, "group_id", None) or t.threat_id
                 c_conn = get_sqlite_connection()
                 c_cur = c_conn.cursor()
-                c_cur.execute("""
-                    SELECT id FROM paired_events 
-                    WHERE region = ? AND (gemini_group_id = ? OR threat_type = ?) AND lifecycle_status = 'active'
-                """, (region, t_gid, t.threat_type))
+                if t_gid:
+                    c_cur.execute("""
+                        SELECT id FROM paired_events 
+                        WHERE region = ? AND gemini_group_id = ? AND lifecycle_status = 'active'
+                    """, (region, t_gid))
+                else:
+                    c_cur.execute("""
+                        SELECT id FROM paired_events 
+                        WHERE region = ? AND threat_type = ? AND lifecycle_status = 'active'
+                    """, (region, t.threat_type))
                 existing = c_cur.fetchone()
                 c_conn.close()
                 
