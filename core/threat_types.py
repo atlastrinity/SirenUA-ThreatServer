@@ -1685,7 +1685,7 @@ def resolve_aviation_strike_profile(
         elif target_region in ["Чернігівська область", "Київська область", "Житомирська область"]:
             sector_key = SECTOR_KURSK if threat_type != THREAT_MIG31K else SECTOR_RYAZAN_TAMBOV
         elif target_region in ["Запорізька область", "Дніпропетровська область"]:
-            sector_key = SECTOR_AZOV_SEA if threat_type == THREAT_KAB else SECTOR_TOT_ZAPORIZHZHIA
+            sector_key = SECTOR_TOT_ZAPORIZHZHIA if threat_type == THREAT_KAB else SECTOR_AZOV_SEA
         elif target_region in ["Херсонська область", "Миколаївська область", "Одеська область"]:
             sector_key = SECTOR_BLACK_SEA if threat_type in [THREAT_CRUISE_MISSILE, THREAT_SU35] else SECTOR_TOT_KHERSON
         elif target_region in ["Донецька область", "Луганська область"]:
