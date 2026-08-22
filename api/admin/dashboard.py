@@ -10,127 +10,131 @@ from database.db_helpers import execute_query_as_dicts
 router = APIRouter()
 
 
+def _compute_dashboard_stats(tz_modifier: str) -> dict:
+    # Total events (7d) matching paired_events lifecycle sessions
+    total_query = """
+        SELECT COUNT(*) as c 
+        FROM paired_events pe
+        LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+        WHERE pe.created_at >= datetime('now', '-7 days')
+          AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+          AND (th.is_test = 0 OR th.is_test IS NULL)
+    """
+    total_rows = execute_query_as_dicts(total_query)
+    total_7d = total_rows[0]["c"] if total_rows else 0
+
+    # Accuracy breakdown (7d) directly from paired_events (AI threat lifecycle sessions)
+    # Categories are mutually exclusive so confirmed + mitigated + overestimated + active + cleared == total
+    accuracy_query = """
+        SELECT
+            COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END), 0) as confirmed,
+            COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END), 0) as mitigated,
+            COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END), 0) as overestimated,
+            COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND pe.lifecycle_status = 'active' THEN 1 ELSE 0 END), 0) as active,
+            COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND (pe.lifecycle_status != 'active' OR pe.lifecycle_status IS NULL) THEN 1 ELSE 0 END), 0) as cleared,
+            COUNT(*) as total
+        FROM paired_events pe
+        LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+        WHERE pe.created_at >= datetime('now', '-7 days')
+          AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+          AND (th.is_test = 0 OR th.is_test IS NULL)
+    """
+    accuracy_rows = execute_query_as_dicts(accuracy_query)
+    acc = accuracy_rows[0] if accuracy_rows else {"confirmed": 0, "mitigated": 0, "overestimated": 0, "active": 0, "cleared": 0, "total": 0}
+
+    # AI accuracy percentage
+    evaluated = (acc["confirmed"] or 0) + (acc["mitigated"] or 0) + (acc["overestimated"] or 0)
+    if evaluated > 0:
+        accuracy_pct = round(((acc["confirmed"] or 0) + (acc["mitigated"] or 0) * 0.8) / evaluated * 100, 1)
+    else:
+        accuracy_pct = 0
+
+    # Active threats right now (100% matched with paired_events lifecycle sessions in DB)
+    active_now = acc.get("active", 0)
+
+    # Average response time (how early AI detected before alarm)
+    avg_query = """
+        SELECT AVG(
+            strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)
+        ) as avg_delta
+        FROM threat_history th_ai
+        JOIN threat_history th_alarm ON th_alarm.region = th_ai.region
+            AND th_alarm.threat_type = 'official_alarm'
+            AND th_alarm.threat_level = 'high'
+            AND ABS(strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)) < 1800
+            AND strftime('%s', th_alarm.timestamp) >= strftime('%s', th_ai.timestamp)
+        WHERE th_ai.timestamp >= datetime('now', '-7 days')
+            AND th_ai.threat_type NOT IN ('official_alarm', 'threat_clear')
+            AND th_ai.threat_level != 'none'
+            AND (th_ai.is_test = 0 OR th_ai.is_test IS NULL)
+            AND (th_alarm.is_test = 0 OR th_alarm.is_test IS NULL)
+    """
+    avg_rows = execute_query_as_dicts(avg_query)
+    avg_row = avg_rows[0] if avg_rows else None
+    avg_early_seconds = round(avg_row["avg_delta"]) if avg_row and avg_row["avg_delta"] is not None else None
+
+    # Threats by type (7d)
+    type_query = """
+        SELECT pe.threat_type, COUNT(*) as count
+        FROM paired_events pe
+        LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+        WHERE pe.created_at >= datetime('now', '-7 days') 
+          AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+          AND (th.is_test = 0 OR th.is_test IS NULL)
+        GROUP BY pe.threat_type ORDER BY count DESC
+    """
+    by_type = execute_query_as_dicts(type_query)
+
+    # Top regions (7d)
+    regions_query = """
+        SELECT pe.region, COUNT(*) as count
+        FROM paired_events pe
+        LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+        WHERE pe.created_at >= datetime('now', '-7 days') 
+          AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+          AND (th.is_test = 0 OR th.is_test IS NULL)
+        GROUP BY pe.region ORDER BY count DESC LIMIT 10
+    """
+    top_regions = execute_query_as_dicts(regions_query)
+
+    # Hourly distribution (7d) — UTC to Kyiv
+    hourly_query = f"""
+        SELECT CAST(strftime('%H', datetime(pe.created_at, {tz_modifier})) AS INTEGER) as hour,
+               COUNT(*) as count
+        FROM paired_events pe
+        LEFT JOIN threat_history th ON pe.threat_event_id = th.id
+        WHERE pe.created_at >= datetime('now', '-7 days') 
+          AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
+          AND (th.is_test = 0 OR th.is_test IS NULL)
+        GROUP BY hour ORDER BY hour
+    """
+    hourly = execute_query_as_dicts(hourly_query)
+
+    # Errors count (24h)
+    errors_query = "SELECT COUNT(*) as c FROM error_log WHERE timestamp >= datetime('now', '-1 day')"
+    errors_rows = execute_query_as_dicts(errors_query)
+    errors_24h = errors_rows[0]["c"] if errors_rows else 0
+
+    return {
+        "total_events_7d": total_7d,
+        "accuracy": acc,
+        "accuracy_pct": accuracy_pct,
+        "active_now": active_now,
+        "avg_early_seconds": avg_early_seconds,
+        "by_type": by_type,
+        "top_regions": top_regions,
+        "hourly": hourly,
+        "errors_24h": errors_24h
+    }
+
+
 @router.get("/api/admin/dashboard/stats")
 async def get_admin_dashboard_stats():
-    """Агреговані статистичні дані для дашборду."""
+    """Агреговані статистичні дані для дашборду (виконується в пулі потоків)."""
+    import asyncio
     tz_modifier = f"'{get_kyiv_tz_modifier()}'"
-
     try:
-        # Total events (7d) matching paired_events lifecycle sessions
-        total_query = """
-            SELECT COUNT(*) as c 
-            FROM paired_events pe
-            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE pe.created_at >= datetime('now', '-7 days')
-              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-        """
-        total_rows = execute_query_as_dicts(total_query)
-        total_7d = total_rows[0]["c"] if total_rows else 0
-
-        # Accuracy breakdown (7d) directly from paired_events (AI threat lifecycle sessions)
-        # Categories are mutually exclusive so confirmed + mitigated + overestimated + active + cleared == total
-        accuracy_query = """
-            SELECT
-                COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'confirmed' THEN 1 ELSE 0 END), 0) as confirmed,
-                COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'mitigated' THEN 1 ELSE 0 END), 0) as mitigated,
-                COALESCE(SUM(CASE WHEN pe.prediction_accuracy = 'overestimated' THEN 1 ELSE 0 END), 0) as overestimated,
-                COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND pe.lifecycle_status = 'active' THEN 1 ELSE 0 END), 0) as active,
-                COALESCE(SUM(CASE WHEN (pe.prediction_accuracy IS NULL OR pe.prediction_accuracy NOT IN ('confirmed', 'mitigated', 'overestimated')) AND (pe.lifecycle_status != 'active' OR pe.lifecycle_status IS NULL) THEN 1 ELSE 0 END), 0) as cleared,
-                COUNT(*) as total
-            FROM paired_events pe
-            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE pe.created_at >= datetime('now', '-7 days')
-              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-        """
-        accuracy_rows = execute_query_as_dicts(accuracy_query)
-        acc = accuracy_rows[0] if accuracy_rows else {"confirmed": 0, "mitigated": 0, "overestimated": 0, "active": 0, "cleared": 0, "total": 0}
-
-        # AI accuracy percentage
-        evaluated = (acc["confirmed"] or 0) + (acc["mitigated"] or 0) + (acc["overestimated"] or 0)
-        if evaluated > 0:
-            accuracy_pct = round(((acc["confirmed"] or 0) + (acc["mitigated"] or 0) * 0.8) / evaluated * 100, 1)
-        else:
-            accuracy_pct = 0
-
-        # Active threats right now (100% matched with paired_events lifecycle sessions in DB)
-        active_now = acc.get("active", 0)
-
-        # Average response time (how early AI detected before alarm)
-        avg_query = """
-            SELECT AVG(
-                strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)
-            ) as avg_delta
-            FROM threat_history th_ai
-            JOIN threat_history th_alarm ON th_alarm.region = th_ai.region
-                AND th_alarm.threat_type = 'official_alarm'
-                AND th_alarm.threat_level = 'high'
-                AND ABS(strftime('%s', th_alarm.timestamp) - strftime('%s', th_ai.timestamp)) < 1800
-                AND strftime('%s', th_alarm.timestamp) >= strftime('%s', th_ai.timestamp)
-            WHERE th_ai.timestamp >= datetime('now', '-7 days')
-                AND th_ai.threat_type NOT IN ('official_alarm', 'threat_clear')
-                AND th_ai.threat_level != 'none'
-                AND (th_ai.is_test = 0 OR th_ai.is_test IS NULL)
-                AND (th_alarm.is_test = 0 OR th_alarm.is_test IS NULL)
-        """
-        avg_rows = execute_query_as_dicts(avg_query)
-        avg_row = avg_rows[0] if avg_rows else None
-        avg_early_seconds = round(avg_row["avg_delta"]) if avg_row and avg_row["avg_delta"] is not None else None
-
-        # Threats by type (7d)
-        type_query = """
-            SELECT pe.threat_type, COUNT(*) as count
-            FROM paired_events pe
-            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE pe.created_at >= datetime('now', '-7 days') 
-              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-            GROUP BY pe.threat_type ORDER BY count DESC
-        """
-        by_type = execute_query_as_dicts(type_query)
-
-        # Top regions (7d)
-        regions_query = """
-            SELECT pe.region, COUNT(*) as count
-            FROM paired_events pe
-            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE pe.created_at >= datetime('now', '-7 days') 
-              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-            GROUP BY pe.region ORDER BY count DESC LIMIT 10
-        """
-        top_regions = execute_query_as_dicts(regions_query)
-
-        # Hourly distribution (7d) — UTC to Kyiv
-        hourly_query = f"""
-            SELECT CAST(strftime('%H', datetime(pe.created_at, {tz_modifier})) AS INTEGER) as hour,
-                   COUNT(*) as count
-            FROM paired_events pe
-            LEFT JOIN threat_history th ON pe.threat_event_id = th.id
-            WHERE pe.created_at >= datetime('now', '-7 days') 
-              AND pe.threat_type NOT IN ('official_alarm', 'threat_clear')
-              AND (th.is_test = 0 OR th.is_test IS NULL)
-            GROUP BY hour ORDER BY hour
-        """
-        hourly = execute_query_as_dicts(hourly_query)
-
-        # Errors count (24h)
-        errors_query = "SELECT COUNT(*) as c FROM error_log WHERE timestamp >= datetime('now', '-1 day')"
-        errors_rows = execute_query_as_dicts(errors_query)
-        errors_24h = errors_rows[0]["c"] if errors_rows else 0
-
-        return {
-            "total_events_7d": total_7d,
-            "accuracy": acc,
-            "accuracy_pct": accuracy_pct,
-            "active_now": active_now,
-            "avg_early_seconds": avg_early_seconds,
-            "by_type": by_type,
-            "top_regions": top_regions,
-            "hourly": hourly,
-            "errors_24h": errors_24h
-        }
+        return await asyncio.to_thread(_compute_dashboard_stats, tz_modifier)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
