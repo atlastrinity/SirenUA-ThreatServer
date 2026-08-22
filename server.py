@@ -48,110 +48,139 @@ aerial_alerts_task = None
 async def poll_aerial_alerts():
     """
     Фонова задача для опитування офіційного API тривог із каскадним резервуванням (Fallback):
-    - Tier 1 (Основне першоджерело): ubilling.net.ua/aerialalerts/ (2-3 повторні спроби при збоях)
-    - Tier 2 (Резерв 1): api.ukrainealarm.com (якщо налаштовано токен)
+    - Tier 1 (Основне першоджерело): api.ukrainealarm.com (якщо налаштовано токен)
+    - Tier 2 (Резерв 1): ubilling.net.ua/aerialalerts/ (2-3 повторні спроби при збоях)
     - Tier 3 (Резерв 2): api.alerts.in.ua (якщо налаштовано ALERTS_TOKEN)
     """
     ukraine_alarm_token = os.environ.get("UKRAINE_ALARM_API_KEY") or os.environ.get("UKRAINE_ALARM_TOKEN")
     alerts_in_ua_token = os.environ.get("ALERTS_TOKEN")
 
     logger.info(f"Запуск фонового каскадного опитування офіційних тривог. "
-                f"Пріоритет 1 (Основне): UBilling (дзеркало), "
-                f"Пріоритет 2 (Резерв 1): UkraineAlarm ({'налаштовано' if ukraine_alarm_token else 'очікує ключ'}), "
+                f"Пріоритет 1 (Основне): UkraineAlarm ({'налаштовано' if ukraine_alarm_token else 'очікує ключ'}), "
+                f"Пріоритет 2 (Резерв 1): UBilling (дзеркало), "
                 f"Пріоритет 3 (Резерв 2): Alerts.in.ua ({'налаштовано' if alerts_in_ua_token else 'без токена'}).")
 
     while True:
-        from core.regions import ALL_REGIONS, normalize_region_name
+        from core.regions import ALL_REGIONS, normalize_region_name, resolve_district_to_region
         success = False
         official_dict = {}
         alert_types_dict = {}
+        districts_dict = {}
         active_source = "none"
 
         async with aiohttp.ClientSession() as session:
             # -------------------------------------------------------------
-            # Tier 1 (Основне першоджерело): UBilling Дзеркало (ubilling.net.ua)
-            # 3 спроби із короткою паузою перед перемиканням на резервні джерела
+            # Tier 1 (Основне першоджерело): UkraineAlarm API (api.ukrainealarm.com)
             # -------------------------------------------------------------
-            for attempt in range(1, 4):
-                if success:
-                    break
-                try:
-                    url = "https://ubilling.net.ua/aerialalerts/"
-                    headers = {
-                        "User-Agent": "SirenUA-ThreatServer/1.0",
-                        "Accept": "application/json"
-                    }
-                    async with session.get(url, headers=headers, timeout=5.0) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if isinstance(data, dict):
-                                states = data.get("states", {})
-                                if isinstance(states, dict) and states:
-                                    for r_raw, state_data in states.items():
-                                        canon_r = normalize_region_name(r_raw)
-                                        if isinstance(state_data, dict):
-                                            is_act = state_data.get("alertnow", False)
-                                            official_dict[canon_r] = is_act
-                                            alert_types_dict[canon_r] = "air" if is_act else None
+            if ukraine_alarm_token:
+                for attempt in range(1, 4):
+                    if success:
+                        break
+                    try:
+                        url = "https://api.ukrainealarm.com/api/v3/alerts"
+                        headers = {
+                            "Authorization": ukraine_alarm_token,
+                            "Accept": "application/json",
+                            "User-Agent": "SirenUA-ThreatServer/1.0"
+                        }
+                        async with session.get(url, headers=headers, timeout=6.0) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                if isinstance(data, list):
+                                    active_regions_map = {}
+                                    active_districts_map = {}
+                                    ALERT_TYPE_PRIORITY = {
+                                        "nuclear": 5,
+                                        "chemical": 4,
+                                        "urban_fights": 3,
+                                        "artillery": 2,
+                                        "air": 1,
+                                        "unknown": 0
+                                    }
+                                    for item in data:
+                                        if isinstance(item, dict):
+                                            raw_name = item.get("regionName") or item.get("location_title")
+                                            if raw_name:
+                                                canon_name, district_name = resolve_district_to_region(raw_name)
+                                                active_alerts = item.get("activeAlerts", [])
+                                                # Find primary alert type
+                                                alert_type = "air"
+                                                if active_alerts and isinstance(active_alerts, list):
+                                                    for a in active_alerts:
+                                                        if isinstance(a, dict):
+                                                            raw_t = (a.get("type") or "AIR").upper()
+                                                            if raw_t in ("ARTILLERY", "URBAN_FIGHTS", "CHEMICAL", "NUCLEAR"):
+                                                                alert_type = raw_t.lower()
+                                                                break
+                                                # Maintain the highest severity alert type deterministically
+                                                existing_type = active_regions_map.get(canon_name)
+                                                if not existing_type or ALERT_TYPE_PRIORITY.get(alert_type, 0) >= ALERT_TYPE_PRIORITY.get(existing_type, 0):
+                                                    active_regions_map[canon_name] = alert_type
+
+                                                if district_name:
+                                                    if canon_name not in active_districts_map:
+                                                        active_districts_map[canon_name] = []
+                                                    if district_name not in active_districts_map[canon_name]:
+                                                        active_districts_map[canon_name].append(district_name)
+
                                     for region_name in ALL_REGIONS.keys():
-                                        if region_name not in official_dict:
-                                            official_dict[region_name] = False
-                                            alert_types_dict[region_name] = None
+                                        is_active = region_name in active_regions_map
+                                        a_type = active_regions_map.get(region_name)
+                                        official_dict[region_name] = is_active
+                                        alert_types_dict[region_name] = a_type
+                                        districts_dict[region_name] = active_districts_map.get(region_name, [])
                                     success = True
-                                    active_source = "ubilling.net.ua"
+                                    active_source = "ukrainealarm.com"
                                     break
-                        else:
-                            logger.warning(f"Tier 1 (UBilling) спроба {attempt}/3 HTTP {resp.status}")
-                except Exception as e:
-                    logger.warning(f"Tier 1 (UBilling) спроба {attempt}/3 недоступний: {e}")
+                            else:
+                                logger.warning(f"Tier 1 (UkraineAlarm) спроба {attempt}/3 HTTP статус {resp.status}")
+                    except Exception as e:
+                        logger.warning(f"Tier 1 (UkraineAlarm) спроба {attempt}/3 недоступний: {e}")
 
-                if not success and attempt < 3:
-                    await asyncio.sleep(0.8)
+                    if not success and attempt < 3:
+                        await asyncio.sleep(0.8)
 
             # -------------------------------------------------------------
-            # Tier 2 (Резерв 1): UkraineAlarm API (api.ukrainealarm.com)
+            # Tier 2 (Резерв 1): UBilling Дзеркало (ubilling.net.ua)
             # -------------------------------------------------------------
-            if not success and ukraine_alarm_token:
-                try:
-                    url = "https://api.ukrainealarm.com/api/v3/alerts"
-                    headers = {
-                        "Authorization": ukraine_alarm_token,
-                        "Accept": "application/json",
-                        "User-Agent": "SirenUA-ThreatServer/1.0"
-                    }
-                    async with session.get(url, headers=headers, timeout=6.0) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if isinstance(data, list):
-                                active_regions_map = {}
-                                for item in data:
-                                    if isinstance(item, dict):
-                                        raw_name = item.get("regionName") or item.get("location_title")
-                                        if raw_name:
-                                            canon_name = normalize_region_name(raw_name)
-                                            active_alerts = item.get("activeAlerts", [])
-                                            # Find primary alert type
-                                            alert_type = "air"
-                                            if active_alerts and isinstance(active_alerts, list):
-                                                for a in active_alerts:
-                                                    if isinstance(a, dict):
-                                                        raw_t = (a.get("type") or "AIR").upper()
-                                                        if raw_t in ("ARTILLERY", "URBAN_FIGHTS", "CHEMICAL", "NUCLEAR"):
-                                                            alert_type = raw_t.lower()
-                                                            break
-                                            active_regions_map[canon_name] = alert_type
+            if not success:
+                for attempt in range(1, 4):
+                    if success:
+                        break
+                    try:
+                        url = "https://ubilling.net.ua/aerialalerts/"
+                        headers = {
+                            "User-Agent": "SirenUA-ThreatServer/1.0",
+                            "Accept": "application/json"
+                        }
+                        async with session.get(url, headers=headers, timeout=5.0) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                if isinstance(data, dict):
+                                    states = data.get("states", {})
+                                    if isinstance(states, dict) and states:
+                                        for r_raw, state_data in states.items():
+                                            canon_r = normalize_region_name(r_raw)
+                                            if isinstance(state_data, dict):
+                                                is_act = state_data.get("alertnow", False)
+                                                official_dict[canon_r] = is_act
+                                                alert_types_dict[canon_r] = "air" if is_act else None
+                                                districts_dict[canon_r] = []
+                                        for region_name in ALL_REGIONS.keys():
+                                            if region_name not in official_dict:
+                                                official_dict[region_name] = False
+                                                alert_types_dict[region_name] = None
+                                                districts_dict[region_name] = []
+                                        success = True
+                                        active_source = "ubilling.net.ua"
+                                        break
+                            else:
+                                logger.warning(f"Tier 2 (UBilling) спроба {attempt}/3 HTTP {resp.status}")
+                    except Exception as e:
+                        logger.warning(f"Tier 2 (UBilling) спроба {attempt}/3 недоступний: {e}")
 
-                                for region_name in ALL_REGIONS.keys():
-                                    is_active = region_name in active_regions_map
-                                    a_type = active_regions_map.get(region_name)
-                                    official_dict[region_name] = is_active
-                                    alert_types_dict[region_name] = a_type
-                                success = True
-                                active_source = "ukrainealarm.com"
-                        else:
-                            logger.warning(f"Tier 2 (UkraineAlarm) HTTP статус {resp.status}, перемикання на резерв...")
-                except Exception as e:
-                    logger.warning(f"Tier 2 (UkraineAlarm) недоступний: {e}, перемикання на резерв...")
+                    if not success and attempt < 3:
+                        await asyncio.sleep(0.8)
 
             # -------------------------------------------------------------
             # Tier 3 (Резерв 2): Alerts.in.ua (api.alerts.in.ua)
@@ -180,6 +209,7 @@ async def poll_aerial_alerts():
                                     is_act = region_name in active_set
                                     official_dict[region_name] = is_act
                                     alert_types_dict[region_name] = "air" if is_act else None
+                                    districts_dict[region_name] = []
                                 success = True
                                 active_source = "alerts.in.ua"
                         else:
@@ -198,7 +228,8 @@ async def poll_aerial_alerts():
         if success:
             for region_name, is_act in official_dict.items():
                 a_type = alert_types_dict.get(region_name)
-                threat_manager.set_alarm_active(region_name, is_act, alert_type=a_type)
+                d_list = districts_dict.get(region_name, [])
+                threat_manager.set_alarm_active(region_name, is_act, alert_type=a_type, active_districts=d_list)
 
             # Автоматично знімаємо протерміновані загрози та загрози у знятих тривогах (у фоновому потоці)
             try:
@@ -209,7 +240,7 @@ async def poll_aerial_alerts():
             
             await asyncio.sleep(15.0)
         else:
-            logger.warning("⚠️ Всі 3 джерела офіційних тривог (UBilling -> UkraineAlarm -> Alerts.in.ua) тимчасово недоступні. Зберігаємо попередній стан.")
+            logger.warning("⚠️ Всі 3 джерела офіційних тривог (UkraineAlarm -> UBilling -> Alerts.in.ua) тимчасово недоступні. Зберігаємо попередній стан.")
             # При недоступності повторюємо швидше (5с) для оперативного відновлення
             await asyncio.sleep(5.0)
 
@@ -304,6 +335,10 @@ async def lifespan(app: FastAPI):
     smart_backup_task = asyncio.create_task(periodic_smart_backup_loop())
     asyncio.create_task(asyncio.to_thread(smart_local_incremental_backup))
 
+    # Запуск періодичного тактичного аналізу Palantir Intelligence кожні 6 годин
+    from api.admin.analytics_intelligence import periodic_palantir_synthesis_loop
+    palantir_synthesis_task = asyncio.create_task(periodic_palantir_synthesis_loop())
+
     # Запуск / перевірка Ngrok тунелю та фонового вотчдога
     from services.ngrok_service import ensure_ngrok_running, ngrok_watchdog_loop
     asyncio.create_task(ensure_ngrok_running())
@@ -322,6 +357,7 @@ async def lifespan(app: FastAPI):
     # Зупинка фонового бекапу, вотчдога та опитування
     periodic_backup_task.cancel()
     smart_backup_task.cancel()
+    palantir_synthesis_task.cancel()
     ngrok_watchdog_task.cancel()
     if aerial_alerts_task:
         aerial_alerts_task.cancel()

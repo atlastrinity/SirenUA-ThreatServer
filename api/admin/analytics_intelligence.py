@@ -5,10 +5,11 @@ regional risk matrices, and flight corridor intelligence.
 """
 
 import json
+import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
-from core.config import get_kyiv_tz_modifier
+from core.config import get_kyiv_tz_modifier, logger
 from core.topology import REGION_CENTROIDS, SHAHED_ROUTES
 from core.threat_types import (
     THREAT_SHAHED,
@@ -949,4 +950,20 @@ async def get_palantir_reports(limit: int = 30):
         "id, created_at, report_date, threat_assessment_summary, confidence_index, generated_by",
         limit
     )
+
+
+async def periodic_palantir_synthesis_loop():
+    """Background task that autonomously runs Palantir AI tactical synthesis every 6 hours."""
+    # Short wait on startup to allow database and telemetry to settle
+    await asyncio.sleep(60)
+    while True:
+        try:
+            res = await generate_daily_report()
+            logger.info(f"👁️ [Palantir Auto-Synthesis] Успішно згенеровано новий тактичний звіт Palantir ({res.get('status')})")
+        except Exception as e:
+            logger.error(f"⚠️ [Palantir Auto-Synthesis] Помилка авто-синтезу: {e}")
+        
+        # Sleep 6 hours before next synthesis cycle
+        await asyncio.sleep(6 * 3600)
+
 

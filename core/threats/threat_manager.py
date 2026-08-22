@@ -529,13 +529,15 @@ class MockThreatManager:
             for region, state in self.threats.items()
         }
 
-    def set_alarm_active(self, region: str, is_active: bool, alert_type: Optional[str] = None) -> bool:
+    def set_alarm_active(self, region: str, is_active: bool, alert_type: Optional[str] = None, active_districts: Optional[list[str]] = None) -> bool:
         from core.regions import PERMANENTLY_OCCUPIED_REGIONS
         if region not in self.threats or region in PERMANENTLY_OCCUPIED_REGIONS:
             return False
         
+        districts_list = active_districts or []
         if region in self.real_threats_backup:
             self.real_threats_backup[region]["is_active"] = is_active
+            self.real_threats_backup[region]["active_districts"] = districts_list if is_active else []
             if alert_type:
                 self.real_threats_backup[region]["official_alert_type"] = alert_type
             elif not is_active:
@@ -551,6 +553,7 @@ class MockThreatManager:
                 "is_predictive": False,
                 "is_active": is_active,
                 "official_alert_type": alert_type if is_active else None,
+                "active_districts": districts_list if is_active else [],
                 "is_test": False
             }
 
@@ -560,6 +563,7 @@ class MockThreatManager:
             has_changed = (current_official != is_active) or (is_active and alert_type and current_alert_type != alert_type)
             self.threats[region].is_active = is_active
             self.threats[region].official_alert_type = alert_type if is_active else None
+            self.threats[region].active_districts = districts_list if is_active else []
             
             # Якщо офіційну тривогу в області знято — автоматично знімаємо всі активні тактичні загрози для цієї області
             if current_official and not is_active:

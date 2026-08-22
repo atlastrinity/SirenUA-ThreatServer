@@ -261,6 +261,7 @@ class ThreatState:
         self.active_threats: list[SingleThreat] = []
         self._is_official_active: bool = (region_name in ["АР Крим", "Автономна Республіка Крим", "м. Севастополь"])
         self.official_alert_type: Optional[str] = None
+        self.active_districts: list[str] = []
         self.is_test: bool = False
 
     @property
@@ -334,6 +335,7 @@ class ThreatState:
         self.active_threats.clear()
         self._is_official_active = False
         self.official_alert_type = None
+        self.active_districts.clear()
         self.is_test = False
 
     def clear_by_group_id(self, group_id: str) -> Optional[SingleThreat]:
@@ -351,7 +353,7 @@ class ThreatState:
         return removed
 
     def to_dict(self) -> dict:
-        """Серіалізація — зворотно-сумісний формат + масив active_threats."""
+        """Серіалізація — зворотно-сумісний формат + масив active_threats + active_districts."""
         primary = None
         if self.active_threats:
             primary = max(self.active_threats, key=lambda t: SingleThreat.LEVEL_PRIORITY.get(t.level, 0))
@@ -365,6 +367,7 @@ class ThreatState:
             "is_predictive": self.is_predictive,
             "is_active": self.is_active,
             "official_alert_type": self.official_alert_type if self.is_active else None,
+            "active_districts": getattr(self, "active_districts", []) if self.is_active else [],
             "is_test": self.is_test,
             "active_threats": [t.to_dict() for t in self.active_threats],
         }

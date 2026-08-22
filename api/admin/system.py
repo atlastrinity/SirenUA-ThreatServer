@@ -87,17 +87,17 @@ async def get_sources_status():
         "mode": "live" if IS_LIVE_MODE else "mock",
         "active_source": sources_info.get("active_source", "none"),
         "sources": {
-            "ubilling": {
-                "name": "UBilling Дзеркало (Tier 1 - Основне)",
-                "url": "https://ubilling.net.ua/aerialalerts/",
-                "configured": True,
-                "status": "ONLINE"
-            },
             "ukraine_alarm": {
-                "name": "UkraineAlarm API v3 (Tier 2 - Резерв 1)",
+                "name": "UkraineAlarm API v3 (Tier 1 - Основне)",
                 "url": "https://api.ukrainealarm.com/api/v3/alerts",
                 "configured": bool(ukraine_alarm_token),
                 "status": "ONLINE" if ukraine_alarm_token else "NEED_KEY"
+            },
+            "ubilling": {
+                "name": "UBilling Дзеркало (Tier 2 - Резерв 1)",
+                "url": "https://ubilling.net.ua/aerialalerts/",
+                "configured": True,
+                "status": "ONLINE"
             },
             "alerts_in_ua": {
                 "name": "Alerts.in.ua API (Tier 3 - Резерв 2)",

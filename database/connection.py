@@ -9,11 +9,9 @@ def get_sqlite_connection(db_path: str = None) -> sqlite3.Connection:
     """Отримує SQLite з'єднання з PRAGMA wal та busy_timeout."""
     if db_path is None:
         db_path = os.environ.get("DB_PATH") or core.config.DB_PATH or "threat_analytics.db"
-    conn = sqlite3.connect(db_path, timeout=30.0)
-    conn.execute("PRAGMA journal_mode = WAL")
+    conn = sqlite3.connect(db_path, timeout=30.0, isolation_level=None)
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA synchronous = NORMAL")
-    conn.execute("PRAGMA wal_autocheckpoint = 1000")
     return conn
 
 

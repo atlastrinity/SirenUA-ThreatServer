@@ -4,6 +4,8 @@ Handles Firebase / Firestore clients, backups, and FCM queue worker.
 """
 
 import os
+import time
+import threading
 import sqlite3
 import asyncio
 from datetime import datetime, timezone
@@ -144,6 +146,23 @@ def send_fcm_notification(region: str, level: str, threat_type: Optional[str] = 
             pass
     _send_fcm_notification_sync(region, level, threat_type, detail, confidence, eta, is_official_alarm, is_test)
 
+_fcm_dedup_lock = threading.Lock()
+_recent_fcm_pushes: dict[tuple, float] = {}
+
+def _is_fcm_throttled(region: str, level: str, mapped_type: Optional[str], cooldown_seconds: float = 30.0) -> bool:
+    with _fcm_dedup_lock:
+        now = time.time()
+        key = (region, level, mapped_type or "")
+        last_time = _recent_fcm_pushes.get(key, 0.0)
+        if now - last_time < cooldown_seconds:
+            return True
+        _recent_fcm_pushes[key] = now
+        # Clean up stale entries older than 5 minutes
+        for k in list(_recent_fcm_pushes.keys()):
+            if now - _recent_fcm_pushes[k] > 300.0:
+                _recent_fcm_pushes.pop(k, None)
+        return False
+
 def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[str] = None, detail: Optional[str] = None, confidence: Optional[int] = None, eta: Optional[str] = None, is_official_alarm: bool = False, is_test: bool = False):
     """
     Надсилає тихий FCM data-push БЕЗ звуку.
@@ -158,6 +177,13 @@ def _send_fcm_notification_sync(region: str, level: str, threat_type: Optional[s
 
     is_clear = (level == "none")
     mapped_type = threat_type if threat_type else ("official_alarm" if is_official_alarm else ("threat_clear" if is_clear else None))
+
+    # Використовуємо підвищений кулдаун для повторюваних артобстрілів (45с), звичайний 25с
+    cooldown = 45.0 if mapped_type in ("artillery", "mlrs", "fpv") else 25.0
+    if _is_fcm_throttled(region, level, mapped_type, cooldown_seconds=cooldown):
+        print(f"⚠️ [FCM Throttled] Duplicate/Rapid FCM Push suppressed for {region} ({level}, {mapped_type}).")
+        return
+
     if is_duplicate_event(region, level, mapped_type):
         print(f"⚠️ Duplicate FCM Push detected for {region} ({level}, {mapped_type}), skipping.")
         return
